@@ -1,0 +1,27 @@
+{
+  "checkedAtUtc": "2026-10-10T18:16:07.759465+00:00",
+  "platform": "macOS Apple Silicon (Apple M4)",
+  "buildReceipt": "mac-build.json",
+  "observedPassed": [
+    "Native standalone app launches",
+    "Play starts first-person couch view",
+    "E stands from couch",
+    "R restores couch position",
+    "Escape opens pause menu",
+    "Movement and mouse-look change the live view",
+    "Broadcast interaction displays source card",
+    "No curved black visor geometry",
+    "Corrected TV text emits light after scene reload and build",
+    "App quits and relaunches",
+    "No Error/Exception/NullReference/Missing entries found in observed Player.log"
+  ],
+  "scope": "Live app UI observations plus build/scene checks; not an exhaustive acceptance or performance test.",
+  "notVerified": [
+    "Restart button action",
+    "Keyboard navigation of source-card buttons",
+    "Opening TikTok from the compiled app",
+    "Exhaustive furniture/wall collision coverage",
+    "Touch controls on physical iOS or Android devices",
+    "Network multiplayer"
+  ]
+}

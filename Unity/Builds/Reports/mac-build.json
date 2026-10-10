@@ -1,0 +1,18 @@
+{
+    "operation": "macOS-arm64-build",
+    "result": "Succeeded",
+    "unityVersion": "6000.3.26f1",
+    "architecture": "ARM64",
+    "scriptingBackend": "Mono",
+    "startedAtUtc": "2026-10-10T18:14:36.7017500Z",
+    "finishedAtUtc": "2026-10-10T18:14:42.3221080Z",
+    "scenePath": "Assets/Scenes/SlopCity_CouchSpawn.unity",
+    "outputPath": "/Users/daniel/knoxvillains/slop-city-blender/Unity/Builds/macOS/SLOP CITY.app",
+    "totalBytes": "106922251",
+    "totalSeconds": 3.5965879999999998,
+    "totalErrors": 0,
+    "totalWarnings": 0,
+    "validationChecks": 45,
+    "errors": [],
+    "warnings": []
+}

@@ -1,0 +1,13 @@
+{
+    "passed": true,
+    "unityVersion": "6000.3.26f1",
+    "checkedAtUtc": "2026-10-10T18:14:38.5862090Z",
+    "scenePath": "Assets/Scenes/SlopCity_CouchSpawn.unity",
+    "checks": 45,
+    "activeRenderers": 912,
+    "meshColliders": 42,
+    "errors": [],
+    "warnings": [
+        "Structural and physics checks do not verify final GPU rendering or interactive Play Mode behavior."
+    ]
+}
