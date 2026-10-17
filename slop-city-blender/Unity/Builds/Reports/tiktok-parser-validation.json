@@ -1,0 +1,7 @@
+{
+    "passed": true,
+    "checks": 109,
+    "checkedAtUtc": "2026-10-13T01:25:53.2007360Z",
+    "scope": "Offline parser fixtures: complete/partial paging, public identity, slideshow frames, exact IDs, schema changes, bounded malformed data and source/cache address safety.",
+    "errors": []
+}

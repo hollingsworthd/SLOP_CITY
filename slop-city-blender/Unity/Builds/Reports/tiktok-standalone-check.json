@@ -1,0 +1,34 @@
+{
+  "version": "0.6.0",
+  "checkedAtUtc": "2026-10-11T01:27:23.700221+00:00",
+  "passed": true,
+  "scope": "Standalone Mac UI launch and visible sync/control status; real media decoding details are in tiktok-playback-check.json. This check does not decode every post.",
+  "observations": [
+    "Launched the built .app successfully.",
+    "Opened M media controls: 78 TikTok posts, 61 city screens, 3 active catalogue channels and up-to-date status visible.",
+    "SYNC POSTS and both creator profile buttons visible without layout overlap.",
+    "Lounge archive video was visible and advancing.",
+    "Paused the game with Escape; Resume menu visibly displayed.",
+    "Current player log contains no exception or media failure lines.",
+    "Deep/strict local code signature verification passed.",
+    "ZIP CRC and included native codec/version verified."
+  ],
+  "publicPostCount": 78,
+  "accounts": [
+    {
+      "creator": "1984drh",
+      "complete": true,
+      "totalReported": 68,
+      "discoveredCount": 68
+    },
+    {
+      "creator": "machine_publishers",
+      "complete": true,
+      "totalReported": 10,
+      "discoveredCount": 10
+    }
+  ],
+  "package": "/Users/daniel/knoxvillains/SlopCity-macOS-v0.6.0-AppleSilicon.zip",
+  "packageBytes": 161672253,
+  "sha256": "391c3a513246f38f218739bf9dfeb9ba97e96f8924a75b49bb14a3f8f0f98dd7"
+}

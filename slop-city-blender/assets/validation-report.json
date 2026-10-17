@@ -1,0 +1,1132 @@
+{
+  "schema_version": 1,
+  "validated_at_utc": "2026-10-10T15:39:46.306855+00:00",
+  "blender_version": "4.5.14 LTS",
+  "validation": "Native inspection and clean-scene Blender FBX/GLB reimport",
+  "coordinate_system": "Blender Z-up, one coordinate unit = one metre",
+  "testedUnity": false,
+  "limitations": [
+    "Blender reimport does not verify Unity import, compilation, or Play Mode.",
+    "This validation does not test character collisions, lighting, or material appearance."
+  ],
+  "assets": {
+    "native": {
+      "path": "/Users/daniel/knoxvillains/slop-city-blender/SlopCity_CouchSpawn.blend",
+      "exists": true,
+      "bytes": 11714886,
+      "sha256": "c3fb3d7180fd8ef1014177f4b6fdb4812372dd11d1d97d553b256c9e53622230",
+      "checks": [
+        {
+          "name": "plausible_mesh_object_count",
+          "passed": true,
+          "actual": 619,
+          "accepted_range": [
+            300,
+            3000
+          ]
+        },
+        {
+          "name": "mesh_objects_have_geometry",
+          "passed": true,
+          "empty_meshes": []
+        },
+        {
+          "name": "finite_world_transforms",
+          "passed": true,
+          "invalid_objects": []
+        },
+        {
+          "name": "unique_marker:Spawn_Daniel_Seated",
+          "passed": true,
+          "found": [
+            "Spawn_Daniel_Seated"
+          ]
+        },
+        {
+          "name": "marker_is_empty:Spawn_Daniel_Seated",
+          "passed": true,
+          "actual_type": "EMPTY"
+        },
+        {
+          "name": "marker_position:Spawn_Daniel_Seated",
+          "passed": true,
+          "expected": [
+            0.0,
+            0.94,
+            1.18
+          ],
+          "actual": [
+            0.0,
+            0.94,
+            1.18
+          ],
+          "tolerance_metres": 0.002
+        },
+        {
+          "name": "unique_marker:Spawn_Daniel_Stand",
+          "passed": true,
+          "found": [
+            "Spawn_Daniel_Stand"
+          ]
+        },
+        {
+          "name": "marker_is_empty:Spawn_Daniel_Stand",
+          "passed": true,
+          "actual_type": "EMPTY"
+        },
+        {
+          "name": "marker_position:Spawn_Daniel_Stand",
+          "passed": true,
+          "expected": [
+            0.0,
+            -0.2,
+            0.08
+          ],
+          "actual": [
+            0.0,
+            -0.2,
+            0.08
+          ],
+          "tolerance_metres": 0.002
+        },
+        {
+          "name": "unique_marker:LookAt_Daniel_Seated",
+          "passed": true,
+          "found": [
+            "LookAt_Daniel_Seated"
+          ]
+        },
+        {
+          "name": "marker_is_empty:LookAt_Daniel_Seated",
+          "passed": true,
+          "actual_type": "EMPTY"
+        },
+        {
+          "name": "marker_position:LookAt_Daniel_Seated",
+          "passed": true,
+          "expected": [
+            2.3,
+            -2.45,
+            1.18
+          ],
+          "actual": [
+            2.3,
+            -2.45,
+            1.18
+          ],
+          "tolerance_metres": 0.002
+        },
+        {
+          "name": "unique_marker:Interact_TV",
+          "passed": true,
+          "found": [
+            "Interact_TV"
+          ]
+        },
+        {
+          "name": "marker_is_empty:Interact_TV",
+          "passed": true,
+          "actual_type": "EMPTY"
+        },
+        {
+          "name": "marker_position:Interact_TV",
+          "passed": true,
+          "expected": [
+            2.3,
+            -2.6,
+            1.1
+          ],
+          "actual": [
+            2.3,
+            -2.6,
+            1.1
+          ],
+          "tolerance_metres": 0.002
+        },
+        {
+          "name": "unique_marker:Interact_Radio",
+          "passed": true,
+          "found": [
+            "Interact_Radio"
+          ]
+        },
+        {
+          "name": "marker_is_empty:Interact_Radio",
+          "passed": true,
+          "actual_type": "EMPTY"
+        },
+        {
+          "name": "marker_position:Interact_Radio",
+          "passed": true,
+          "expected": [
+            -2.55,
+            0.48,
+            0.75
+          ],
+          "actual": [
+            -2.55,
+            0.48,
+            0.75
+          ],
+          "tolerance_metres": 0.002
+        },
+        {
+          "name": "unique_marker:Light_TableLamp",
+          "passed": true,
+          "found": [
+            "Light_TableLamp"
+          ]
+        },
+        {
+          "name": "marker_is_empty:Light_TableLamp",
+          "passed": true,
+          "actual_type": "EMPTY"
+        },
+        {
+          "name": "marker_position:Light_TableLamp",
+          "passed": true,
+          "expected": [
+            -2.55,
+            0.7,
+            1.68
+          ],
+          "actual": [
+            -2.55,
+            0.7,
+            1.68
+          ],
+          "tolerance_metres": 0.002
+        },
+        {
+          "name": "unique_floor_mesh",
+          "passed": true,
+          "found": [
+            "Floor_Main"
+          ]
+        },
+        {
+          "name": "floor_has_metre_scale",
+          "passed": true,
+          "expected": [
+            8.6,
+            6.5,
+            0.26
+          ],
+          "actual": [
+            8.6,
+            6.5,
+            0.26
+          ],
+          "tolerance_metres": 0.015
+        },
+        {
+          "name": "floor_world_position",
+          "passed": true,
+          "expected": [
+            0.0,
+            -0.25,
+            -0.16
+          ],
+          "actual": [
+            0.0,
+            -0.25,
+            -0.16
+          ]
+        },
+        {
+          "name": "standing_marker_is_near_floor_and_inside_room",
+          "passed": true,
+          "height_above_base_floor_metres": 0.11
+        },
+        {
+          "name": "seated_marker_has_plausible_eye_height",
+          "passed": true,
+          "height_above_base_floor_metres": 1.21
+        },
+        {
+          "name": "core_prop_meshes_present",
+          "passed": true,
+          "missing": []
+        },
+        {
+          "name": "couch_geometry_present",
+          "passed": true,
+          "mesh_objects": 19
+        },
+        {
+          "name": "unique_headset_rig",
+          "passed": true,
+          "found": [
+            "Headset_Daniel_Rig"
+          ]
+        },
+        {
+          "name": "headset_at_seated_eye_position",
+          "passed": true,
+          "actual": [
+            0.0,
+            0.94,
+            1.18
+          ]
+        },
+        {
+          "name": "headset_has_parented_geometry",
+          "passed": true,
+          "mesh_objects": 20
+        },
+        {
+          "name": "native_units_are_metres",
+          "passed": true,
+          "system": "METRIC",
+          "scale_length": 1.0
+        },
+        {
+          "name": "native_editable_text_preserved",
+          "passed": true,
+          "text_objects": 26
+        },
+        {
+          "name": "native_opens_with_seated_camera",
+          "passed": true,
+          "actual": "CAM_03_Daniel_Seated"
+        },
+        {
+          "name": "seated_camera_attached_to_headset_at_local_origin",
+          "passed": true,
+          "parent": "Headset_Daniel_Rig",
+          "local_position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "local_rotation": [
+            0.0,
+            0.0,
+            0.0
+          ]
+        },
+        {
+          "name": "camera_world_position_matches_seated_spawn",
+          "passed": true,
+          "actual": [
+            0.0,
+            0.94,
+            1.18
+          ]
+        },
+        {
+          "name": "native_interior_walls_visible",
+          "passed": true
+        },
+        {
+          "name": "no_linked_blend_libraries",
+          "passed": true,
+          "libraries": []
+        },
+        {
+          "name": "no_missing_file_resources",
+          "passed": true,
+          "missing": []
+        },
+        {
+          "name": "self_contained_file_resources",
+          "passed": true,
+          "unpacked_dependencies": []
+        }
+      ],
+      "markers": {
+        "Spawn_Daniel_Seated": [
+          0.0,
+          0.94,
+          1.18
+        ],
+        "Spawn_Daniel_Stand": [
+          0.0,
+          -0.2,
+          0.08
+        ],
+        "LookAt_Daniel_Seated": [
+          2.3,
+          -2.45,
+          1.18
+        ],
+        "Interact_TV": [
+          2.3,
+          -2.6,
+          1.1
+        ],
+        "Interact_Radio": [
+          -2.55,
+          0.48,
+          0.75
+        ],
+        "Light_TableLamp": [
+          -2.55,
+          0.7,
+          1.68
+        ]
+      },
+      "object_counts": {
+        "MESH": 619,
+        "CURVE": 291,
+        "EMPTY": 8,
+        "FONT": 26,
+        "LIGHT": 7,
+        "CAMERA": 3
+      },
+      "mesh_vertices": 35101,
+      "mesh_polygons": 34324,
+      "expected_export_mesh_objects": 936,
+      "floor": {
+        "minimum": [
+          -4.3,
+          -3.5,
+          -0.29
+        ],
+        "maximum": [
+          4.3,
+          3.0,
+          -0.03
+        ],
+        "dimensions_metres": [
+          8.6,
+          6.5,
+          0.26
+        ],
+        "center_metres": [
+          0.0,
+          -0.25,
+          -0.16
+        ]
+      },
+      "resources": [
+        {
+          "kind": "fonts",
+          "name": "Arial Bold",
+          "packed": true,
+          "path": "//../../../../System/Library/Fonts/Supplemental/Arial Bold.ttf",
+          "external_file_exists": true
+        }
+      ],
+      "passed": true
+    },
+    "fbx": {
+      "path": "/Users/daniel/knoxvillains/slop-city-blender/Unity/Assets/Art/SlopCity_Lounge.fbx",
+      "exists": true,
+      "bytes": 27123228,
+      "sha256": "1ad993f2dd0a490159d5c36b71e636dd88c9dc860789d873a22da1a4ac6a9043",
+      "checks": [
+        {
+          "name": "plausible_mesh_object_count",
+          "passed": true,
+          "actual": 936,
+          "accepted_range": [
+            300,
+            3000
+          ]
+        },
+        {
+          "name": "export_mesh_object_count_matches_native",
+          "passed": true,
+          "expected": 936,
+          "actual": 936
+        },
+        {
+          "name": "export_has_only_meshes_and_markers",
+          "passed": true,
+          "object_types": [
+            "EMPTY",
+            "MESH"
+          ]
+        },
+        {
+          "name": "mesh_objects_have_geometry",
+          "passed": true,
+          "empty_meshes": []
+        },
+        {
+          "name": "finite_world_transforms",
+          "passed": true,
+          "invalid_objects": []
+        },
+        {
+          "name": "unique_marker:Spawn_Daniel_Seated",
+          "passed": true,
+          "found": [
+            "Spawn_Daniel_Seated"
+          ]
+        },
+        {
+          "name": "marker_is_empty:Spawn_Daniel_Seated",
+          "passed": true,
+          "actual_type": "EMPTY"
+        },
+        {
+          "name": "marker_position:Spawn_Daniel_Seated",
+          "passed": true,
+          "expected": [
+            0.0,
+            0.94,
+            1.18
+          ],
+          "actual": [
+            0.0,
+            0.94,
+            1.18
+          ],
+          "tolerance_metres": 0.002
+        },
+        {
+          "name": "unique_marker:Spawn_Daniel_Stand",
+          "passed": true,
+          "found": [
+            "Spawn_Daniel_Stand"
+          ]
+        },
+        {
+          "name": "marker_is_empty:Spawn_Daniel_Stand",
+          "passed": true,
+          "actual_type": "EMPTY"
+        },
+        {
+          "name": "marker_position:Spawn_Daniel_Stand",
+          "passed": true,
+          "expected": [
+            0.0,
+            -0.2,
+            0.08
+          ],
+          "actual": [
+            0.0,
+            -0.2,
+            0.08
+          ],
+          "tolerance_metres": 0.002
+        },
+        {
+          "name": "unique_marker:LookAt_Daniel_Seated",
+          "passed": true,
+          "found": [
+            "LookAt_Daniel_Seated"
+          ]
+        },
+        {
+          "name": "marker_is_empty:LookAt_Daniel_Seated",
+          "passed": true,
+          "actual_type": "EMPTY"
+        },
+        {
+          "name": "marker_position:LookAt_Daniel_Seated",
+          "passed": true,
+          "expected": [
+            2.3,
+            -2.45,
+            1.18
+          ],
+          "actual": [
+            2.3,
+            -2.45,
+            1.18
+          ],
+          "tolerance_metres": 0.002
+        },
+        {
+          "name": "unique_marker:Interact_TV",
+          "passed": true,
+          "found": [
+            "Interact_TV"
+          ]
+        },
+        {
+          "name": "marker_is_empty:Interact_TV",
+          "passed": true,
+          "actual_type": "EMPTY"
+        },
+        {
+          "name": "marker_position:Interact_TV",
+          "passed": true,
+          "expected": [
+            2.3,
+            -2.6,
+            1.1
+          ],
+          "actual": [
+            2.3,
+            -2.6,
+            1.1
+          ],
+          "tolerance_metres": 0.002
+        },
+        {
+          "name": "unique_marker:Interact_Radio",
+          "passed": true,
+          "found": [
+            "Interact_Radio"
+          ]
+        },
+        {
+          "name": "marker_is_empty:Interact_Radio",
+          "passed": true,
+          "actual_type": "EMPTY"
+        },
+        {
+          "name": "marker_position:Interact_Radio",
+          "passed": true,
+          "expected": [
+            -2.55,
+            0.48,
+            0.75
+          ],
+          "actual": [
+            -2.55,
+            0.48,
+            0.75
+          ],
+          "tolerance_metres": 0.002
+        },
+        {
+          "name": "unique_marker:Light_TableLamp",
+          "passed": true,
+          "found": [
+            "Light_TableLamp"
+          ]
+        },
+        {
+          "name": "marker_is_empty:Light_TableLamp",
+          "passed": true,
+          "actual_type": "EMPTY"
+        },
+        {
+          "name": "marker_position:Light_TableLamp",
+          "passed": true,
+          "expected": [
+            -2.55,
+            0.7,
+            1.68
+          ],
+          "actual": [
+            -2.55,
+            0.7,
+            1.68
+          ],
+          "tolerance_metres": 0.002
+        },
+        {
+          "name": "unique_floor_mesh",
+          "passed": true,
+          "found": [
+            "Floor_Main"
+          ]
+        },
+        {
+          "name": "floor_has_metre_scale",
+          "passed": true,
+          "expected": [
+            8.6,
+            6.5,
+            0.26
+          ],
+          "actual": [
+            8.6,
+            6.5,
+            0.260001
+          ],
+          "tolerance_metres": 0.015
+        },
+        {
+          "name": "floor_world_position",
+          "passed": true,
+          "expected": [
+            0.0,
+            -0.25,
+            -0.16
+          ],
+          "actual": [
+            0.0,
+            -0.25,
+            -0.16
+          ]
+        },
+        {
+          "name": "standing_marker_is_near_floor_and_inside_room",
+          "passed": true,
+          "height_above_base_floor_metres": 0.109999
+        },
+        {
+          "name": "seated_marker_has_plausible_eye_height",
+          "passed": true,
+          "height_above_base_floor_metres": 1.209999
+        },
+        {
+          "name": "core_prop_meshes_present",
+          "passed": true,
+          "missing": []
+        },
+        {
+          "name": "couch_geometry_present",
+          "passed": true,
+          "mesh_objects": 153
+        },
+        {
+          "name": "unique_headset_rig",
+          "passed": true,
+          "found": [
+            "Headset_Daniel_Rig"
+          ]
+        },
+        {
+          "name": "headset_at_seated_eye_position",
+          "passed": true,
+          "actual": [
+            0.0,
+            0.94,
+            1.18
+          ]
+        },
+        {
+          "name": "headset_has_parented_geometry",
+          "passed": true,
+          "mesh_objects": 24
+        },
+        {
+          "name": "no_linked_blend_libraries",
+          "passed": true,
+          "libraries": []
+        },
+        {
+          "name": "no_missing_file_resources",
+          "passed": true,
+          "missing": []
+        },
+        {
+          "name": "self_contained_file_resources",
+          "passed": true,
+          "unpacked_dependencies": []
+        }
+      ],
+      "markers": {
+        "Spawn_Daniel_Seated": [
+          0.0,
+          0.94,
+          1.18
+        ],
+        "Spawn_Daniel_Stand": [
+          0.0,
+          -0.2,
+          0.08
+        ],
+        "LookAt_Daniel_Seated": [
+          2.3,
+          -2.45,
+          1.18
+        ],
+        "Interact_TV": [
+          2.3,
+          -2.6,
+          1.1
+        ],
+        "Interact_Radio": [
+          -2.55,
+          0.48,
+          0.75
+        ],
+        "Light_TableLamp": [
+          -2.55,
+          0.7,
+          1.68
+        ]
+      },
+      "object_counts": {
+        "MESH": 936,
+        "EMPTY": 8
+      },
+      "mesh_vertices": 679706,
+      "mesh_polygons": 639462,
+      "expected_export_mesh_objects": 936,
+      "floor": {
+        "minimum": [
+          -4.3,
+          -3.5,
+          -0.290001
+        ],
+        "maximum": [
+          4.3,
+          3.0,
+          -0.029999
+        ],
+        "dimensions_metres": [
+          8.6,
+          6.5,
+          0.260001
+        ],
+        "center_metres": [
+          0.0,
+          -0.25,
+          -0.16
+        ]
+      },
+      "resources": [],
+      "passed": true
+    },
+    "glb": {
+      "path": "/Users/daniel/knoxvillains/slop-city-blender/assets/SlopCity_Lounge.glb",
+      "exists": true,
+      "bytes": 30845740,
+      "sha256": "12b2c271deac1545c8312d69f92676af9caeea851e8d149148abf3835a964dfc",
+      "checks": [
+        {
+          "name": "plausible_mesh_object_count",
+          "passed": true,
+          "actual": 936,
+          "accepted_range": [
+            300,
+            3000
+          ]
+        },
+        {
+          "name": "export_mesh_object_count_matches_native",
+          "passed": true,
+          "expected": 936,
+          "actual": 936
+        },
+        {
+          "name": "export_has_only_meshes_and_markers",
+          "passed": true,
+          "object_types": [
+            "EMPTY",
+            "MESH"
+          ]
+        },
+        {
+          "name": "mesh_objects_have_geometry",
+          "passed": true,
+          "empty_meshes": []
+        },
+        {
+          "name": "finite_world_transforms",
+          "passed": true,
+          "invalid_objects": []
+        },
+        {
+          "name": "unique_marker:Spawn_Daniel_Seated",
+          "passed": true,
+          "found": [
+            "Spawn_Daniel_Seated"
+          ]
+        },
+        {
+          "name": "marker_is_empty:Spawn_Daniel_Seated",
+          "passed": true,
+          "actual_type": "EMPTY"
+        },
+        {
+          "name": "marker_position:Spawn_Daniel_Seated",
+          "passed": true,
+          "expected": [
+            0.0,
+            0.94,
+            1.18
+          ],
+          "actual": [
+            0.0,
+            0.94,
+            1.18
+          ],
+          "tolerance_metres": 0.002
+        },
+        {
+          "name": "unique_marker:Spawn_Daniel_Stand",
+          "passed": true,
+          "found": [
+            "Spawn_Daniel_Stand"
+          ]
+        },
+        {
+          "name": "marker_is_empty:Spawn_Daniel_Stand",
+          "passed": true,
+          "actual_type": "EMPTY"
+        },
+        {
+          "name": "marker_position:Spawn_Daniel_Stand",
+          "passed": true,
+          "expected": [
+            0.0,
+            -0.2,
+            0.08
+          ],
+          "actual": [
+            0.0,
+            -0.2,
+            0.08
+          ],
+          "tolerance_metres": 0.002
+        },
+        {
+          "name": "unique_marker:LookAt_Daniel_Seated",
+          "passed": true,
+          "found": [
+            "LookAt_Daniel_Seated"
+          ]
+        },
+        {
+          "name": "marker_is_empty:LookAt_Daniel_Seated",
+          "passed": true,
+          "actual_type": "EMPTY"
+        },
+        {
+          "name": "marker_position:LookAt_Daniel_Seated",
+          "passed": true,
+          "expected": [
+            2.3,
+            -2.45,
+            1.18
+          ],
+          "actual": [
+            2.3,
+            -2.45,
+            1.18
+          ],
+          "tolerance_metres": 0.002
+        },
+        {
+          "name": "unique_marker:Interact_TV",
+          "passed": true,
+          "found": [
+            "Interact_TV"
+          ]
+        },
+        {
+          "name": "marker_is_empty:Interact_TV",
+          "passed": true,
+          "actual_type": "EMPTY"
+        },
+        {
+          "name": "marker_position:Interact_TV",
+          "passed": true,
+          "expected": [
+            2.3,
+            -2.6,
+            1.1
+          ],
+          "actual": [
+            2.3,
+            -2.6,
+            1.1
+          ],
+          "tolerance_metres": 0.002
+        },
+        {
+          "name": "unique_marker:Interact_Radio",
+          "passed": true,
+          "found": [
+            "Interact_Radio"
+          ]
+        },
+        {
+          "name": "marker_is_empty:Interact_Radio",
+          "passed": true,
+          "actual_type": "EMPTY"
+        },
+        {
+          "name": "marker_position:Interact_Radio",
+          "passed": true,
+          "expected": [
+            -2.55,
+            0.48,
+            0.75
+          ],
+          "actual": [
+            -2.55,
+            0.48,
+            0.75
+          ],
+          "tolerance_metres": 0.002
+        },
+        {
+          "name": "unique_marker:Light_TableLamp",
+          "passed": true,
+          "found": [
+            "Light_TableLamp"
+          ]
+        },
+        {
+          "name": "marker_is_empty:Light_TableLamp",
+          "passed": true,
+          "actual_type": "EMPTY"
+        },
+        {
+          "name": "marker_position:Light_TableLamp",
+          "passed": true,
+          "expected": [
+            -2.55,
+            0.7,
+            1.68
+          ],
+          "actual": [
+            -2.55,
+            0.7,
+            1.68
+          ],
+          "tolerance_metres": 0.002
+        },
+        {
+          "name": "unique_floor_mesh",
+          "passed": true,
+          "found": [
+            "Floor_Main"
+          ]
+        },
+        {
+          "name": "floor_has_metre_scale",
+          "passed": true,
+          "expected": [
+            8.6,
+            6.5,
+            0.26
+          ],
+          "actual": [
+            8.6,
+            6.5,
+            0.26
+          ],
+          "tolerance_metres": 0.015
+        },
+        {
+          "name": "floor_world_position",
+          "passed": true,
+          "expected": [
+            0.0,
+            -0.25,
+            -0.16
+          ],
+          "actual": [
+            0.0,
+            -0.25,
+            -0.16
+          ]
+        },
+        {
+          "name": "standing_marker_is_near_floor_and_inside_room",
+          "passed": true,
+          "height_above_base_floor_metres": 0.11
+        },
+        {
+          "name": "seated_marker_has_plausible_eye_height",
+          "passed": true,
+          "height_above_base_floor_metres": 1.21
+        },
+        {
+          "name": "core_prop_meshes_present",
+          "passed": true,
+          "missing": []
+        },
+        {
+          "name": "couch_geometry_present",
+          "passed": true,
+          "mesh_objects": 153
+        },
+        {
+          "name": "unique_headset_rig",
+          "passed": true,
+          "found": [
+            "Headset_Daniel_Rig"
+          ]
+        },
+        {
+          "name": "headset_at_seated_eye_position",
+          "passed": true,
+          "actual": [
+            0.0,
+            0.94,
+            1.18
+          ]
+        },
+        {
+          "name": "headset_has_parented_geometry",
+          "passed": true,
+          "mesh_objects": 24
+        },
+        {
+          "name": "no_linked_blend_libraries",
+          "passed": true,
+          "libraries": []
+        },
+        {
+          "name": "no_missing_file_resources",
+          "passed": true,
+          "missing": []
+        },
+        {
+          "name": "self_contained_file_resources",
+          "passed": true,
+          "unpacked_dependencies": []
+        }
+      ],
+      "markers": {
+        "Spawn_Daniel_Seated": [
+          0.0,
+          0.94,
+          1.18
+        ],
+        "Spawn_Daniel_Stand": [
+          0.0,
+          -0.2,
+          0.08
+        ],
+        "LookAt_Daniel_Seated": [
+          2.3,
+          -2.45,
+          1.18
+        ],
+        "Interact_TV": [
+          2.3,
+          -2.6,
+          1.1
+        ],
+        "Interact_Radio": [
+          -2.55,
+          0.48,
+          0.75
+        ],
+        "Light_TableLamp": [
+          -2.55,
+          0.7,
+          1.68
+        ]
+      },
+      "object_counts": {
+        "MESH": 936,
+        "EMPTY": 8
+      },
+      "mesh_vertices": 757741,
+      "mesh_polygons": 1205184,
+      "expected_export_mesh_objects": 936,
+      "floor": {
+        "minimum": [
+          -4.3,
+          -3.5,
+          -0.29
+        ],
+        "maximum": [
+          4.3,
+          3.0,
+          -0.03
+        ],
+        "dimensions_metres": [
+          8.6,
+          6.5,
+          0.26
+        ],
+        "center_metres": [
+          0.0,
+          -0.25,
+          -0.16
+        ]
+      },
+      "resources": [],
+      "passed": true
+    }
+  },
+  "passed": true,
+  "failed_checks": []
+}

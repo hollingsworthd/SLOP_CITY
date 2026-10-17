@@ -1,0 +1,74 @@
+{
+  "checkedAtUtc": "2026-10-11T03:36:19.754703+00:00",
+  "applicationVersion": "0.7.0",
+  "unityBuild": "Succeeded, zero errors and warnings",
+  "browserChecks": {
+    "packagedDownloads": "Passed: six data pieces, game loads",
+    "inAppBrowser": "Final optimized build loaded from chunked static package; Play, E stand and bundled playback passed. Host rejects pointer capture; handled without Unity alert. No new console errors.",
+    "Safari": "Browser runtime, Play, mouse capture banner, bundled playback/audio indicator and Escape verified; final spatial-index change additionally passed build and embedded-browser smoke checks."
+  },
+  "notVerified": [
+    "Full city traversal, contracts, driving and long-duration performance in browser",
+    "Audible speaker output",
+    "Other browsers and mobile devices"
+  ],
+  "zip": {
+    "file": "SlopCity-Web-v0.7.0.zip",
+    "bytes": 118456432,
+    "sha256": "3a755680281f692632dff00fd12429515eaa9816f2f62d8d9ad060b85381d4a5",
+    "crc": "passed"
+  },
+  "knownDifferences": [
+    "Native TikTok downloader and photo playlists omitted; bundled clips and creator feeds available.",
+    "Embedded browsers may deny pointer lock; use a full desktop browser.",
+    "Browser-only rendering, scene query, HUD, crowd and media optimizations; adjustable framebuffer and actual Unity FPS counter."
+  ],
+  "performance": {
+    "sample": "standing in lounge with bundled video playing",
+    "browser": "Codex embedded Chromium",
+    "resolution": "1200x658",
+    "fps": 38.42,
+    "averageFrameMs": 26.03,
+    "p95FrameMs": 33.0,
+    "note": "One two-second measured Unity frame window after warmup; not a whole-city benchmark or a 60 FPS guarantee."
+  },
+  "isolation": {
+    "nativeCode": "Non-WebGL preprocessed runtime branches unchanged (HUD equivalent constants/signatures only). Scene, native build helpers, QualitySettings and GraphicsSettings unchanged.",
+    "macZipSha256": "e174d1d90b6d4cc002065fa4b5c27bfdf1f86293901f6bac841c625249aab7be",
+    "interactionGeometry": "4000 randomized and edge-case rays matched original ordered selection, including moving bounds."
+  },
+  "deployment": {
+    "projectId": "appgprj_6acafae455d8819199feb561af3a41da",
+    "versionId": "appgprj_6acafae455d8819199feb561af3a41da~appgver_8f1378495fa481919fbc6f937bd14ff5",
+    "deploymentId": "appgdep_6acb04936f5481918d1cb82c09e3aa05",
+    "status": "succeeded",
+    "url": "https://slop-city-v07-browser.cherrydill4.chatgpt.site",
+    "access": "Owner-private; browser opened the expected ChatGPT sign-in gate. Runtime verified locally against the same packaged files.",
+    "sourceCommit": "6fc20bb3f5ca167bf20d0938ce4eff2d3fd0bded"
+  },
+  "publicLaunch": {
+    "checkedAtUtc": "2026-10-11T12:02:13.014983+00:00",
+    "projectId": "appgprj_6acafae455d8819199feb561af3a41da",
+    "audience": "public",
+    "primaryUrl": "https://slopcity.org/",
+    "alternateUrl": "https://www.slopcity.org/",
+    "fallbackUrl": "https://slop-city-v07-browser.cherrydill4.chatgpt.site/",
+    "versionId": "appgprj_6acafae455d8819199feb561af3a41da~appgver_26682763630c819196623bce89a6444b",
+    "deploymentId": "appgdep_6acb796d75c08191b26e43704f957336",
+    "sourceCommit": "5f400ef1a7e51d8b4b75eee7afd037721b233196",
+    "deploymentStatus": "succeeded",
+    "domains": {
+      "slopcity.org": {
+        "status": "active",
+        "ssl": "active"
+      },
+      "www.slopcity.org": {
+        "status": "active",
+        "ssl": "active"
+      }
+    },
+    "wwwRedirect": "Client-side head redirect to HTTPS apex; preserves path, query and fragment. Both names have valid TLS.",
+    "dns": "Google and Cloudflare DoH confirm routing and verification records. Existing MX, SPF and nameservers preserved.",
+    "browserVerification": "Public Sites URL opens game without login; custom-domain check pending local stale DNS cache and user Chrome activity."
+  }
+}

@@ -1,0 +1,93 @@
+{
+  "media": [
+    {
+      "file": "broadcast.mp4",
+      "title": "Machine Publishers broadcast",
+      "creator": "machine_publishers",
+      "sourceUrl": "https://www.tiktok.com/@machine_publishers/video/7694500222541597983",
+      "retrievedDate": "2026-10-10",
+      "retrievalMethod": "Public TikTok page normal playback URL; no authentication used",
+      "bytes": 9637407,
+      "sha256": "d81f7b836233d847cdac9310531a97545dd70be5b03571eefc340b0e23a76813",
+      "durationSeconds": 65.833333,
+      "width": 720,
+      "height": 1280,
+      "videoCodec": "h264",
+      "audioCodec": "aac",
+      "audioSampleRate": 44100,
+      "audioChannels": 2,
+      "validation": "Complete FFmpeg decode of video and audio passed without errors; frame visually inspected."
+    },
+    {
+      "file": "in-q-tel.mp4",
+      "title": "In-Q-Tel — 1984DRH & Hood Rich Records",
+      "creator": "machine_publishers",
+      "sourceUrl": "https://www.tiktok.com/@machine_publishers/video/7573075941463756062",
+      "retrievedDate": "2026-10-10",
+      "retrievalMethod": "Public TikTok page normal playback URL; no authentication used",
+      "bytes": 7882123,
+      "sha256": "a700e9f315e6187b628bfd09296ffa9b07d5542fc1b502820c1a6d3fcac52d24",
+      "durationSeconds": 143.476009,
+      "width": 1280,
+      "height": 720,
+      "videoCodec": "h264",
+      "audioCodec": "aac",
+      "audioSampleRate": 44100,
+      "audioChannels": 2,
+      "validation": "Complete FFmpeg decode of video and audio passed without errors; frame visually inspected."
+    },
+    {
+      "file": "duet.mp4",
+      "title": "1984DRH / In-Q-Tel duet",
+      "creator": "1984drh",
+      "sourceUrl": "https://www.tiktok.com/@beef_talko/video/7689137720760864030",
+      "retrievedDate": "2026-10-10",
+      "retrievalMethod": "Public TikTok page normal playback URL; no authentication used",
+      "bytes": 8067497,
+      "sha256": "c038ab958f70dfb2378219d6d11d21f9ba517d82269df79f856b1ffe4eee29b3",
+      "durationSeconds": 118.072993,
+      "width": 720,
+      "height": 1280,
+      "videoCodec": "h264",
+      "audioCodec": "aac",
+      "audioSampleRate": 44100,
+      "audioChannels": 2,
+      "validation": "Complete FFmpeg decode of video and audio passed without errors; frame visually inspected.",
+      "currentSourceUrl": "https://www.tiktok.com/@1984drh/video/7689137720760864030",
+      "attributionCheckedDate": "2026-10-10",
+      "attributionNote": "Current public TikTok author.uniqueId is 1984drh for this exact post ID. The sourceUrl records the historical @beef_talko URL used to retrieve the unchanged archive file."
+    }
+  ],
+  "automaticTikTokCatalog": {
+    "gameVersion": "0.6.0",
+    "catalogVersion": 2,
+    "retrievalMethod": "Pagination of TikTok public creator/item_list responses, without authentication or cookies; media downloaded on demand from validated public CDN sources.",
+    "publicEndpoint": "https://www.tiktok.com/api/creator/item_list/",
+    "refreshSeconds": 300,
+    "snapshot": {
+      "checkedDate": "2026-10-10",
+      "publicPostCount": 79,
+      "videoCount": 75,
+      "photoPostCount": 4,
+      "accounts": [
+        {
+          "creator": "1984drh",
+          "profileUrl": "https://www.tiktok.com/@1984drh",
+          "publicPostCount": 69,
+          "videoCount": 65,
+          "photoPostCount": 4
+        },
+        {
+          "creator": "machine_publishers",
+          "profileUrl": "https://www.tiktok.com/@machine_publishers",
+          "publicPostCount": 10,
+          "videoCount": 10,
+          "photoPostCount": 0
+        }
+      ]
+    },
+    "snapshotScope": "Public listing observed during retrieval research. Counts can change. This is not a completed v0.6 build/playback test, and these posts are not all prebundled media files.",
+    "cache": "Application.persistentDataPath/TikTok; catalog.json stores runtime provenance and media/ stores on-demand files. Media uses a 2147483648-byte soft limit with recent/in-flight protection.",
+    "limitations": "The undocumented public endpoint can change or become unavailable. Partial/offline refreshes preserve prior catalogue entries. No authentication or access to private/deleted posts is provided. Three shipped archives remain fallback media."
+  }
+}

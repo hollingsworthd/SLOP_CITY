@@ -1,0 +1,11 @@
+{
+    "passed": true,
+    "unityVersion": "6000.3.26f1",
+    "checkedAtUtc": "2026-10-13T01:25:51.3770510Z",
+    "scenePath": "Assets/Scenes/SlopCity_CouchSpawn.unity",
+    "checks": 398,
+    "activeRenderers": 0,
+    "meshColliders": 0,
+    "errors": [],
+    "warnings": []
+}

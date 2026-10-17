@@ -1,0 +1,162 @@
+{
+    "capturedAtUtc": "2026-10-14T10:58:34.9242290Z",
+    "scenePath": "Assets/Scenes/SlopCity_CouchSpawn.unity",
+    "unityVersion": "6000.3.26f1",
+    "resolution": 256,
+    "probes": [
+        {
+            "name": "Junction_Reflection_EN",
+            "texturePath": "Assets/Art/Reflections/MetricCity/Junction_Reflection_EN.exr",
+            "method": "Lightmapping.BakeReflectionProbe",
+            "finiteHdrValidated": true,
+            "maximumRadiance": 277.25,
+            "position": {
+                "x": 34.849998474121097,
+                "y": 3.299999952316284,
+                "z": 29.600000381469728
+            },
+            "influenceSize": {
+                "x": 105.69999694824219,
+                "y": 22.0,
+                "z": 77.0
+            },
+            "influenceCenter": {
+                "x": 0.0,
+                "y": 6.0,
+                "z": 0.0
+            }
+        },
+        {
+            "name": "Junction_Reflection_ES",
+            "texturePath": "Assets/Art/Reflections/MetricCity/Junction_Reflection_ES.exr",
+            "method": "Lightmapping.BakeReflectionProbe",
+            "finiteHdrValidated": true,
+            "maximumRadiance": 7584.0,
+            "position": {
+                "x": 34.849998474121097,
+                "y": 3.299999952316284,
+                "z": -17.399999618530275
+            },
+            "influenceSize": {
+                "x": 105.69999694824219,
+                "y": 22.0,
+                "z": 77.0
+            },
+            "influenceCenter": {
+                "x": 0.0,
+                "y": 6.0,
+                "z": 0.0
+            }
+        },
+        {
+            "name": "Junction_Reflection_WN",
+            "texturePath": "Assets/Art/Reflections/MetricCity/Junction_Reflection_WN.exr",
+            "method": "Lightmapping.BakeReflectionProbe",
+            "finiteHdrValidated": true,
+            "maximumRadiance": 1045.0,
+            "position": {
+                "x": -34.849998474121097,
+                "y": 3.299999952316284,
+                "z": 29.600000381469728
+            },
+            "influenceSize": {
+                "x": 105.69999694824219,
+                "y": 22.0,
+                "z": 77.0
+            },
+            "influenceCenter": {
+                "x": 0.0,
+                "y": 6.0,
+                "z": 0.0
+            }
+        },
+        {
+            "name": "Junction_Reflection_WS",
+            "texturePath": "Assets/Art/Reflections/MetricCity/Junction_Reflection_WS.exr",
+            "method": "Lightmapping.BakeReflectionProbe",
+            "finiteHdrValidated": true,
+            "maximumRadiance": 114.0,
+            "position": {
+                "x": -34.849998474121097,
+                "y": 3.299999952316284,
+                "z": -17.399999618530275
+            },
+            "influenceSize": {
+                "x": 105.69999694824219,
+                "y": 22.0,
+                "z": 77.0
+            },
+            "influenceCenter": {
+                "x": 0.0,
+                "y": 6.0,
+                "z": 0.0
+            }
+        },
+        {
+            "name": "Reflection_Subway_Station_0",
+            "texturePath": "Assets/Art/Reflections/MetricCity/Reflection_Subway_Station_0.exr",
+            "method": "Lightmapping.BakeReflectionProbe",
+            "finiteHdrValidated": true,
+            "maximumRadiance": 0.98486328125,
+            "position": {
+                "x": -85.88666534423828,
+                "y": -6.25,
+                "z": 29.600000381469728
+            },
+            "influenceSize": {
+                "x": 15.199999809265137,
+                "y": 3.5999999046325685,
+                "z": 11.199999809265137
+            },
+            "influenceCenter": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+            }
+        },
+        {
+            "name": "Reflection_Subway_Station_1",
+            "texturePath": "Assets/Art/Reflections/MetricCity/Reflection_Subway_Station_1.exr",
+            "method": "Lightmapping.BakeReflectionProbe",
+            "finiteHdrValidated": true,
+            "maximumRadiance": 0.98486328125,
+            "position": {
+                "x": 85.88666534423828,
+                "y": -6.25,
+                "z": -17.399999618530275
+            },
+            "influenceSize": {
+                "x": 15.199999809265137,
+                "y": 3.5999999046325685,
+                "z": 11.199999809265137
+            },
+            "influenceCenter": {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0
+            }
+        },
+        {
+            "name": "Street_Reflection",
+            "texturePath": "Assets/Art/Reflections/MetricCity/Street_Reflection.exr",
+            "method": "Lightmapping.BakeReflectionProbe",
+            "finiteHdrValidated": true,
+            "maximumRadiance": 68.5,
+            "position": {
+                "x": 34.849998474121097,
+                "y": 4.0,
+                "z": 29.600000381469728
+            },
+            "influenceSize": {
+                "x": 294.3999938964844,
+                "y": 155.0,
+                "z": 255.60000610351563
+            },
+            "influenceCenter": {
+                "x": -39.349998474121097,
+                "y": 51.0,
+                "z": -11.600000381469727
+            }
+        }
+    ]
+}

@@ -1,0 +1,32 @@
+# Independent repositories keep their own history and publishing workflow.
+/slop-city/
+/slop-city-web-v07/
+/slop-city-web-v08-upload/
+
+# Installed tools, account setup records, and machine-local agent configuration.
+/.tools/
+/slopcity-domain-setup/
+/.codex/
+/.agents/
+/.aws/
+
+# Packaged releases and browser QA captures stay available locally.
+/*.zip
+/*.tar.gz
+/slop-city-web-*.png
+/slop-city-web-preview.jpg
+
+# Local credentials and operating-system artifacts.
+.DS_Store
+.env
+.env.*
+!.env.example
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.pem
+*.key
+
+# Unity caches, native builds, and game-specific files are covered by
+# slop-city-blender/.gitignore, whose existing rules remain unchanged.

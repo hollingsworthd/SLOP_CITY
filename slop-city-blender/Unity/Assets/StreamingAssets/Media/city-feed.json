@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "feedUrl": "",
+  "refreshSeconds": 300,
+  "creatorProfiles": [
+    "https://www.tiktok.com/@1984drh",
+    "https://www.tiktok.com/@machine_publishers"
+  ],
+  "instructions": [
+    "Automatic native TikTok synchronization is enabled by SlopCityTikTokSync in v0.6. It discovers public posts from @1984drh and @machine_publishers at startup and every five minutes; this legacy file does not need a feedUrl for that feature.",
+    "City channels rotate through Machine Publishers, 1984DRH, and both accounts combined. Video and photo-post media download on demand into the persistent TikTok cache; the archive clips below remain offline fallbacks.",
+    "This remains the optional version-1 direct-media feed format. To use it, set feedUrl to an HTTPS endpoint returning channels with id, title and directly playable HTTPS mediaUrl. Supported legacy ids are broadcast, record and duet. Refresh uses refreshSeconds with a minimum of 60 seconds.",
+    "TikTok page/embed URLs are not native decoder media URLs. The automatic sync component resolves validated public post sources to cached files. Browser creator links and official embeds remain available through creator-feeds.html.",
+    "Automatic synchronization uses an undocumented public endpoint that can change or become unavailable. Partial/offline refreshes retain the previous catalogue. No login, cookies, private-post access or deleted-post retrieval is provided.",
+    "The native city network shares at most three VideoPlayers. Photo posts use existing channel textures and audio sources. Cache metadata is separate from these bundled archives; do not put credentials in StreamingAssets.",
+    "The In-Q-Tel archive features 1984DRH and Hood Rich Records but was posted by @machine_publishers. Current TikTok metadata attributes the duet to @1984drh; its original @beef_talko sourceUrl is preserved as historical retrieval provenance."
+  ],
+  "channels": [
+    {
+      "id": "broadcast",
+      "title": "Machine Publishers broadcast",
+      "creator": "machine_publishers",
+      "sourceUrl": "https://www.tiktok.com/@machine_publishers/video/7694500222541597983",
+      "localFile": "broadcast.mp4",
+      "mediaUrl": ""
+    },
+    {
+      "id": "record",
+      "title": "In-Q-Tel / 1984DRH & Hood Rich Records",
+      "creator": "machine_publishers",
+      "sourceUrl": "https://www.tiktok.com/@machine_publishers/video/7573075941463756062",
+      "localFile": "in-q-tel.mp4",
+      "mediaUrl": ""
+    },
+    {
+      "id": "duet",
+      "title": "1984DRH / In-Q-Tel duet",
+      "creator": "1984drh",
+      "sourceUrl": "https://www.tiktok.com/@beef_talko/video/7689137720760864030",
+      "localFile": "duet.mp4",
+      "mediaUrl": "",
+      "currentSourceUrl": "https://www.tiktok.com/@1984drh/video/7689137720760864030"
+    }
+  ]
+}

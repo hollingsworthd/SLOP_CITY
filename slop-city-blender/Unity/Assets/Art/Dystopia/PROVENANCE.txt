@@ -1,0 +1,6 @@
+SLOP CITY — PUBLIC NOTICE ARTWORK
+
+PublicNotices.png is original generated game artwork created with the built-in image-generation tool on October 10, 2026 for the user-requested dystopian city redesign.
+The four-quadrant atlas depicts fictional public notices and generic surveillance/broadcast infrastructure. It contains no TikTok posts or licensed third-party brands.
+The atlas is used as surface artwork in the game, not as evidence of the game's rendered appearance. Actual Unity renders are in ../../../../renders.
+The original generated image was copied into this project; the game has no dependency on a user-specific image cache path.

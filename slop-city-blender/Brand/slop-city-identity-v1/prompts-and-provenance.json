@@ -1,0 +1,29 @@
+{
+  "name": "SLOP CITY™ — Identity v1",
+  "website": "https://SLOPCITY.org",
+  "createdDate": "2026-10-11",
+  "method": "Built-in image_gen tool",
+  "assets": [
+    {
+      "file": "slop-city-logo-tm.png",
+      "type": "transparent logo",
+      "prompt": "Use case: logo-brand\nAsset type: production logo lockup for the original SLOP CITY game, transparent PNG, landscape canvas.\nPrimary request: Design one distinctive, polished SLOP CITY™ logo, including the exact website SLOPCITY.org.\nVisual direction: dystopian municipal broadcast identity for an inhabited Japanese science-fiction city. Severe industrial typography, architectural mass, pirate transmissions, and the game's subtle white-rabbit motif. This should feel like a memorable game identity rather than a generic esports badge.\nComposition: one cohesive horizontal lockup, with a compact angular rabbit/transmission emblem on the left and huge two-line or tightly stacked SLOP CITY wordmark to its right. The emblem is an abstract geometric rabbit with two antenna-like ears and a subtle negative-space city silhouette. Keep the symbol simple and recognizable at small sizes. Put a small but clearly visible ™ beside the emblem. The wordmark must read exactly SLOP CITY™ with another clearly visible superscript ™ after CITY. A separate clean, clearly legible website line beneath the wordmark must read exactly SLOPCITY.org.\nStyle: flat vector-like artwork, bold bespoke condensed geometric capitals, minimal intentional stencil cuts that do not obscure letters, precise edges, strong spacing, no distressed tiny fragments.\nPalette: warm ivory lettering with a dark charcoal outer contour so it works on light and dark surfaces; restrained icy teal accents on the emblem and a short rule. No broad background shape.\nConstraints: real transparent background, no checkerboard baked into image, no mockup, no paper, no scene, no gradients, no glow, no shadows, no three-dimensional beveling, no photographs, no extra words, no ® symbol, no ownership/legal claims, no third-party logos. Keep all text and marks safely within the canvas with generous transparent margins. Render S L O P / C I T Y accurately and spell the address exactly SLOPCITY.org."
+    },
+    {
+      "file": "slop-city-poster-tm.png",
+      "type": "portrait promotional poster",
+      "reference": "slop-city-logo-tm.png",
+      "prompt": "Use case: ads-marketing\nAsset type: finished portrait promotional poster for the original SLOP CITY™ game. Aim for a high-resolution 2:3 portrait composition suitable for sharing and later print layout.\nInput image 1: approved brand identity reference. Use its angular ivory/charcoal SLOP CITY™ lettering, geometric rabbit/transmitter emblem, teal accent, and ™ marks faithfully. This is a reference for a NEW POSTER, not a mockup.\nPrimary request: a striking, sophisticated game poster with the SLOP CITY™ logo and the exact website SLOPCITY.org very prominent.\nScene: an atmospheric inhabited Japanese science-fiction city at blue hour. Dense original industrial towers, exposed utility infrastructure, small shops, a street-level transit entrance, huge independent billboard screens showing different abstract monochrome broadcast imagery, wet worn pavement reflecting restrained cyan and warm amber light. A lone anonymous municipal worker seen from behind carries a small practical service case into the street, giving human scale. A small white rabbit stencil on the pavement subtly points onward. Keep the architecture plausible and authored, with detailed physical materials, deep shadow, gentle haze and a strong architectural vanishing point. No fantasy armor or weapons.\nArt direction: premium cinematic editorial illustration, graphic screen-print restraint over richly detailed environmental concept art. Charcoal, warm ivory, icy teal, occasional amber. Strong negative space behind the title. A textured, weathered civic transmission poster with clear hierarchy; not a generic neon gaming collage, no thick decorative frame.\nLayout: the referenced logo large across the upper quarter, cleanly readable, including visible ™ at the wordmark and rabbit emblem. Rich vertical city artwork fills the middle. The bottom has a clean dark field with an extremely readable large SLOPCITY.org address and modest PLAY NOW above it. Repeat a small SLOP CITY™ signature in the footer. Preserve safe margins; text must not be clipped.\nText allowed, verbatim:\n\"SLOP CITY™\"\n\"A CITY THAT NEVER STOPS BROADCASTING.\"\n\"PLAY NOW\"\n\"SLOPCITY.org\"\n\"SLOP CITY™\"\nThe reference lockup may also retain its SLOPCITY.org line. Make each occurrence of SLOP CITY carry ™, including the small footer; use ™, never ®. Spell the website exactly S L O P C I T Y dot o r g with no space in the address, uppercase SLOPCITY and lowercase org. Billboard imagery may have abstract graphic glyphs but no other legible copy. No ownership claims, no fake endorsements, no third-party logos, no platform badges, no ratings badges, no dates, no QR code, no watermarks, no paper photograph or room mockup. Deliver just the finished poster artwork."
+    }
+  ],
+  "branding": {
+    "wordmark": "SLOP CITY™",
+    "websiteText": "SLOPCITY.org",
+    "marks": "™ beside the wordmark and emblem, repeated in the poster footer"
+  },
+  "notes": [
+    "Original promotional artwork; poster is not an in-game screenshot.",
+    "The logo is a raster PNG, not an editable vector.",
+    "Game builds and the live website were not changed in this asset-creation task."
+  ]
+}

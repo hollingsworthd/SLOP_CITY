@@ -1,0 +1,38 @@
+{
+    "passed": true,
+    "checks": 470,
+    "japaneseSignAssemblies": 0,
+    "japaneseVideoBillboards": 0,
+    "japaneseAtlasTextures": 0,
+    "signLabels": 0,
+    "population": 432,
+    "initialMoving": 0,
+    "observedMoving": 337,
+    "distinctRoles": 0,
+    "populatedDistricts": 0,
+    "routes": 0,
+    "routeNodes": 0,
+    "routeEdges": 0,
+    "populationMeshAssets": 0,
+    "populationMaterialAssets": 0,
+    "checkedAtUtc": "2026-10-11T02:28:17.4940920Z",
+    "finishedAtUtc": "2026-10-11T02:28:26.9611890Z",
+    "unityVersion": "6000.3.26f1",
+    "scenePath": "Assets/Scenes/SlopCity_CouchSpawn.unity",
+    "scope": "Saved scene in Play Mode: observed crowd movement, environmental clearance, game pause, conversation and cooldown. Visual realism remains a separate rendered review.",
+    "errors": [],
+    "warnings": [],
+    "runtimeErrors": [],
+    "editorDiagnostics": [
+        "ArgumentOutOfRangeException: Index was out of range. Must be non-negative and less than the size of the collection.\nParameter name: index\nSystem.Collections.Generic.List`1[T].get_Item (System.Int32 index) (at <4ac0ee785b7843ea944af6fc649f4ee5>:0)\nUnityEditor.Search.SearchDatabase+<EnumerateAll>d__83.MoveNext () (at /Users/bokken/build/output/unity/unity/Modules/QuickSearch/Editor/Indexing/SearchDatabase.cs:453)\nSystem.Linq.Enumerable.TryGetFirst[TSource] (System.Collections.Generic.IEnumerable`1[T] source, System.Boolean& found) (at <5eca27bd76e34b3f8e153e23d18e4c9d>:0)\nSystem.Linq.Enumerable.First[TSource] (System.Collections.Generic.IEnumerable`1[T] source) (at <5eca27bd76e34b3f8e153e23d18e4c9d>:0)\nUnityEditor.Search.SearchDatabase.GetDefaultSearchDatabase () (at /Users/bokken/build/output/unity/unity/Modules/QuickSearch/Editor/Indexing/SearchDatabase.cs:428)\nUnityEditor.Search.SearchInit.IndexationOnStartup () (at /Users/bokken/build/output/unity/unity/Modules/QuickSearch/Editor/SearchInit.cs:109)\nUnityEditor.EditorApplication.Internal_CallDelayFunctions () (at /Users/bokken/build/output/unity/unity/Editor/Mono/EditorApplication.cs:407)\n"
+    ],
+    "conversations": [
+        "Commuter: Aya / COMMUTER: The street lifts take you down to the subway. The train connects Signal Yard and the night market.",
+        "Vendor: Leon / VENDOR: Energy machines charge twelve credits. A bench will give you a rest without a purchase.",
+        "Worker: Sora / WORKER: Broken terminals pay out after a repair. Check the service panels around the district.",
+        "Courier: Sam / COURIER: City salvage adds up. I check the bins between deliveries.",
+        "Security: Yuna / SECURITY: When a train ride starts, you can cancel before it arrives if you need to turn back.",
+        "Resident: Leon / RESIDENT: I come here to tend the street trees. Everything needs a little care in this city.",
+        "PLAYER E INPUT / Tao / VENDOR: The market stays open through the night. People still need a warm meal."
+    ]
+}

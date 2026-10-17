@@ -1,0 +1,641 @@
+{
+  "license": "CC0-1.0",
+  "licenseUrl": "https://polyhaven.com/license",
+  "retrievedOn": "2026-10-10",
+  "provider": "Poly Haven",
+  "apiDocumentation": "https://polyhaven.com/our-api",
+  "resolution": "1k",
+  "assets": [
+    {
+      "id": "asphalt_02",
+      "name": "Asphalt 02",
+      "authors": {
+        "Rob Tuytel": "All"
+      },
+      "physicalSizeMetres": [
+        3.0,
+        3.0
+      ],
+      "sourcePage": "https://polyhaven.com/a/asphalt_02",
+      "maps": [
+        {
+          "asset": "asphalt_02",
+          "map": "Diffuse",
+          "file": "asphalt_02_albedo.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/asphalt_02/asphalt_02_diff_1k.jpg",
+          "bytes": 731707,
+          "sourceMd5": "fa19772d4817754c3efab708c651f5a8",
+          "sha256": "1aa5ce99f58a625c71d48cfc3e68b65ca85ccb00f39e045c0a928608a0ea25ed"
+        },
+        {
+          "asset": "asphalt_02",
+          "map": "nor_gl",
+          "file": "asphalt_02_normalGL.png",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/asphalt_02/asphalt_02_nor_gl_1k.png",
+          "bytes": 2323825,
+          "sourceMd5": "910d4b3882858368622eaa1b973bb290",
+          "sha256": "b2069741070f0107c81d001eabfffd6d6644f249cd4ffdf52852e4b5e746a959"
+        },
+        {
+          "asset": "asphalt_02",
+          "map": "Rough",
+          "file": "asphalt_02_roughness.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/asphalt_02/asphalt_02_rough_1k.jpg",
+          "bytes": 544032,
+          "sourceMd5": "ec80a2929797c1b3ffc121c4f665585a",
+          "sha256": "70ba3edc65525eb4dc366cf010ca7ae0bd34e0251ff0225c2dad627a873d0712"
+        },
+        {
+          "asset": "asphalt_02",
+          "map": "AO",
+          "file": "asphalt_02_occlusion.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/asphalt_02/asphalt_02_ao_1k.jpg",
+          "bytes": 533336,
+          "sourceMd5": "db52e3eb4895bbf347246fe8d2d0ebe7",
+          "sha256": "c7397b4187c53203592c68d1d52ce92cc42981c2154b15b9a685f2b5205a260d"
+        }
+      ]
+    },
+    {
+      "id": "concrete_floor_02",
+      "name": "Concrete Floor 02",
+      "authors": {
+        "Rob Tuytel": "All"
+      },
+      "physicalSizeMetres": [
+        2.0,
+        2.0
+      ],
+      "sourcePage": "https://polyhaven.com/a/concrete_floor_02",
+      "maps": [
+        {
+          "asset": "concrete_floor_02",
+          "map": "Diffuse",
+          "file": "concrete_floor_02_albedo.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_floor_02/concrete_floor_02_diff_1k.jpg",
+          "bytes": 776097,
+          "sourceMd5": "1cfee53d2f82fa59726ab7ae6a2e8c09",
+          "sha256": "6db84a6d87dc50508b9d134d6fbd2b7e876b8081a5f43a118a249ca18de73af5"
+        },
+        {
+          "asset": "concrete_floor_02",
+          "map": "nor_gl",
+          "file": "concrete_floor_02_normalGL.png",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/concrete_floor_02/concrete_floor_02_nor_gl_1k.png",
+          "bytes": 6297394,
+          "sourceMd5": "fe71a8ff06acc83aadfdd694a42acfd6",
+          "sha256": "2899c1338a39369d33edc02effbfa4eb14c82b70c6efa2f13c6a0e088ee0c606"
+        },
+        {
+          "asset": "concrete_floor_02",
+          "map": "Rough",
+          "file": "concrete_floor_02_roughness.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_floor_02/concrete_floor_02_rough_1k.jpg",
+          "bytes": 318550,
+          "sourceMd5": "653d60d0db1872a49138455cf31c8326",
+          "sha256": "c7f026a611b7859903c61ec7fd4574944157223e9e7796413dd6e2a66eaeac7a"
+        },
+        {
+          "asset": "concrete_floor_02",
+          "map": "AO",
+          "file": "concrete_floor_02_occlusion.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/concrete_floor_02/concrete_floor_02_ao_1k.jpg",
+          "bytes": 376977,
+          "sourceMd5": "a806f59837ef4783642e157eecea0ce5",
+          "sha256": "93bcfcebe7adcca531d0dfdc69f08e6b26b3005f15ce7879d099289233b0ace6"
+        }
+      ]
+    },
+    {
+      "id": "brick_wall_02",
+      "name": "Brick Wall 02",
+      "authors": {
+        "Dimitrios Savva": "All"
+      },
+      "physicalSizeMetres": [
+        2.0,
+        2.0
+      ],
+      "sourcePage": "https://polyhaven.com/a/brick_wall_02",
+      "maps": [
+        {
+          "asset": "brick_wall_02",
+          "map": "Diffuse",
+          "file": "brick_wall_02_albedo.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/brick_wall_02/brick_wall_02_diff_1k.jpg",
+          "bytes": 1032279,
+          "sourceMd5": "d4c28c3edba875937e01d635a470b5c1",
+          "sha256": "e80aad85ff49b70af5e554d28adf1009adca409fe5d89c2647595254f972df9c"
+        },
+        {
+          "asset": "brick_wall_02",
+          "map": "nor_gl",
+          "file": "brick_wall_02_normalGL.png",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/brick_wall_02/brick_wall_02_nor_gl_1k.png",
+          "bytes": 5792106,
+          "sourceMd5": "1002150f44064dd5f0c0848fc554ad08",
+          "sha256": "65ecc1a77cb52d24947f4e93adf6e28b5c29597e760bb25b540e2d68f458c37a"
+        },
+        {
+          "asset": "brick_wall_02",
+          "map": "Rough",
+          "file": "brick_wall_02_roughness.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/brick_wall_02/brick_wall_02_rough_1k.jpg",
+          "bytes": 391526,
+          "sourceMd5": "d1a41d2cf18ac9c8562ebac2706dee77",
+          "sha256": "0567ea80ad98578f7160ed7880352b3b84d877afe8abbb538c1bb02586aa6e64"
+        },
+        {
+          "asset": "brick_wall_02",
+          "map": "AO",
+          "file": "brick_wall_02_occlusion.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/brick_wall_02/brick_wall_02_ao_1k.jpg",
+          "bytes": 843682,
+          "sourceMd5": "0a874701e062d73c0c3e386446cf86b0",
+          "sha256": "341e32fee24346491e99cbb1ec2b4b2069acf57ef72ed678c9afcc5fad0636eb"
+        }
+      ]
+    },
+    {
+      "id": "brick_pavement_02",
+      "name": "Brick Pavement 02",
+      "authors": {
+        "Charlotte Baglioni": "All"
+      },
+      "physicalSizeMetres": [
+        2.0,
+        2.0
+      ],
+      "sourcePage": "https://polyhaven.com/a/brick_pavement_02",
+      "maps": [
+        {
+          "asset": "brick_pavement_02",
+          "map": "Diffuse",
+          "file": "brick_pavement_02_albedo.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/brick_pavement_02/brick_pavement_02_diff_1k.jpg",
+          "bytes": 961154,
+          "sourceMd5": "9fa4072c602f2092eaf5a750f65658b5",
+          "sha256": "fa1ce4c6da38bc75e488557420a03cb94e696c651075d36a7363cdc61c1b3944"
+        },
+        {
+          "asset": "brick_pavement_02",
+          "map": "nor_gl",
+          "file": "brick_pavement_02_normalGL.png",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/brick_pavement_02/brick_pavement_02_nor_gl_1k.png",
+          "bytes": 5775747,
+          "sourceMd5": "1ae9ecd7003142f861bc43f8547d3100",
+          "sha256": "a7d9baef092c6ccf4178e48a880993d816b460b06e1a52258049cb7297521229"
+        },
+        {
+          "asset": "brick_pavement_02",
+          "map": "Rough",
+          "file": "brick_pavement_02_roughness.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/brick_pavement_02/brick_pavement_02_rough_1k.jpg",
+          "bytes": 466345,
+          "sourceMd5": "aecb7f26448e7d5924505b7977ad266d",
+          "sha256": "c0e0446a2067317226b8296b425f2fb6a00390cb895918b8f5cbb14342d92dbf"
+        },
+        {
+          "asset": "brick_pavement_02",
+          "map": "AO",
+          "file": "brick_pavement_02_occlusion.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/brick_pavement_02/brick_pavement_02_ao_1k.jpg",
+          "bytes": 704813,
+          "sourceMd5": "5f6b9bde928b6a0b25bcdb6a81bfc73b",
+          "sha256": "ba438059c830e0447ba3954dd8aaf7071ac9d57e853c4dc2ee3bd65667b5a2a4"
+        }
+      ]
+    },
+    {
+      "id": "old_wood_floor",
+      "name": "Old Wood Floor",
+      "authors": {
+        "Guillaume Monsergent": "All"
+      },
+      "physicalSizeMetres": [
+        3.0,
+        3.0
+      ],
+      "sourcePage": "https://polyhaven.com/a/old_wood_floor",
+      "maps": [
+        {
+          "asset": "old_wood_floor",
+          "map": "Diffuse",
+          "file": "old_wood_floor_albedo.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/old_wood_floor/old_wood_floor_diff_1k.jpg",
+          "bytes": 755937,
+          "sourceMd5": "ffaa68add0544811b30459e58cc9b4fd",
+          "sha256": "e6952149cd1bb02e485a183f526e9dbe8d90d2a22bfac564cc3874cfb8eddd03"
+        },
+        {
+          "asset": "old_wood_floor",
+          "map": "nor_gl",
+          "file": "old_wood_floor_normalGL.png",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/old_wood_floor/old_wood_floor_nor_gl_1k.png",
+          "bytes": 5052603,
+          "sourceMd5": "caa90c87b709738c929c575a007853f3",
+          "sha256": "2e77dee50a8060e0b73c1beaa79b00094941e29101976289589997cd7c2f4dd5"
+        },
+        {
+          "asset": "old_wood_floor",
+          "map": "Rough",
+          "file": "old_wood_floor_roughness.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/old_wood_floor/old_wood_floor_rough_1k.jpg",
+          "bytes": 519577,
+          "sourceMd5": "e52625ea19fa46a31747abbef00d1627",
+          "sha256": "ab7c16727ac2672a029c2441796a6b3524b90b3ddbb5e5085ed32dd961a6f1ca"
+        },
+        {
+          "asset": "old_wood_floor",
+          "map": "AO",
+          "file": "old_wood_floor_occlusion.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/old_wood_floor/old_wood_floor_ao_1k.jpg",
+          "bytes": 490005,
+          "sourceMd5": "77f116b951ea062b35e322d81115169e",
+          "sha256": "a18c920f7f18da1903cc4e228d199bb0f642e2e07c54f89ab7c5c58305f83a34"
+        }
+      ]
+    },
+    {
+      "id": "long_white_tiles",
+      "name": "Long White Tiles",
+      "authors": {
+        "Jenelle van Heerden": "processing",
+        "Sergej Majboroda": "photography"
+      },
+      "physicalSizeMetres": [
+        1.27,
+        1.27
+      ],
+      "sourcePage": "https://polyhaven.com/a/long_white_tiles",
+      "maps": [
+        {
+          "asset": "long_white_tiles",
+          "map": "Diffuse",
+          "file": "long_white_tiles_albedo.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/long_white_tiles/long_white_tiles_diff_1k.jpg",
+          "bytes": 619644,
+          "sourceMd5": "49f7e4c3a0afd9a8ca3df5ac75747353",
+          "sha256": "0aa70e14117e9b1fbf726868675f6afa8fd62a2691f7ba3964f47796df06cd9c"
+        },
+        {
+          "asset": "long_white_tiles",
+          "map": "nor_gl",
+          "file": "long_white_tiles_normalGL.png",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/png/1k/long_white_tiles/long_white_tiles_nor_gl_1k.png",
+          "bytes": 5094372,
+          "sourceMd5": "a7fe27bfba929e636d50f168fc0bf78b",
+          "sha256": "32835e7cf6fdc1ee00237db7e6cc5e57b7c335f8f42f86c38d3ab1a1cdb75742"
+        },
+        {
+          "asset": "long_white_tiles",
+          "map": "Rough",
+          "file": "long_white_tiles_roughness.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/long_white_tiles/long_white_tiles_rough_1k.jpg",
+          "bytes": 491268,
+          "sourceMd5": "d271d3837f7b6e9db9c3a565ff57c290",
+          "sha256": "2ff3b8a463a80570dca0afbd2e4167db195f1c8d0d919010fa231097a00fdfd3"
+        },
+        {
+          "asset": "long_white_tiles",
+          "map": "AO",
+          "file": "long_white_tiles_occlusion.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/long_white_tiles/long_white_tiles_ao_1k.jpg",
+          "bytes": 497075,
+          "sourceMd5": "2f13cc97dcbdafa2a207573d9b10f29e",
+          "sha256": "fa5a077b799dbf0bb6be8580659d44b9879cb16864b6aef6beeeee7105faed59"
+        }
+      ]
+    },
+    {
+      "id": "kloofendal_48d_partly_cloudy_puresky",
+      "name": "Kloofendal 48d Partly Cloudy (Pure Sky)",
+      "authors": {
+        "Greg Zaal": "Original",
+        "Jarod Guest": "Sky Edits"
+      },
+      "sourcePage": "https://polyhaven.com/a/kloofendal_48d_partly_cloudy_puresky",
+      "maps": [
+        {
+          "asset": "kloofendal_48d_partly_cloudy_puresky",
+          "map": "HDRI",
+          "file": "kloofendal_48d_partly_cloudy_puresky_1k.hdr",
+          "url": "https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/kloofendal_48d_partly_cloudy_puresky_1k.hdr",
+          "bytes": 1435119,
+          "sourceMd5": "c69498687e876bf68d2a8b8a62234eb9",
+          "sha256": "fd94c84997b8a3c353b62c2125a9b44e19509956986a126e472684432a02d798"
+        }
+      ]
+    },
+    {
+      "id": "rusty_metal_02",
+      "name": "Rusty Metal 02",
+      "authors": {
+        "Rob Tuytel": "All"
+      },
+      "physicalSizeMetres": [
+        1.0,
+        1.0
+      ],
+      "sourcePage": "https://polyhaven.com/a/rusty_metal_02",
+      "maps": [
+        {
+          "asset": "rusty_metal_02",
+          "map": "Diffuse",
+          "file": "rusty_metal_02_albedo.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/rusty_metal_02/rusty_metal_02_diff_1k.jpg",
+          "bytes": 564932,
+          "sourceMd5": "476bff9959bc727bd4b83c0a9ac4aeaa",
+          "sha256": "adaf094391518b6afe787a123942110aa88ef521c844f970b124420f5ed5d3d9"
+        },
+        {
+          "asset": "rusty_metal_02",
+          "map": "nor_gl",
+          "file": "rusty_metal_02_normalGL.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/rusty_metal_02/rusty_metal_02_nor_gl_1k.jpg",
+          "bytes": 403156,
+          "sourceMd5": "8d6dc7e26f2708ec59e2a739711c612b",
+          "sha256": "995197a62cac6fbb000e6e6591a3330a3b77ef069c4ac58f505b586b9bdbd97b"
+        },
+        {
+          "asset": "rusty_metal_02",
+          "map": "Rough",
+          "file": "rusty_metal_02_roughness.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/rusty_metal_02/rusty_metal_02_rough_1k.jpg",
+          "bytes": 135023,
+          "sourceMd5": "75551ad404e29489f9b75876da95a13a",
+          "sha256": "178deb5896232f0498555676e55a3be1d6d197e2211d8d17cb8386a868bfd54a"
+        },
+        {
+          "asset": "rusty_metal_02",
+          "map": "AO",
+          "file": "rusty_metal_02_occlusion.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/rusty_metal_02/rusty_metal_02_ao_1k.jpg",
+          "bytes": 458330,
+          "sourceMd5": "1ed11506b232ffe9ab1396683966f9f1",
+          "sha256": "706691cbf624dd4591f1b66435efea48023f9bb04dd685110219cb4fe864d0f0"
+        }
+      ]
+    },
+    {
+      "id": "grey_plaster_03",
+      "name": "Grey Plaster 03",
+      "authors": {
+        "Rob Tuytel": "All"
+      },
+      "physicalSizeMetres": [
+        1.0,
+        1.0
+      ],
+      "sourcePage": "https://polyhaven.com/a/grey_plaster_03",
+      "maps": [
+        {
+          "asset": "grey_plaster_03",
+          "map": "Diffuse",
+          "file": "grey_plaster_03_albedo.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/grey_plaster_03/grey_plaster_03_diff_1k.jpg",
+          "bytes": 486612,
+          "sourceMd5": "9c46bc51a016ff7e58769a7fdea0c0c9",
+          "sha256": "b0952ccabee3f68a1962684a8bc2fe64101b92e569cfd13cf1d8c11b65f395d9"
+        },
+        {
+          "asset": "grey_plaster_03",
+          "map": "nor_gl",
+          "file": "grey_plaster_03_normalGL.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/grey_plaster_03/grey_plaster_03_nor_gl_1k.jpg",
+          "bytes": 467515,
+          "sourceMd5": "bd794bbe247196728af6928e68ddc314",
+          "sha256": "801b002ad7a8872cc998080f9a0345b68e49708c09570050e09e1e0fb3af161d"
+        },
+        {
+          "asset": "grey_plaster_03",
+          "map": "Rough",
+          "file": "grey_plaster_03_roughness.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/grey_plaster_03/grey_plaster_03_rough_1k.jpg",
+          "bytes": 424960,
+          "sourceMd5": "b1695b63dd8dfc0d95215af310742030",
+          "sha256": "6d51b445ed36d27887db7d0c5db23d6ef6aa3c1f49e7c65878ee80c66353c2ee"
+        },
+        {
+          "asset": "grey_plaster_03",
+          "map": "AO",
+          "file": "grey_plaster_03_occlusion.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/grey_plaster_03/grey_plaster_03_ao_1k.jpg",
+          "bytes": 325581,
+          "sourceMd5": "d84a408d2b1456a33f80050e8f6f85a7",
+          "sha256": "d9ea7efc0b54599dd2c292b625d97a9c2e0845934254015e89528b23f5e3dc97"
+        }
+      ]
+    },
+    {
+      "id": "denim_fabric_03",
+      "name": "Denim Fabric 03",
+      "authors": {
+        "colormass": "Photography",
+        "Rico Cilliers": "Processing"
+      },
+      "physicalSizeMetres": [
+        0.2714,
+        0.271
+      ],
+      "sourcePage": "https://polyhaven.com/a/denim_fabric_03",
+      "maps": [
+        {
+          "asset": "denim_fabric_03",
+          "map": "Diffuse",
+          "file": "denim_fabric_03_albedo.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/denim_fabric_03/denim_fabric_03_diff_1k.jpg",
+          "bytes": 1082373,
+          "sourceMd5": "47d393fc300542e8694912fd5201dc8c",
+          "sha256": "4a1d34077a5c999f590a31a056be5f70edac19f254b6d970e41942b335788575"
+        },
+        {
+          "asset": "denim_fabric_03",
+          "map": "nor_gl",
+          "file": "denim_fabric_03_normalGL.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/denim_fabric_03/denim_fabric_03_nor_gl_1k.jpg",
+          "bytes": 981862,
+          "sourceMd5": "5178f20974cb959c88ecf40dc8010bee",
+          "sha256": "9b72b5f97f71d4256acb7ee21e532d7fe8af93c49aabf196cc6692b63bd67c09"
+        },
+        {
+          "asset": "denim_fabric_03",
+          "map": "Rough",
+          "file": "denim_fabric_03_roughness.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/denim_fabric_03/denim_fabric_03_rough_1k.jpg",
+          "bytes": 830762,
+          "sourceMd5": "5c4a7da91600e1cab87bba0f8d6311ed",
+          "sha256": "1c92a2278fb834849ae2c16379a6f5a0e6c616c237654791a93bbdc86c7b1d43"
+        },
+        {
+          "asset": "denim_fabric_03",
+          "map": "AO",
+          "file": "denim_fabric_03_occlusion.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/denim_fabric_03/denim_fabric_03_ao_1k.jpg",
+          "bytes": 718354,
+          "sourceMd5": "00aad4a434653c134fb2cd0ee6c04bf8",
+          "sha256": "bafe8d0b12971a525da4fed336cdd1239cc7d162132d7e0d5679903d65baf5ce"
+        },
+        {
+          "asset": "denim_fabric_03",
+          "map": "Metal",
+          "file": "denim_fabric_03_metalness.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/denim_fabric_03/denim_fabric_03_metal_1k.jpg",
+          "bytes": 960802,
+          "sourceMd5": "3704a105c6e0e77c5958bf5f210fd0ff",
+          "sha256": "f0cbf81b562d5bd809aaad0d0a84c70b133984f51d7877cda80b5b4f31c5dcc2"
+        }
+      ]
+    },
+    {
+      "id": "dirty_carpet",
+      "name": "Dirty Carpet",
+      "authors": {
+        "Rohit Seervi": "All"
+      },
+      "physicalSizeMetres": [
+        0.6,
+        0.6
+      ],
+      "sourcePage": "https://polyhaven.com/a/dirty_carpet",
+      "maps": [
+        {
+          "asset": "dirty_carpet",
+          "map": "Diffuse",
+          "file": "dirty_carpet_albedo.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/dirty_carpet/dirty_carpet_diff_1k.jpg",
+          "bytes": 978020,
+          "sourceMd5": "97c0a4b94e5660c117cc511b240aa3b3",
+          "sha256": "b0ef2b248cb7dfa1d33f1b2215fb3b83e815527d4091a2c3a423bdcd63bef60a"
+        },
+        {
+          "asset": "dirty_carpet",
+          "map": "nor_gl",
+          "file": "dirty_carpet_normalGL.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/dirty_carpet/dirty_carpet_nor_gl_1k.jpg",
+          "bytes": 1089297,
+          "sourceMd5": "f6835454628831b0d8feceba6202e7a1",
+          "sha256": "ba96f6f098ac64456f4cc310469200ff702596a9070d2553f990da8f7b86d29f"
+        },
+        {
+          "asset": "dirty_carpet",
+          "map": "Rough",
+          "file": "dirty_carpet_roughness.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/dirty_carpet/dirty_carpet_rough_1k.jpg",
+          "bytes": 434062,
+          "sourceMd5": "c2862c2725bddaa3ad6bbf5eb0ccb9d8",
+          "sha256": "a2e13692bd7e5af9875150130ce9904c11879e693e70753d417b93121cf65be4"
+        },
+        {
+          "asset": "dirty_carpet",
+          "map": "AO",
+          "file": "dirty_carpet_occlusion.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/dirty_carpet/dirty_carpet_ao_1k.jpg",
+          "bytes": 1157894,
+          "sourceMd5": "b28ed61edeb46112d781aa69e51290e0",
+          "sha256": "36222745d86f5b94be98f2bd03cb1d7aa653e0cf5167c100b13a27b26ded9fbd"
+        }
+      ]
+    },
+    {
+      "id": "bark_brown_02",
+      "name": "Bark Brown 02",
+      "authors": {
+        "Rob Tuytel": "All"
+      },
+      "physicalSizeMetres": [
+        1.0,
+        1.0
+      ],
+      "sourcePage": "https://polyhaven.com/a/bark_brown_02",
+      "maps": [
+        {
+          "asset": "bark_brown_02",
+          "map": "Diffuse",
+          "file": "bark_brown_02_albedo.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/bark_brown_02/bark_brown_02_diff_1k.jpg",
+          "bytes": 659592,
+          "sourceMd5": "6669cca520594bdca19f94084984ab72",
+          "sha256": "920fa0bed0c9d78c1d530e99795113afd532d7db746de440f4a85d7c83ed0f1a"
+        },
+        {
+          "asset": "bark_brown_02",
+          "map": "nor_gl",
+          "file": "bark_brown_02_normalGL.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/bark_brown_02/bark_brown_02_nor_gl_1k.jpg",
+          "bytes": 1015623,
+          "sourceMd5": "1cad3fe0349a44df2d4d1c2859c79920",
+          "sha256": "0d5e691e8ad8bcd093a3587887fda2a6b4a948b5708a4f256f7919584c6eb857"
+        },
+        {
+          "asset": "bark_brown_02",
+          "map": "Rough",
+          "file": "bark_brown_02_roughness.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/bark_brown_02/bark_brown_02_rough_1k.jpg",
+          "bytes": 337946,
+          "sourceMd5": "bbcde696e5b9418cdcb2abe638965417",
+          "sha256": "68125592de36e15bae7aa6db85c4d135aeb7e5653199ba226483a70f6d69837d"
+        },
+        {
+          "asset": "bark_brown_02",
+          "map": "AO",
+          "file": "bark_brown_02_occlusion.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/bark_brown_02/bark_brown_02_ao_1k.jpg",
+          "bytes": 514586,
+          "sourceMd5": "6034e9a388be7d4774da4671993ebb61",
+          "sha256": "f3572613f143ca84885f4b4e03332d9a8723420c740a12750ab538fad7f39552"
+        }
+      ]
+    },
+    {
+      "id": "withered_grass",
+      "name": "Withered Grass",
+      "authors": {
+        "Charlotte Baglioni": "All"
+      },
+      "physicalSizeMetres": [
+        2.0,
+        2.0
+      ],
+      "sourcePage": "https://polyhaven.com/a/withered_grass",
+      "maps": [
+        {
+          "asset": "withered_grass",
+          "map": "Diffuse",
+          "file": "withered_grass_albedo.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/withered_grass/withered_grass_diff_1k.jpg",
+          "bytes": 1138384,
+          "sourceMd5": "a6e00946839a9ab1975457ae4a39823b",
+          "sha256": "8bebfb639ef74f651bc445526c46c845beee52a86d831848b82eb2bbbf2d98ee"
+        },
+        {
+          "asset": "withered_grass",
+          "map": "nor_gl",
+          "file": "withered_grass_normalGL.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/withered_grass/withered_grass_nor_gl_1k.jpg",
+          "bytes": 1472149,
+          "sourceMd5": "1d86c19a4dd4826eeb6db9653f8736bb",
+          "sha256": "5afc122862b4c91fa5fc4d4290e1b61d5abfdfa36a2ae05b754b5a8e32e9a110"
+        },
+        {
+          "asset": "withered_grass",
+          "map": "Rough",
+          "file": "withered_grass_roughness.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/withered_grass/withered_grass_rough_1k.jpg",
+          "bytes": 824502,
+          "sourceMd5": "bd4219a20ed41f88098166497cdbc05d",
+          "sha256": "81057bab0a684eed0ea2189ee522d4a982f65eec5a40b4b8762a28d217c1ac75"
+        },
+        {
+          "asset": "withered_grass",
+          "map": "AO",
+          "file": "withered_grass_occlusion.jpg",
+          "url": "https://dl.polyhaven.org/file/ph-assets/Textures/jpg/1k/withered_grass/withered_grass_ao_1k.jpg",
+          "bytes": 995037,
+          "sourceMd5": "a88b98b56d811698470a415a6813bfa0",
+          "sha256": "ca155891bdfe490aa925e4751e4e5645c70c88f5b16b19e3b0639155a2f6ee91"
+        }
+      ]
+    }
+  ]
+}

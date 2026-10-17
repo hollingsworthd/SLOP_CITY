@@ -1,0 +1,55 @@
+# macOS and Python
+.DS_Store
+__pycache__/
+*.py[cod]
+
+# Blender backup copies; keep the authored .blend file
+*.blend1
+*.blend2
+*.blend@
+
+# Unity regenerates these per machine
+Unity/[Ll]ibrary/
+Unity/[Tt]emp/
+Unity/[Oo]bj/
+Unity/[Ll]ogs/
+Unity/[Uu]ser[Ss]ettings/
+Unity/.vs/
+Unity/.idea/
+Unity/*.csproj
+Unity/*.sln
+Unity/*.slnx
+Unity/*.user
+
+# Executables are distributed as private GitHub release assets
+Unity/Builds/*
+!Unity/Builds/Reports/
+Unity/Builds/Reports/*
+!Unity/Builds/Reports/mac-build.json
+!Unity/Builds/Reports/web-build.json
+!Unity/Builds/Reports/web-browser-check.json
+!Unity/Builds/Reports/mac-smoke-check.json
+!Unity/Builds/Reports/scene-validation.json
+!Unity/Builds/Reports/media-playback-check.json
+!Unity/Builds/Reports/city-playback-check.json
+!Unity/Builds/Reports/sandbox-playback-check.json
+!Unity/Builds/Reports/city-media-playback-check.json
+!Unity/Builds/Reports/metropolis-validation.json
+!Unity/Builds/Reports/realism-validation.json
+!Unity/Builds/Reports/realism-capture-check.json
+!Unity/Builds/Reports/megacity-validation.json
+!Unity/Builds/Reports/megacity-playback-check.json
+!Unity/Builds/Reports/tiktok-parser-validation.json
+!Unity/Builds/Reports/tiktok-playback-check.json
+!Unity/Builds/Reports/tiktok-standalone-check.json
+
+# Local credentials and signing material
+.env
+.env.*
+!.env.example
+*.keystore
+*.jks
+*.p12
+*.pfx
+*.pem
+*.key
