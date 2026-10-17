@@ -17,6 +17,7 @@ namespace SlopCity
     public sealed class SlopCityCityMedia : MonoBehaviour
     {
         private const int ChannelCount = 3;
+        private const int MaximumScreenLoop = 5;
         private const float PrepareTimeout = 25f;
         private const float ResolveTimeout = 120f;
         private const string AnchorPrefix = "SlopCityMediaScreenAnchor_";
@@ -1025,6 +1026,9 @@ namespace SlopCity
                         display.screen.ConfigureFeaturedPost(featured.creator, featured.id,
                             SlopCityFeaturedBillboard.HoldAtSeconds, SlopCityFeaturedBillboard.HoldSeconds);
             }
+            // Preserve an active clip through metadata refresh. Its next boundary
+            // rebuilds the bounded program from the newly reconciled catalogue.
+            foreach (ScreenState display in displays) display.program = null;
             ReconcileScreens();
             nextScreenUpdate = 0f;
         }
@@ -1061,7 +1065,6 @@ namespace SlopCity
             if (channels[2] == null) return;
             var byKey = new Dictionary<string, SlopCityTikTokVideo>(StringComparer.Ordinal);
             foreach (SlopCityTikTokVideo post in channels[2].playlist) byKey[VideoKey(post)] = post;
-            var assigned = new HashSet<string>(StringComparer.Ordinal);
             foreach (ScreenState display in displays)
             {
                 string key = display.post != null ? VideoKey(display.post) : "";
@@ -1077,17 +1080,16 @@ namespace SlopCity
                         else { display.post = featured; display.screen.AssignClip(VideoKey(featured), PostTitle(featured)); }
                     }
                     else if (display.post == null) AssignNextPost(display);
-                    assigned.Add(display.screen.FeaturedClipKey);
                     continue;
                 }
                 bool reserved = displays.Exists(other => other.screen && other.screen.IsFeatured && other.screen.FeaturedClipKey == key);
-                if (!reserved && byKey.TryGetValue(key, out SlopCityTikTokVideo current) && assigned.Add(key))
+                if (!reserved && byKey.TryGetValue(key, out SlopCityTikTokVideo current))
                 {
                     display.post = current;
                     display.screen.AssignClip(key, PostTitle(current));
                     continue;
                 }
-                if (!reserved && display.slot != null && display.slot.ready && display.post != null && assigned.Add(key)) continue;
+                if (!reserved && display.slot != null && display.slot.ready && display.post != null) continue;
                 if (display.slot != null) ReleaseSlot(display.slot);
                 display.post = null;
             }
@@ -1110,51 +1112,81 @@ namespace SlopCity
                     display.post != null ? PostTitle(display.post) : "FEATURED CREATOR BROADCAST");
                 return;
             }
-            var reserved = new HashSet<string>(StringComparer.Ordinal);
-            foreach (ScreenState other in displays) if (other.screen && other.screen.IsFeatured) reserved.Add(other.screen.FeaturedClipKey);
-            var occupied = new HashSet<string>(StringComparer.Ordinal);
-            foreach (ScreenState other in displays)
-                if (other != display && other.post != null) occupied.Add(VideoKey(other.post));
-            int previous = display.post == null ? -1 : available.FindIndex(post => VideoKey(post) == VideoKey(display.post));
-            int start = previous >= 0 ? previous + 1 : display.ordinal;
+            if (display.program == null || display.programChannel != display.screen.Channel)
+            {
+                var reserved = new HashSet<string>(StringComparer.Ordinal);
+                foreach (ScreenState other in displays)
+                    if (other.screen && other.screen.IsFeatured) reserved.Add(other.screen.FeaturedClipKey);
+                string identity = SlopCitySalvageItem.SourceIdentity(display.screen.transform) + ":" + display.screen.Channel;
+                display.program = BuildScreenLoop(available, identity, display.screen.Channel, reserved);
+                display.programChannel = display.screen.Channel;
+                display.programIndex = display.post == null ? -1 : display.program.FindIndex(post => VideoKey(post) == VideoKey(display.post));
+            }
             SlopCityTikTokVideo selected = null;
-            string previousKey = display.post != null ? VideoKey(display.post) : "";
-            for (int pass = 0; pass < 2 && selected == null; pass++)
+            for (int offset = 1; offset <= display.program.Count; offset++)
             {
-                for (int offset = 0; offset < available.Count; offset++)
-                {
-                    SlopCityTikTokVideo post = available[(start + offset) % available.Count];
-                    string key = VideoKey(post);
-                    if (retries.TryGetValue(key, out Retry retry) && Time.unscaledTime < retry.after) continue;
-                    bool preferred = display.screen.Channel == 2 || post.creator
-                        == (display.screen.Channel == 0 ? "machine_publishers" : "1984drh");
-                    if (pass == 0 && !preferred) continue;
-                    if (key == previousKey || occupied.Contains(key) || reserved.Contains(key)) continue;
-                    selected = post;
-                    break;
-                }
-            }
-            // If the entire catalogue is assigned, retaining this clip preserves
-            // uniqueness. Repeats are necessary only when there are fewer posts than screens.
-            if (selected == null && previous >= 0)
-            {
-                SlopCityTikTokVideo current = available[previous];
-                if (!reserved.Contains(VideoKey(current)) && (!retries.TryGetValue(VideoKey(current), out Retry retry) || Time.unscaledTime >= retry.after)) selected = current;
-            }
-            if (selected == null)
-            {
-                foreach (SlopCityTikTokVideo post in available)
-                {
-                    if (reserved.Contains(VideoKey(post)) || (retries.TryGetValue(VideoKey(post), out Retry retry) && Time.unscaledTime < retry.after)) continue;
-                    selected = post;
-                    break;
-                }
+                int index = (display.programIndex + offset) % display.program.Count;
+                SlopCityTikTokVideo candidate = display.program[index];
+                string key = VideoKey(candidate);
+                if (displays.Exists(other => other.screen && other.screen.IsFeatured && other.screen.FeaturedClipKey == key)
+                    || (retries.TryGetValue(key, out Retry retry) && Time.unscaledTime < retry.after)) continue;
+                selected = candidate;
+                display.programIndex = index;
+                break;
             }
             display.post = selected;
             display.generation++;
             display.needsThumbnail = selected != null;
             display.screen.AssignClip(selected != null ? VideoKey(selected) : "archive/" + display.fallback.localFile,
                 selected != null ? PostTitle(selected) : "BUNDLED / " + display.fallback.title);
+        }
+
+        private static List<SlopCityTikTokVideo> BuildScreenLoop(List<SlopCityTikTokVideo> available,
+            string identity, int channel, HashSet<string> reserved)
+        {
+            var result = new List<SlopCityTikTokVideo>(MaximumScreenLoop);
+            if (available == null) return result;
+            uint seed = ScreenProgramRank(identity ?? "", 2166136261u);
+            // Keep creator channels meaningful. Only an empty preferred pool falls
+            // back to the combined catalogue; dedicated broadcasts stay reserved.
+            for (int pass = 0; pass < 2 && result.Count == 0; pass++)
+            {
+                foreach (SlopCityTikTokVideo candidate in available)
+                {
+                    if (candidate == null || string.IsNullOrEmpty(candidate.id)) continue;
+                    string key = VideoKey(candidate);
+                    if (reserved.Contains(key) || result.Exists(post => VideoKey(post) == key)) continue;
+                    bool preferred = channel == 2 || candidate.creator == (channel == 0 ? "machine_publishers" : "1984drh");
+                    if (pass == 0 && !preferred) continue;
+                    uint rank = ScreenProgramRank(key, seed);
+                    int index = 0;
+                    while (index < result.Count)
+                    {
+                        string other = VideoKey(result[index]);
+                        uint otherRank = ScreenProgramRank(other, seed);
+                        if (rank < otherRank || (rank == otherRank && string.CompareOrdinal(key, other) < 0)) break;
+                        index++;
+                    }
+                    if (index >= MaximumScreenLoop) continue;
+                    if (result.Count == MaximumScreenLoop) result.RemoveAt(MaximumScreenLoop - 1);
+                    result.Insert(index, candidate);
+                }
+            }
+            return result;
+        }
+
+        private static uint ScreenProgramRank(string value, uint seed)
+        {
+            // Stable unsigned arithmetic across players; no global random state or
+            // process-randomized string hashes affect screen identity or tuning.
+            unchecked
+            {
+                uint rank = seed;
+                foreach (char character in value) rank = (rank ^ character) * 16777619u;
+                rank ^= rank >> 16; rank *= 0x7feb352du;
+                rank ^= rank >> 15; rank *= 0x846ca68bu;
+                return rank ^ (rank >> 16);
+            }
         }
 
         private int thumbnailRequests;
@@ -2103,6 +2135,8 @@ namespace SlopCity
             public int ordinal, generation;
             public Media fallback;
             public SlopCityTikTokVideo post;
+            public List<SlopCityTikTokVideo> program;
+            public int programChannel = -1, programIndex = -1;
             public RenderTexture texture;
             public Material material;
             public Channel slot;
