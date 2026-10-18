@@ -15,7 +15,8 @@ namespace SlopCity
         private Transform user;
         private SlopCityPlayerInput input;
         private Camera activeCamera;
-        private Action<string> feedback;
+        private Action<string> feedback,npcDialogue;
+        private bool npcDialogueActive;
         private Renderer[] scenery = Array.Empty<Renderer>();
         private Progress progress = new Progress();
         private bool persistenceUnavailable;
@@ -106,8 +107,8 @@ namespace SlopCity
         public string LastJobOutcome => lastJobOutcome ?? "";
         public int Rank => 1 + progress.experience / 300;
         public SlopCityInteractable ObjectiveTarget => HasWaypoint ? steps[stepIndex].site : null;
-        public float SpeedMultiplier => Mathf.Max(Time.time < boostUntil ? 1.3f : 1f,
-            MatrixHunt ? MatrixHunt.MealSpeedMultiplier : 1f);
+        private float MealSpeedMultiplier => MatrixHunt ? MatrixHunt.MealSpeedMultiplier : 1f;
+        public float SpeedMultiplier => Mathf.Max(Time.time < boostUntil ? 1.3f : 1f,MealSpeedMultiplier);
         public bool HasWaypoint => steps.Count > stepIndex && steps[stepIndex].site;
         public Vector3 WaypointPosition => TryUniqueResidentWaypoint(out Vector3 residentPosition, out _) ? residentPosition : HasWaypoint ? steps[stepIndex].site.InteractionPoint : user ? user.position : Vector3.zero;
         public string WaypointLabel => TryUniqueResidentWaypoint(out _, out string residentLabel) ? residentLabel : HasWaypoint ? steps[stepIndex].site.DisplayName : "Use the city and check a dispatch terminal";
@@ -167,16 +168,17 @@ namespace SlopCity
             public int npcIndex;
         }
 
-        public void Initialize(Transform player, Action<string> onFeedback = null)
+        public void Initialize(Transform player, Action<string> onFeedback = null, Action<string> onNpcDialogue = null)
         {
             if (initialized)
             {
                 user = player; input = player ? player.GetComponent<SlopCityPlayerInput>() : null;
                 if (onFeedback != null) feedback = onFeedback;
+                if (onNpcDialogue != null) npcDialogue = onNpcDialogue;
                 return;
             }
             user = player;
-            feedback = onFeedback;
+            feedback = onFeedback; npcDialogue = onNpcDialogue;
             input = player ? player.GetComponent<SlopCityPlayerInput>() : null;
             try
             {
@@ -382,15 +384,21 @@ namespace SlopCity
             if (target.isNpc && SlopCityCrowd.Instance)
             {
                 if (!SlopCityCrowd.Instance.IsResidentPresented(target.npcIndex)) return false;
-                if (TryUniqueResidentInteraction(camera, target.npcIndex, out bool barterCompleted))
-                { if (barterCompleted) AdvanceContract(); else Save(); return true; }
-                if (MatrixHunt && MatrixHunt.TryContact(target.npcIndex, out string contact))
+                bool previousDialogue=npcDialogueActive;
+                npcDialogueActive=true;
+                try
                 {
-                    SlopCityCrowd.Instance.TryTalk(target.npcIndex, camera.transform.position, out _);
-                    Say(contact); return true;
+                    if (TryUniqueResidentInteraction(camera, target.npcIndex, out bool barterCompleted))
+                    { if (barterCompleted) AdvanceContract(); else Save(); return true; }
+                    if (MatrixHunt && MatrixHunt.TryContact(target.npcIndex, out string contact))
+                    {
+                        SlopCityCrowd.Instance.TryTalk(target.npcIndex, camera.transform.position, out _);
+                        Say(contact); return true;
+                    }
+                    if (SlopCityCrowd.Instance.TryTalk(target.npcIndex, camera.transform.position, out string line)) Say(line);
+                    return true;
                 }
-                if (SlopCityCrowd.Instance.TryTalk(target.npcIndex, camera.transform.position, out string line)) Say(line);
-                return true;
+                finally { npcDialogueActive=previousDialogue; }
             }
             SlopCityPawnCounter pawn = target.transform.GetComponentInParent<SlopCityPawnCounter>();
             if (pawn) { OpenInventory(pawn); return true; }
@@ -1389,8 +1397,9 @@ namespace SlopCity
             if (!vehicle || input == null) return;
             dt = Mathf.Min(dt, .05f);
             Vector2 axes = CanDriveJobVehicle(vehicle.transform) ? input.ReadMovement() : Vector2.zero;
-            float targetSpeed = axes.y >= 0f ? axes.y * 13f : axes.y * 5f;
-            vehicleSpeed = Mathf.MoveTowards(vehicleSpeed, targetSpeed, (axes.y == 0f ? 6f : 9f) * dt);
+            float mealSpeed = MealSpeedMultiplier;
+            float targetSpeed = (axes.y >= 0f ? axes.y * 13f : axes.y * 5f) * mealSpeed;
+            vehicleSpeed = Mathf.MoveTowards(vehicleSpeed, targetSpeed, (axes.y == 0f ? 6f : 9f) * mealSpeed * dt);
             Transform car = vehicle.transform;
             float steering = axes.x * Mathf.Clamp(vehicleSpeed / 3f, -1f, 1f) * 58f * dt;
             Quaternion rotation = car.rotation * Quaternion.Euler(0f, steering, 0f);
@@ -1518,7 +1527,8 @@ namespace SlopCity
         private void Say(string message)
         {
             if (municipalOperationActive) municipalOperationMessage = message;
-            feedback?.Invoke(persistenceUnavailable ? message + " " + PersistenceNotice : message);
+            Action<string> present=npcDialogueActive&&npcDialogue!=null?npcDialogue:feedback;
+            present?.Invoke(persistenceUnavailable ? message + " " + PersistenceNotice : message);
         }
         private bool Save()
         {

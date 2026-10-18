@@ -534,7 +534,13 @@ namespace SlopCity
         }
         internal static Transform Root(Transform parent, string name, Vector3 position = default(Vector3))
         {
-            Transform root = new GameObject(name).transform; root.SetParent(parent, false); root.localPosition = position; return root;
+            GameObject root = new GameObject(name);
+            try { root.transform.SetParent(parent, false); root.transform.localPosition = position; return root.transform; }
+            catch
+            {
+                if (Application.isPlaying) UnityEngine.Object.Destroy(root); else UnityEngine.Object.DestroyImmediate(root);
+                throw;
+            }
         }
         internal static GameObject Box(Transform parent, string name, Vector3 point, Vector3 size, Material material, bool solid = false)
         {

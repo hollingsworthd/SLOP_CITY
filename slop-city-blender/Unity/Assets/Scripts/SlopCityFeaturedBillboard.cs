@@ -30,7 +30,9 @@ namespace SlopCity
             owner.transform.position = marker.position + Vector3.up * (7.0f - marker.position.y);
             owner.transform.rotation = Quaternion.Euler(0, 90f, 0);
             var billboard = owner.AddComponent<SlopCityFeaturedBillboard>();
-            billboard.frameMaterial = new Material(shader) { name = "Featured broadcast charcoal steel", color = new Color(.025f, .035f, .042f) };
+            billboard.frameMaterial = new Material(shader);
+            billboard.frameMaterial.name = "Featured broadcast charcoal steel";
+            billboard.frameMaterial.color = new Color(.025f, .035f, .042f);
             if (billboard.frameMaterial.HasProperty("_Metallic")) billboard.frameMaterial.SetFloat("_Metallic", .65f);
             if (billboard.frameMaterial.HasProperty("_Glossiness")) billboard.frameMaterial.SetFloat("_Glossiness", .25f);
             billboard.Box("Featured_Back", new Vector3(0, 0, .10f), new Vector3(Width + .22f, Height + .22f, .20f));

@@ -18,11 +18,11 @@ namespace SlopCity
         private void Build(Transform city)
         {
             Shader shader=Shader.Find("Standard")??Shader.Find("Unlit/Color");if(!shader)return;
-            enamel=new Material(shader){name="London telephone booth red enamel",color=new Color(.64f,.025f,.035f)};
-            metal=new Material(shader){name="Telephone brushed silver",color=new Color(.44f,.52f,.57f)};
-            display=new Material(shader){name="Unpowered phone display",color=new Color(.055f,.065f,.06f)};
-            ivory=new Material(shader){name="Telephone sign ivory",color=new Color(.94f,.91f,.81f)};
-            glass=new Material(shader){name="Telephone booth clear glass",color=new Color(.63f,.80f,.84f,.20f)};
+            enamel=new Material(shader);enamel.name="London telephone booth red enamel";enamel.color=new Color(.64f,.025f,.035f);
+            metal=new Material(shader);metal.name="Telephone brushed silver";metal.color=new Color(.44f,.52f,.57f);
+            display=new Material(shader);display.name="Unpowered phone display";display.color=new Color(.055f,.065f,.06f);
+            ivory=new Material(shader);ivory.name="Telephone sign ivory";ivory.color=new Color(.94f,.91f,.81f);
+            glass=new Material(shader);glass.name="Telephone booth clear glass";glass.color=new Color(.63f,.80f,.84f,.20f);
             glass.SetFloat("_Mode",3);glass.SetInt("_SrcBlend",(int)BlendMode.SrcAlpha);glass.SetInt("_DstBlend",(int)BlendMode.OneMinusSrcAlpha);
             glass.SetInt("_ZWrite",0);glass.EnableKeyword("_ALPHABLEND_ON");glass.renderQueue=(int)RenderQueue.Transparent;
             foreach(Transform junction in city)

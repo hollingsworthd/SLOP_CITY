@@ -513,7 +513,8 @@ namespace SlopCity
                 }
             }
             Mesh mesh = Instantiate(source);
-            ownedFacadeMeshes.Add(mesh);
+            try { ownedFacadeMeshes.Add(mesh); }
+            catch { ownedFacadeMeshes.Remove(mesh); if (Application.isPlaying) Destroy(mesh); else DestroyImmediate(mesh); throw; }
             mesh.name = "Runtime_Entrance_Core_" + serial;
             mesh.indexFormat = vertices.Count > 65535 ? UnityEngine.Rendering.IndexFormat.UInt32 : UnityEngine.Rendering.IndexFormat.UInt16;
             mesh.SetVertices(vertices);
@@ -589,8 +590,10 @@ namespace SlopCity
                         indices.AddRange(new[] { first, first + 2, first + 1, first + 2, first + 3, first + 1 });
                     }
                 }
-                Mesh mesh = new Mesh { name = "Runtime_Entrance_Facade_" + serial };
-                ownedFacadeMeshes.Add(mesh);
+                Mesh mesh = new Mesh();
+                try { ownedFacadeMeshes.Add(mesh); }
+                catch { ownedFacadeMeshes.Remove(mesh); if (Application.isPlaying) Destroy(mesh); else DestroyImmediate(mesh); throw; }
+                mesh.name = "Runtime_Entrance_Facade_" + serial;
                 mesh.SetVertices(vertices); mesh.SetUVs(0, uvs); mesh.SetTriangles(indices, 0); mesh.RecalculateBounds(); mesh.RecalculateNormals();
                 originalFacadeMeshes[filter] = filter.sharedMesh;
                 filter.sharedMesh = mesh;

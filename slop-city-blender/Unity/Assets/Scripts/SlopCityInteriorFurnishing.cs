@@ -218,10 +218,12 @@ namespace SlopCity
         {
             foreach (var group in groups)
             {
-                Mesh mesh = new Mesh { name = "Streamed_Interior_Details" };
+                Mesh mesh = new Mesh();
                 // Own before fallible native processing. Floor unload and failed builds
                 // share this component's cleanup, just like normal streamed furniture.
-                meshes.Add(mesh);
+                try { meshes.Add(mesh); }
+                catch { meshes.Remove(mesh); if (Application.isPlaying) Destroy(mesh); else DestroyImmediate(mesh); throw; }
+                mesh.name = "Streamed_Interior_Details";
                 mesh.CombineMeshes(group.Value.ToArray(), true, true);
                 mesh.RecalculateBounds();
                 // These finished detail batches are render-only. Retaining another

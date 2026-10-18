@@ -81,6 +81,7 @@ namespace SlopCity
             var replacements = new Dictionary<MeshFilter, Mesh>();
             var originals = new Dictionary<MeshFilter, Mesh>();
             sourceTriangles = resultTriangles = 0;
+            int initialMeshes = ownedMeshes.Count;
             try
             {
                 foreach (MeshFilter filter in GetComponentsInChildren<MeshFilter>(true))
@@ -89,6 +90,8 @@ namespace SlopCity
                     if (!source) continue;
                     Matrix4x4 toCitadel = transform.worldToLocalMatrix * filter.transform.localToWorldMatrix;
                     Mesh hollow = Subtract(source, toCitadel, voids, out int before, out int after);
+                    try { ownedMeshes.Add(hollow); }
+                    catch { ownedMeshes.Remove(hollow); if (Application.isPlaying) Destroy(hollow); else DestroyImmediate(hollow); throw; }
                     sourceTriangles += before; resultTriangles += after;
                     replacements.Add(filter, hollow);
                     originals.Add(filter, source);
@@ -99,16 +102,16 @@ namespace SlopCity
                 foreach (var replacement in replacements)
                 {
                     replacement.Key.sharedMesh = replacement.Value;
-                    ownedMeshes.Add(replacement.Value);
+                    // Mesh ownership was acquired before building the replacement maps.
                 }
                 prepared = true;
             }
             catch
             {
                 foreach (var original in originals) if (original.Key) original.Key.sharedMesh = original.Value;
-                foreach (Mesh mesh in replacements.Values)
+                for (int index = ownedMeshes.Count - 1; index >= initialMeshes; index--)
                 {
-                    ownedMeshes.Remove(mesh);
+                    Mesh mesh = ownedMeshes[index]; ownedMeshes.RemoveAt(index);
                     if (Application.isPlaying) Destroy(mesh); else DestroyImmediate(mesh);
                 }
                 sourceTriangles = resultTriangles = 0;
@@ -174,9 +177,11 @@ namespace SlopCity
                     }
                 }
             }
-            var mesh = new Mesh { name = source.name + "_AccessibleCitadel", indexFormat = vertices.Count > 65535 ? IndexFormat.UInt32 : IndexFormat.UInt16 };
+            var mesh = new Mesh();
             try
             {
+                mesh.name = source.name + "_AccessibleCitadel";
+                mesh.indexFormat = vertices.Count > 65535 ? IndexFormat.UInt32 : IndexFormat.UInt16;
                 mesh.SetVertices(vertices); mesh.SetNormals(normals); mesh.SetUVs(0, uv);
                 if (uv2Available) mesh.SetUVs(1, uv2);
                 if (colorsAvailable) mesh.SetColors(colors);

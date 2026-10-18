@@ -122,7 +122,23 @@ namespace SlopCity
 #endif
             if (!finishShader) finishShader = Shader.Find("Hidden/SlopCity/CameraFinish");
             if (!material && finishShader && finishShader.isSupported)
-                material = new Material(finishShader) { hideFlags = HideFlags.HideAndDontSave };
+                material = CreateFinishMaterial(finishShader);
+        }
+
+        private static Material CreateFinishMaterial(Shader shader)
+        {
+            Material result = null;
+            try
+            {
+                result = new Material(shader);
+                result.hideFlags = HideFlags.HideAndDontSave;
+                return result;
+            }
+            catch
+            {
+                if (result) { if (Application.isPlaying) Destroy(result); else DestroyImmediate(result); }
+                throw;
+            }
         }
 
 #if UNITY_WEBGL && !UNITY_EDITOR

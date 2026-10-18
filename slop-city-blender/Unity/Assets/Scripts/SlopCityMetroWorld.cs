@@ -245,41 +245,51 @@ namespace SlopCity
 
         private void BuildTrack(Mesh cube, Material floor, Material wall, Material metal)
         {
-            Transform root = Root(transform, "Continuous_Metro_Track", Vector3.zero);
             var meshes = new List<Mesh>();
-            for (int leg = 0; leg < StationCount; leg++)
+            Transform root = null;
+            try
             {
-                Strip bed = new Strip(), rails = new Strip(), enclosure = new Strip();
-                int segments = Mathf.Max(24, Mathf.CeilToInt(LegLength(leg) / 2f));
-                for (int segment = 0; segment < segments; segment++)
+                root = Root(transform, "Continuous_Metro_Track", Vector3.zero);
+                for (int leg = 0; leg < StationCount; leg++)
                 {
-                    SampleLeg(leg, segment / (float)segments, out Vector3 a, out Quaternion qa);
-                    SampleLeg(leg, (segment + 1f) / segments, out Vector3 b, out Quaternion qb);
-                    Vector3 za = qa * Vector3.forward, zb = qb * Vector3.forward;
-                    Vector3 up = Vector3.up;
-                    bed.Quad(a + za * 3.2f - up * .01f, b + zb * 3.2f - up * .01f, b - zb * 3.2f - up * .01f, a - za * 3.2f - up * .01f);
-                    foreach (float side in new[] { -1f, 1f })
+                    Strip bed = new Strip(), rails = new Strip(), enclosure = new Strip();
+                    int segments = Mathf.Max(24, Mathf.CeilToInt(LegLength(leg) / 2f));
+                    for (int segment = 0; segment < segments; segment++)
                     {
-                        Vector3 ar = a + za * side + up * .06f, br = b + zb * side + up * .06f;
-                        rails.Quad(ar + za * .04f, br + zb * .04f, br - zb * .04f, ar - za * .04f);
-                        rails.Quad(ar - za * .04f, br - zb * .04f, br - zb * .04f - up * .06f, ar - za * .04f - up * .06f);
-                        rails.Quad(ar + za * .04f - up * .06f, br + zb * .04f - up * .06f, br + zb * .04f, ar + za * .04f);
+                        SampleLeg(leg, segment / (float)segments, out Vector3 a, out Quaternion qa);
+                        SampleLeg(leg, (segment + 1f) / segments, out Vector3 b, out Quaternion qb);
+                        Vector3 za = qa * Vector3.forward, zb = qb * Vector3.forward;
+                        Vector3 up = Vector3.up;
+                        bed.Quad(a + za * 3.2f - up * .01f, b + zb * 3.2f - up * .01f, b - zb * 3.2f - up * .01f, a - za * 3.2f - up * .01f);
+                        foreach (float side in new[] { -1f, 1f })
+                        {
+                            Vector3 ar = a + za * side + up * .06f, br = b + zb * side + up * .06f;
+                            rails.Quad(ar + za * .04f, br + zb * .04f, br - zb * .04f, ar - za * .04f);
+                            rails.Quad(ar - za * .04f, br - zb * .04f, br - zb * .04f - up * .06f, ar - za * .04f - up * .06f);
+                            rails.Quad(ar + za * .04f - up * .06f, br + zb * .04f - up * .06f, br + zb * .04f, ar + za * .04f);
+                        }
+                        enclosure.Quad(a - za * 3.6f + up * 3.38f, b - zb * 3.6f + up * 3.38f, b + zb * 3.6f + up * 3.38f, a + za * 3.6f + up * 3.38f);
+                        // The outer wall remains continuous behind each train. Only the
+                        // platform-facing wall opens, so an arriving passenger can board.
+                        enclosure.Quad(a + za * 3.6f, a + za * 3.6f + up * 3.38f, b + zb * 3.6f + up * 3.38f, b + zb * 3.6f);
+                        GetStopPose(leg, out Vector3 departure, out _); GetStopPose(leg + 1, out Vector3 arrival, out _);
+                        Vector3 middle = (a + b) * .5f;
+                        if (Vector3.Distance(middle, departure) < 10 || Vector3.Distance(middle, arrival) < 10) continue;
+                        enclosure.Quad(a - za * 3.6f + up * 3.38f, a - za * 3.6f, b - zb * 3.6f, b - zb * 3.6f + up * 3.38f);
                     }
-                    enclosure.Quad(a - za * 3.6f + up * 3.38f, b - zb * 3.6f + up * 3.38f, b + zb * 3.6f + up * 3.38f, a + za * 3.6f + up * 3.38f);
-                    // The outer wall remains continuous behind each train. Only the
-                    // platform-facing wall opens, so an arriving passenger can board.
-                    enclosure.Quad(a + za * 3.6f, a + za * 3.6f + up * 3.38f, b + zb * 3.6f + up * 3.38f, b + zb * 3.6f);
-                    GetStopPose(leg, out Vector3 departure, out _); GetStopPose(leg + 1, out Vector3 arrival, out _);
-                    Vector3 middle = (a + b) * .5f;
-                    if (Vector3.Distance(middle, departure) < 10 || Vector3.Distance(middle, arrival) < 10) continue;
-                    enclosure.Quad(a - za * 3.6f + up * 3.38f, a - za * 3.6f, b - zb * 3.6f, b - zb * 3.6f + up * 3.38f);
+                    MakeStrip(root, "Track_Bed_" + leg, bed, floor, meshes);
+                    MakeStrip(root, "Running_Rails_" + leg, rails, metal, meshes);
+                    MakeStrip(root, "Tunnel_Envelope_" + leg, enclosure, wall, meshes);
                 }
-                MakeStrip(root, "Track_Bed_" + leg, bed, floor, meshes);
-                MakeStrip(root, "Running_Rails_" + leg, rails, metal, meshes);
-                MakeStrip(root, "Tunnel_Envelope_" + leg, enclosure, wall, meshes);
+                trackMeshes = meshes.ToArray();
+                ownsTrackMeshes = true;
             }
-            trackMeshes = meshes.ToArray();
-            ownsTrackMeshes = true;
+            catch
+            {
+                foreach (Mesh mesh in meshes) if (mesh) Dispose(mesh);
+                if (root) Dispose(root.gameObject);
+                throw;
+            }
         }
 
         private static TextMesh Label(Transform station, string name, Vector3 position, Quaternion rotation, TextMesh donor, int stop)
@@ -304,13 +314,21 @@ namespace SlopCity
         private static void MakeStrip(Transform root, string name, Strip strip, Material material, List<Mesh> owned)
         {
             if (strip.vertices.Count == 0) return;
-            Mesh mesh = new Mesh { name = name }; mesh.SetVertices(strip.vertices); mesh.SetTriangles(strip.triangles, 0); mesh.SetUVs(0, strip.uv); mesh.RecalculateNormals(); mesh.RecalculateBounds(); owned.Add(mesh);
-            GameObject target = new GameObject(name); target.transform.SetParent(root, false);
-            // Vertices were sampled in world space; put them in this transform's local space once.
-            Vector3[] vertices = mesh.vertices; for (int index = 0; index < vertices.Length; index++) vertices[index] = target.transform.InverseTransformPoint(vertices[index]);
-            mesh.vertices = vertices; mesh.RecalculateNormals(); mesh.RecalculateBounds();
-            target.AddComponent<MeshFilter>().sharedMesh = mesh; target.AddComponent<MeshRenderer>().sharedMaterial = material;
-            target.AddComponent<MeshCollider>().sharedMesh = mesh; target.isStatic = true;
+            Mesh mesh = new Mesh();
+            try { owned.Add(mesh); }
+            catch { owned.Remove(mesh); Dispose(mesh); throw; }
+            mesh.name = name; mesh.SetVertices(strip.vertices); mesh.SetTriangles(strip.triangles, 0); mesh.SetUVs(0, strip.uv); mesh.RecalculateNormals(); mesh.RecalculateBounds();
+            GameObject target = new GameObject(name);
+            try
+            {
+                target.transform.SetParent(root, false);
+                // Vertices were sampled in world space; put them in this transform's local space once.
+                Vector3[] vertices = mesh.vertices; for (int index = 0; index < vertices.Length; index++) vertices[index] = target.transform.InverseTransformPoint(vertices[index]);
+                mesh.vertices = vertices; mesh.RecalculateNormals(); mesh.RecalculateBounds();
+                target.AddComponent<MeshFilter>().sharedMesh = mesh; target.AddComponent<MeshRenderer>().sharedMaterial = material;
+                target.AddComponent<MeshCollider>().sharedMesh = mesh; target.isStatic = true;
+            }
+            catch { Dispose(target); throw; }
         }
 
         private sealed class Strip
@@ -349,7 +367,11 @@ namespace SlopCity
         }
 
         private static Transform Root(Transform parent, string name, Vector3 position)
-        { var root = new GameObject(name).transform; root.SetParent(parent, false); root.localPosition = position; return root; }
+        {
+            var root = new GameObject(name);
+            try { root.transform.SetParent(parent, false); root.transform.localPosition = position; return root.transform; }
+            catch { Dispose(root); throw; }
+        }
         private static GameObject Box(Transform parent, string name, Vector3 position, Vector3 size, Mesh cube, Material material)
         {
             GameObject box = new GameObject(name); box.transform.SetParent(parent, false); box.transform.localPosition = position; box.transform.localScale = size;

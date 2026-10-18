@@ -142,9 +142,10 @@ namespace SlopCity
         { rect.anchorMin=min;rect.anchorMax=max;rect.offsetMin=rect.offsetMax=Vector2.zero; }
         private static Sprite MakeDisc()
         {
-            var texture=new Texture2D(64,64,TextureFormat.RGBA32,false) { name="TouchControlDisc",filterMode=FilterMode.Bilinear };
+            var texture=new Texture2D(64,64,TextureFormat.RGBA32,false);
             try
             {
+                texture.name="TouchControlDisc";texture.filterMode=FilterMode.Bilinear;
                 var pixels=new Color[64*64];
                 for(int y=0;y<64;y++)for(int x=0;x<64;x++)
                 { float radius=Vector2.Distance(new Vector2(x+.5f,y+.5f),new Vector2(32,32));pixels[y*64+x]=new Color(1,1,1,Mathf.Clamp01(32-radius)); }

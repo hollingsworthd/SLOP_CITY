@@ -333,7 +333,15 @@ namespace SlopCity
     internal sealed class SlopCityUtilityResources : MonoBehaviour
     {
         private readonly List<Material> materials = new List<Material>();
-        internal void Own(Material material) { materials.Add(material); }
+        internal void Own(Material material)
+        {
+            try { materials.Add(material); }
+            catch
+            {
+                if (material) { if (Application.isPlaying) Destroy(material); else DestroyImmediate(material); }
+                throw;
+            }
+        }
         private void OnDestroy()
         {
             foreach (Material material in materials)

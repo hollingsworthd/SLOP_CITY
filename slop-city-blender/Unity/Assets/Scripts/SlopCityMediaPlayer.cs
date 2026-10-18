@@ -647,32 +647,47 @@ namespace SlopCity
                     originalLetteringEnabled[i] = screenLettering[i] && screenLettering[i].enabled;
                 capturedDisplay = true;
             }
-            if (!screenTexture)
+            RenderTexture previousTexture = screenTexture;
+            Material previousMaterial = screenMaterial;
+            try
             {
-#if UNITY_WEBGL && !UNITY_EDITOR
-                screenTexture = new RenderTexture(MobileWebBudget ? 480 : 960, MobileWebBudget ? 270 : 540, 0, RenderTextureFormat.ARGB32)
-#else
-                screenTexture = new RenderTexture(1280, 720, 0, RenderTextureFormat.ARGB32)
-#endif
+                if (!screenTexture)
                 {
-                    name = "SlopCity_TelevisionVideo",
-                    filterMode = FilterMode.Bilinear,
-                    wrapMode = TextureWrapMode.Clamp,
-                    useMipMap = false,
-                    autoGenerateMips = false
-                };
+#if UNITY_WEBGL && !UNITY_EDITOR
+                    screenTexture = new RenderTexture(MobileWebBudget ? 480 : 960, MobileWebBudget ? 270 : 540, 0, RenderTextureFormat.ARGB32);
+#else
+                    screenTexture = new RenderTexture(1280, 720, 0, RenderTextureFormat.ARGB32);
+#endif
+                    screenTexture.name = "SlopCity_TelevisionVideo";
+                    screenTexture.filterMode = FilterMode.Bilinear;
+                    screenTexture.wrapMode = TextureWrapMode.Clamp;
+                    screenTexture.useMipMap = false;
+                    screenTexture.autoGenerateMips = false;
+                }
+                if (!screenTexture.IsCreated() && !screenTexture.Create())
+                    throw new InvalidOperationException("Video texture allocation failed.");
+                if (!screenMaterial)
+                {
+                    screenMaterial = new Material(screenShader);
+                    screenMaterial.name = "SlopCity_TelevisionVideo_Runtime";
+                    screenMaterial.mainTexture = screenTexture;
+                }
+                return true;
             }
-            if (!screenTexture.IsCreated() && !screenTexture.Create())
+            catch (Exception error)
             {
+                // Retire only allocations made by this attempt. A pre-existing
+                // still picture remains owned and usable after a failed retry.
+                Material failedMaterial = screenMaterial;
+                RenderTexture failedTexture = screenTexture;
+                screenMaterial = previousMaterial;
+                screenTexture = previousTexture;
+                try { if (failedMaterial && failedMaterial != previousMaterial) Destroy(failedMaterial); }
+                finally { if (failedTexture != previousTexture) DisposeDisplayTexture(failedTexture); }
+                Debug.LogWarning("SLOP CITY: Television display: " + error.GetType().Name, this);
                 Fail("The television could not start its video display. Try again.");
                 return false;
             }
-            if (!screenMaterial)
-            {
-                screenMaterial = new Material(screenShader) { name = "SlopCity_TelevisionVideo_Runtime" };
-                screenMaterial.mainTexture = screenTexture;
-            }
-            return true;
         }
 
         private void SetDisplayVisible(bool visible)
@@ -732,20 +747,29 @@ namespace SlopCity
 
         private void ReleaseDisplay()
         {
-            SetDisplayVisible(false);
-            if (screenMaterial) Destroy(screenMaterial);
-            if (screenTexture)
+            try { SetDisplayVisible(false); }
+            finally
             {
-                screenTexture.Release();
-                Destroy(screenTexture);
-            }
-            screenMaterial = null;
-            screenTexture = null;
+                Material material = screenMaterial;
+                RenderTexture texture = screenTexture;
+                screenMaterial = null;
+                screenTexture = null;
 #if UNITY_WEBGL && !UNITY_EDITOR
-            webHasPicture = false;
+                webHasPicture = false;
 #endif
-            capturedDisplay = false;
-            originalLetteringEnabled = null;
+                capturedDisplay = false;
+                originalLetteringEnabled = null;
+                try { if (material) Destroy(material); }
+                finally { DisposeDisplayTexture(texture); }
+            }
+        }
+
+        private static void DisposeDisplayTexture(RenderTexture texture)
+        {
+            if (!texture) return;
+            try { texture.Release(); }
+            catch (Exception error) { Debug.LogWarning("SLOP CITY: Television texture release: " + error.GetType().Name); }
+            finally { Destroy(texture); }
         }
 
         private static double FiniteSeconds(double value)

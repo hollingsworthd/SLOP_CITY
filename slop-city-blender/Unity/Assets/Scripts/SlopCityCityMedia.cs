@@ -253,7 +253,9 @@ namespace SlopCity
             {
                 if (!screen.AudioOnly)
                 {
-                    state.material = new Material(screenShader) { name = "CityScreenMaterial_" + state.ordinal, mainTexture = Texture2D.blackTexture };
+                    state.material = new Material(screenShader);
+                    state.material.name = "CityScreenMaterial_" + state.ordinal;
+                    state.material.mainTexture = Texture2D.blackTexture;
                     if (!MobileWebBudget && !EnsureScreenTexture(state)) throw new InvalidOperationException("Video texture allocation failed.");
                 }
                 screen.Tune(selected, state.material);
@@ -265,9 +267,12 @@ namespace SlopCity
             catch (Exception error)
             {
                 screens.Remove(screen); displays.Remove(state); displayLookup.Remove(screen);
-                screen.Restore();
-                if (state.material) Destroy(state.material);
-                if (state.texture) { state.texture.Release(); Destroy(state.texture); }
+                try { screen.Restore(); }
+                finally
+                {
+                    try { if (state.material) Destroy(state.material); }
+                    finally { DisposeScreenTexture(state.texture); }
+                }
                 Debug.LogWarning("City display unavailable: " + error.GetType().Name, this);
             }
         }
@@ -383,17 +388,31 @@ namespace SlopCity
         private void RemoveScreen(ScreenState display)
         {
             display.generation++;
-            if (display.slot != null) ReleaseSlot(display.slot);
-            if (audioOwner == display) { audioOwner = null; audioGain = focusedAudioGain = 0f; }
-            if (desiredAudioOwner == display) desiredAudioOwner = null;
-            if (mobilePendingOwner == display) mobilePendingOwner = null;
-            if (display.screen) display.screen.Restore();
-            displayLookup.Remove(display.screen);
-            screens.Remove(display.screen);
-            displays.Remove(display);
-            candidates.Remove(display);
-            ReleaseScreenTexture(display);
-            if (display.material) Destroy(display.material);
+            try
+            {
+                if (display.slot != null) ReleaseSlot(display.slot);
+            }
+            finally
+            {
+                if (audioOwner == display) { audioOwner = null; audioGain = focusedAudioGain = 0f; }
+                if (desiredAudioOwner == display) desiredAudioOwner = null;
+                if (mobilePendingOwner == display) mobilePendingOwner = null;
+                displayLookup.Remove(display.screen);
+                screens.Remove(display.screen);
+                displays.Remove(display);
+                candidates.Remove(display);
+                try { if (display.screen) display.screen.Restore(); }
+                finally
+                {
+                    try { ReleaseScreenTexture(display); }
+                    finally
+                    {
+                        Material material = display.material;
+                        display.material = null;
+                        if (material) Destroy(material);
+                    }
+                }
+            }
             // Retry entries are shared clip/catalog backoff, rather than screen
             // ownership. Removing them here would reset another display's retry.
         }
@@ -443,10 +462,19 @@ namespace SlopCity
             display.generation++;
             if (keepPausedVideo) display.pausedVideoGeneration = display.generation;
             else ClearPausedVideo(display);
-            if (display.material) display.material.mainTexture = Texture2D.blackTexture;
-            if (display.texture) { display.texture.Release(); Destroy(display.texture); }
+            RenderTexture texture = display.texture;
             display.texture = null;
+            try { if (display.material) display.material.mainTexture = Texture2D.blackTexture; }
+            finally { DisposeScreenTexture(texture); }
             display.needsThumbnail = !display.screen.AudioOnly && display.post != null;
+        }
+
+        private static void DisposeScreenTexture(RenderTexture texture)
+        {
+            if (!texture) return;
+            try { texture.Release(); }
+            catch (Exception error) { Debug.LogWarning("City texture release: " + error.GetType().Name); }
+            finally { Destroy(texture); }
         }
 
         private void RefreshMobileScreenTextures()
@@ -881,22 +909,33 @@ namespace SlopCity
         private void ReleaseSlot(Channel signal)
         {
             ScreenState previous = signal.owner;
-            StopPlayback(signal);
-            ReleasePhoto(signal);
-            // Stop alone retains the browser decoder and its upload scratch texture.
-            // Retire phone slots completely before another device prepares a clip.
-            if (MobileWebBudget) ReleasePlayback(signal);
-            signal.operation++;
-            signal.resolving = false;
-            signal.advance = false;
-            signal.hasScreen = false;
-            signal.currentVideo = signal.pendingVideo = null;
-            signal.owner = null;
-            signal.texture = null;
-            signal.material = null;
-            if (previous != null) previous.slot = null;
-            if (audioOwner == previous) { audioOwner = null; audioGain = 0f; }
-            if (desiredAudioOwner == previous) desiredAudioOwner = null;
+            try { StopPlayback(signal); }
+            finally
+            {
+                try { ReleasePhoto(signal); }
+                finally
+                {
+                    try
+                    {
+                        // Retire phone slots even when native Stop has failed.
+                        if (MobileWebBudget) ReleasePlayback(signal);
+                    }
+                    finally
+                    {
+                        signal.operation++;
+                        signal.resolving = false;
+                        signal.advance = false;
+                        signal.hasScreen = false;
+                        signal.currentVideo = signal.pendingVideo = null;
+                        signal.owner = null;
+                        signal.texture = null;
+                        signal.material = null;
+                        if (previous != null) previous.slot = null;
+                        if (audioOwner == previous) { audioOwner = null; audioGain = 0f; }
+                        if (desiredAudioOwner == previous) desiredAudioOwner = null;
+                    }
+                }
+            }
         }
 
         private void AdvanceScreen(Channel signal)
@@ -1720,14 +1759,21 @@ namespace SlopCity
         private static void ReleasePhoto(Channel signal)
         {
             signal.photoGeneration++;
-            if (signal.audio && signal.photoAudio) { signal.audio.Stop(); signal.audio.clip = null; }
-            if (signal.photoAudio) Destroy(signal.photoAudio);
+            AudioClip clip = signal.photoAudio;
             signal.photoAudio = null;
-            signal.slideshow = false;
-            signal.resumeImage = false;
-            signal.audioLoading = signal.resumeAudio = false;
-            signal.audioStarted = false;
-            signal.imageIndex = -1;
+            try
+            {
+                if (signal.audio && clip) { signal.audio.Stop(); signal.audio.clip = null; }
+            }
+            finally
+            {
+                if (clip) Destroy(clip);
+                signal.slideshow = false;
+                signal.resumeImage = false;
+                signal.audioLoading = signal.resumeAudio = false;
+                signal.audioStarted = false;
+                signal.imageIndex = -1;
+            }
         }
 
         private void FailChannel(Channel signal, string error)
@@ -2039,13 +2085,17 @@ namespace SlopCity
 
         private static void ReleasePlayback(Channel signal)
         {
-            StopPlayback(signal);
-            if (signal.session) Destroy(signal.session);
-            signal.player = null;
-            signal.audio = null;
-            signal.session = null;
-            signal.ready = false;
-            signal.loading = false;
+            try { StopPlayback(signal); }
+            finally
+            {
+                GameObject session = signal.session;
+                signal.player = null;
+                signal.audio = null;
+                signal.session = null;
+                signal.ready = false;
+                signal.loading = false;
+                if (session) Destroy(session);
+            }
         }
 
         private void OnApplicationFocus(bool focused)
@@ -2128,23 +2178,35 @@ namespace SlopCity
 
         private void OnDestroy()
         {
-            RefreshMobileLoungePriority(false, true);
-            StopAllCoroutines();
-            mediaCoroutines.DisposeAll();
-            SlopCityMediaAudioFocus.Remove(this);
+            CleanupMedia(() => RefreshMobileLoungePriority(false, true));
+            CleanupMedia(StopAllCoroutines);
+            CleanupMedia(mediaCoroutines.DisposeAll);
+            CleanupMedia(() => SlopCityMediaAudioFocus.Remove(this));
             if (Instance == this) Instance = null;
-            foreach (SlopCityCityScreen screen in screens) if (screen) screen.Restore();
+            foreach (SlopCityCityScreen screen in screens)
+                if (screen) CleanupMedia(screen.Restore);
             foreach (Channel signal in channels)
             {
                 if (signal == null) continue;
-                ReleasePhoto(signal);
-                ReleasePlayback(signal);
+                CleanupMedia(() => ReleasePhoto(signal));
+                CleanupMedia(() => ReleasePlayback(signal));
             }
             foreach (ScreenState display in displays)
             {
+                CleanupMedia(() => ReleaseScreenTexture(display));
                 if (display.material) Destroy(display.material);
-                if (display.texture) { display.texture.Release(); Destroy(display.texture); }
+                display.material = null;
             }
+            screens.Clear();
+            displays.Clear();
+            displayLookup.Clear();
+            candidates.Clear();
+        }
+
+        private static void CleanupMedia(Action cleanup)
+        {
+            try { cleanup(); }
+            catch (Exception error) { Debug.LogWarning("City media cleanup failed: " + error.Message); }
         }
 
         [Serializable] private sealed class Feed

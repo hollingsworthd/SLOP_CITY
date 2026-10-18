@@ -136,21 +136,38 @@ namespace SlopCity
         }
         private IEnumerator Load(int index, int token)
         {
-            DetailEntry entry = entries[index];
-            pendingDownload = new BoundedDownload(entry.payloadBytes);
-            pendingRequest = new UnityWebRequest(Application.streamingAssetsPath.TrimEnd('/') + "/Geometry/" + entry.fileName,
-                UnityWebRequest.kHttpVerbGET) { downloadHandler = pendingDownload, timeout = 15 };
-            UnityWebRequestAsyncOperation operation;
-            try { operation = pendingRequest.SendWebRequest(); }
-            catch (Exception) { Failed(index, token); ClearRequest(); yield break; }
-            while (!operation.isDone) yield return null;
-            if (pendingIndex == index && leases[index].generation == token)
+            try
             {
-                if (pendingRequest.result == UnityWebRequest.Result.Success && pendingDownload.Complete)
-                    Complete(index, token, pendingDownload.Bytes);
-                else Failed(index, token);
+                UnityWebRequestAsyncOperation operation;
+                try
+                {
+                    DetailEntry entry = entries[index];
+                    pendingDownload = new BoundedDownload(entry.payloadBytes);
+                    pendingRequest = new UnityWebRequest(Application.streamingAssetsPath.TrimEnd('/') + "/Geometry/" + entry.fileName,
+                        UnityWebRequest.kHttpVerbGET);
+                    // The handler has its own owner even when request configuration fails.
+                    pendingRequest.disposeDownloadHandlerOnDispose = false;
+                    pendingRequest.downloadHandler = pendingDownload;
+                    pendingRequest.timeout = 15;
+                    operation = pendingRequest.SendWebRequest();
+                }
+                catch (Exception) { yield break; }
+                while (!operation.isDone) yield return null;
+                if (pendingIndex == index && leases[index].generation == token)
+                {
+                    if (pendingRequest.result == UnityWebRequest.Result.Success && pendingDownload.Complete)
+                        Complete(index, token, pendingDownload.Bytes);
+                    else Failed(index, token);
+                }
             }
-            ClearRequest();
+            finally
+            {
+                try
+                {
+                    if (pendingIndex == index && leases[index].generation == token) Failed(index, token);
+                }
+                finally { ClearRequest(); }
+            }
         }
         private bool Complete(int index, int token, byte[] bytes)
         {
@@ -194,15 +211,20 @@ namespace SlopCity
         }
         private void ClearRequest()
         {
-            if (pendingRequest != null) { pendingRequest.Dispose(); pendingRequest = null; }
-            pendingDownload = null; pendingRoutine = null;
+            UnityWebRequest request = pendingRequest; BoundedDownload download = pendingDownload;
+            pendingRequest = null; pendingDownload = null; pendingRoutine = null;
+            try { if (request != null) request.Dispose(); }
+            finally { if (download != null) download.Dispose(); }
         }
         private void CancelPending()
         {
             if (pendingIndex >= 0) { leases[pendingIndex].generation++; pendingIndex = -1; }
-            if (pendingRoutine != null) { StopCoroutine(pendingRoutine); pendingRoutine = null; }
-            if (pendingRequest != null) pendingRequest.Abort();
-            ClearRequest();
+            try { if (pendingRequest != null) pendingRequest.Abort(); }
+            finally
+            {
+                try { if (pendingRoutine != null) StopCoroutine(pendingRoutine); }
+                finally { ClearRequest(); }
+            }
         }
         private void Retire(int index)
         {
@@ -239,7 +261,9 @@ namespace SlopCity
         {
             private readonly byte[] bytes;
             private int received;
-            public BoundedDownload(int length) : base(new byte[32 * 1024]) { bytes = new byte[length]; }
+            // Allocate managed buffers before constructing the native base handler.
+            public BoundedDownload(int length) : this(new byte[32 * 1024], new byte[length]) { }
+            private BoundedDownload(byte[] buffer, byte[] payload) : base(buffer) { bytes = payload; }
             public byte[] Bytes => bytes;
             public bool Complete => received == bytes.Length;
             protected override bool ReceiveData(byte[] data, int length)
@@ -329,9 +353,10 @@ namespace SlopCity
             if (payload == null || expectedBytes <= 0 || expectedBytes > MaximumPayloadBytes || payload.Length != expectedBytes
                 || !ValidHash(expectedHash) || ComputeHash(payload) != expectedHash) throw new InvalidDataException("Detail payload integrity failed.");
             Layout layout = Parse(payload);
-            Mesh mesh = new Mesh { name = "Owned_Browser_Detail_" + expectedHash.Substring(0, 12) };
+            Mesh mesh = new Mesh();
             try
             {
+                mesh.name = "Owned_Browser_Detail_" + expectedHash.Substring(0, 12);
                 mesh.SetVertexBufferParams(layout.vertexCount, layout.attributes);
                 for (int stream = 0; stream < layout.strides.Length; stream++)
                 {

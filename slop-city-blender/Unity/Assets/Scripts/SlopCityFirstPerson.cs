@@ -128,7 +128,7 @@ namespace SlopCity
             SlopCitySteakTable.Ensure(this);
             sandbox = GetComponent<SlopCitySandbox>();
             if (!sandbox) sandbox = gameObject.AddComponent<SlopCitySandbox>();
-            sandbox.Initialize(transform, ShowFeedback);
+            sandbox.Initialize(transform, ShowFeedback, ShowNpcDialogue);
             SlopCityStreetCars.Ensure(this);
             sandbox.RefreshWorldGeometry();
             SlopCitySalvageHud.Ensure(this, sandbox, playerInput, viewCamera);
@@ -655,9 +655,12 @@ namespace SlopCity
             hud.RenderCity(this);
         }
 
-        public void ShowFeedback(string text)
+        private const float FeedbackDuration=4.5f, NpcDialogueDuration=FeedbackDuration*2.5f;
+        public void ShowFeedback(string text) { ShowFeedbackFor(text,FeedbackDuration); }
+        public void ShowNpcDialogue(string text) { ShowFeedbackFor(text,NpcDialogueDuration); }
+        private void ShowFeedbackFor(string text,float duration)
         {
-            feedback = text; feedbackUntil = Time.unscaledTime + 4.5f;
+            feedback = text; feedbackUntil = Time.unscaledTime + duration;
 #if UNITY_WEBGL && !UNITY_EDITOR
             nextBrowserHudRefresh = 0;
 #endif

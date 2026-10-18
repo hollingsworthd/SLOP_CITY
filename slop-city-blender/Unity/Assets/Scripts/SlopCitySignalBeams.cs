@@ -20,10 +20,14 @@ namespace SlopCity
         private int count;
         private float totalLength;
         private Color beamTint;
+        private bool resourceAllocationFailed;
+
+        private void OnEnable() { resourceAllocationFailed=false; }
 
         public void Configure(Transform playerOwner)
         {
             owner = playerOwner;
+            resourceAllocationFailed=false;
             Clear();
         }
 
@@ -114,39 +118,59 @@ namespace SlopCity
 
         private bool EnsureResources()
         {
+            if(resourceAllocationFailed)return false;
             bool ready = material && pulse;
             for (int i = 0; i < lines.Length; i++) ready &= lines[i];
             if (ready) return true;
             Release();
-            Shader shader = Shader.Find("Sprites/Default") ?? Shader.Find("Hidden/Internal-Colored");
-            if (!shader || !shader.isSupported) return false;
-            material = new Material(shader) { name = "Signal laser / shared", hideFlags = HideFlags.HideAndDontSave };
-            material.color = Color.white;
-            if (material.HasProperty("_ZTest")) material.SetInt("_ZTest", (int)CompareFunction.LessEqual);
-            if (material.HasProperty("_ZWrite")) material.SetInt("_ZWrite", 0);
-            if (material.HasProperty("_Cull")) material.SetInt("_Cull", (int)CullMode.Off);
-            // Both shaders consume line vertex colors. Do not fall back to a shader
-            // that ignores them and turns the faint tinted guide into opaque white.
-            if (material.HasProperty("_SrcBlend")) material.SetInt("_SrcBlend", (int)BlendMode.SrcAlpha);
-            if (material.HasProperty("_DstBlend")) material.SetInt("_DstBlend", (int)BlendMode.OneMinusSrcAlpha);
-            material.renderQueue = (int)RenderQueue.Transparent;
-            for (int i = 0; i < lines.Length; i++) lines[i] = CreateLine("Signal beam " + i, .011f);
-            pulse = CreateLine("Signal traveling pulse", .023f);
-            return true;
+            try
+            {
+                Shader shader = Shader.Find("Sprites/Default") ?? Shader.Find("Hidden/Internal-Colored");
+                if (!shader || !shader.isSupported) return false;
+                material = new Material(shader);
+                material.name = "Signal laser / shared";
+                material.hideFlags = HideFlags.HideAndDontSave;
+                material.color = Color.white;
+                if (material.HasProperty("_ZTest")) material.SetInt("_ZTest", (int)CompareFunction.LessEqual);
+                if (material.HasProperty("_ZWrite")) material.SetInt("_ZWrite", 0);
+                if (material.HasProperty("_Cull")) material.SetInt("_Cull", (int)CullMode.Off);
+                // Both shaders consume line vertex colors. Do not fall back to a shader
+                // that ignores them and turns the faint tinted guide into opaque white.
+                if (material.HasProperty("_SrcBlend")) material.SetInt("_SrcBlend", (int)BlendMode.SrcAlpha);
+                if (material.HasProperty("_DstBlend")) material.SetInt("_DstBlend", (int)BlendMode.OneMinusSrcAlpha);
+                material.renderQueue = (int)RenderQueue.Transparent;
+                for (int i = 0; i < lines.Length; i++) lines[i] = CreateLine("Signal beam " + i, .011f);
+                pulse = CreateLine("Signal traveling pulse", .023f);
+                return true;
+            }
+            catch(System.Exception error)
+            {
+                // Route updates are not allocation recovery events. Release partial
+                // resources and wait for explicit reconfiguration or re-enabling.
+                resourceAllocationFailed=true;
+                Release();
+                Debug.LogWarning("Signal guide unavailable after resource allocation failure: "+error.GetType().Name,this);
+                return false;
+            }
         }
 
         private LineRenderer CreateLine(string label, float width)
         {
-            var child = new GameObject(label) { hideFlags = HideFlags.HideAndDontSave, layer = 2 };
-            child.transform.SetParent(transform, false);
-            LineRenderer line = child.AddComponent<LineRenderer>();
-            line.sharedMaterial = material; line.useWorldSpace = true;
-            line.positionCount = 2; line.startWidth = width; line.endWidth = width;
-            line.numCapVertices = 2; line.numCornerVertices = 0;
-            line.shadowCastingMode = ShadowCastingMode.Off; line.receiveShadows = false;
-            line.lightProbeUsage = LightProbeUsage.Off; line.reflectionProbeUsage = ReflectionProbeUsage.Off;
-            line.alignment = LineAlignment.View; line.enabled = false;
-            return line;
+            var child = new GameObject(label);
+            try
+            {
+                child.hideFlags = HideFlags.HideAndDontSave; child.layer = 2;
+                child.transform.SetParent(transform, false);
+                LineRenderer line = child.AddComponent<LineRenderer>();
+                line.sharedMaterial = material; line.useWorldSpace = true;
+                line.positionCount = 2; line.startWidth = width; line.endWidth = width;
+                line.numCapVertices = 2; line.numCornerVertices = 0;
+                line.shadowCastingMode = ShadowCastingMode.Off; line.receiveShadows = false;
+                line.lightProbeUsage = LightProbeUsage.Off; line.reflectionProbeUsage = ReflectionProbeUsage.Off;
+                line.alignment = LineAlignment.View; line.enabled = false;
+                return line;
+            }
+            catch { DestroyOwned(child); throw; }
         }
 
         private void Update()
@@ -185,11 +209,11 @@ namespace SlopCity
         }
         private static bool Finite(float value) => !float.IsNaN(value) && !float.IsInfinity(value);
         private static bool Finite(Vector3 point) => Finite(point.x) && Finite(point.y) && Finite(point.z);
-        private void OnDisable() { Clear(); Release(); }
+        private void OnDisable() { try { Clear(); } finally { Release(); } }
         private void OnDestroy() { Release(); }
         private void Release()
         {
-            Clear();
+            count=0;totalLength=0;
             for (int i = 0; i < lines.Length; i++)
             {
                 if (lines[i]) DestroyOwned(lines[i].gameObject);

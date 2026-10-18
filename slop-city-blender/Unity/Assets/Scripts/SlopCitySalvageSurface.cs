@@ -134,22 +134,53 @@ namespace SlopCity
         private void BindMaterial()
         {
             if (materialBound || !authoredMaterial || !display) return;
-            if (!Finishes.TryGetValue(authoredMaterial, out Finish finish))
+            Material previous = display.sharedMaterial;
+            Material candidate = null;
+            Finish finish = null;
+            bool created = false;
+            try
             {
-                Shader shader = Shader.Find("SlopCity/SalvagePolish");
-                if (!shader) throw new InvalidOperationException("Salvage polish shader is missing.");
-                bool supplied = polishMaterial && polishMaterial.shader == shader;
-                Material material = supplied ? polishMaterial : new Material(authoredMaterial) { name = authoredMaterial.name + "_SalvagePolish", shader = shader };
-                if (!supplied)
+                if (!Finishes.TryGetValue(authoredMaterial, out finish))
                 {
-                    material.SetFloat("_HasMetallicMap", authoredMaterial.GetTexture("_MetallicGlossMap") ? 1 : 0);
-                    material.SetFloat("_HasNormalMap", authoredMaterial.GetTexture("_BumpMap") ? 1 : 0);
-                    material.SetFloat("_HasOcclusionMap", authoredMaterial.GetTexture("_OcclusionMap") ? 1 : 0);
-                    material.SetFloat("_WetFilmCoverage", 0);
+                    Shader shader = Shader.Find("SlopCity/SalvagePolish");
+                    if (!shader) throw new InvalidOperationException("Salvage polish shader is missing.");
+                    bool supplied = polishMaterial && polishMaterial.shader == shader;
+                    Material material = polishMaterial;
+                    if (!supplied)
+                    {
+                        // Keep the local owner before any fallible native setter/cache admission.
+                        candidate = material = new Material(authoredMaterial);
+                        material.name = authoredMaterial.name + "_SalvagePolish";
+                        material.shader = shader;
+                        material.SetFloat("_HasMetallicMap", authoredMaterial.GetTexture("_MetallicGlossMap") ? 1 : 0);
+                        material.SetFloat("_HasNormalMap", authoredMaterial.GetTexture("_BumpMap") ? 1 : 0);
+                        material.SetFloat("_HasOcclusionMap", authoredMaterial.GetTexture("_OcclusionMap") ? 1 : 0);
+                        material.SetFloat("_WetFilmCoverage", 0);
+                    }
+                    finish = new Finish { material = material, owned = !supplied };
+                    created = true;
+                    Finishes.Add(authoredMaterial, finish);
                 }
-                finish = new Finish { material = material, owned = !supplied }; Finishes.Add(authoredMaterial, finish);
+                display.sharedMaterial = finish.material;
+                finish.users++;
+                polishMaterial = finish.material;
+                materialBound = true;
             }
-            finish.users++; materialBound = true; polishMaterial = finish.material; display.sharedMaterial = polishMaterial;
+            catch
+            {
+                try
+                {
+                    // A native setter can throw after changing its external binding.
+                    if (finish != null && display && display.sharedMaterial == finish.material) display.sharedMaterial = previous;
+                }
+                finally
+                {
+                    if (created && Finishes.TryGetValue(authoredMaterial, out Finish cached) && ReferenceEquals(cached, finish))
+                        Finishes.Remove(authoredMaterial);
+                    if (candidate) Dispose(candidate);
+                }
+                throw;
+            }
         }
 
         public string PartId(int part)

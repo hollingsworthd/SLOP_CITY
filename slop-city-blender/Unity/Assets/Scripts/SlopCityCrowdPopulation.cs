@@ -27,14 +27,16 @@ namespace SlopCity
         }
         private Resident[] residents=Array.Empty<Resident>();
         private int[] residentSlots=Array.Empty<int>(),presentationStamp=Array.Empty<int>();
-        private readonly Dictionary<int,int> residentIds=new Dictionary<int,int>();
+        private Dictionary<int,int> residentIds=new Dictionary<int,int>();
         private readonly Dictionary<int,float> rememberedCooldowns=new Dictionary<int,float>();
-        private readonly List<InteriorHome> interiorHomes=new List<InteriorHome>();
-        private readonly Dictionary<long,int> homeLookup=new Dictionary<long,int>();
+        private List<InteriorHome> interiorHomes=new List<InteriorHome>();
+        private Dictionary<long,int> homeLookup=new Dictionary<long,int>();
         private readonly Collider[] populationOverlaps=new Collider[24];
         private int activeCount,coarseCursor,admissionCursor,presentationSerial;
         private bool expandedPopulation,localAgentsInitialized;
         private float nextPopulationDiscovery;
+        private int populationDiscoveryFailures;
+        private const int MaximumPopulationDiscoveryAttempts=3;
         public int RegisteredCount { get { EnsureAgents();return residents.Length; } }
         public int SmithCount { get { EnsureAgents();return residents.Length-redContactCount; } }
         public int DetailedCount=>activeCount;
@@ -63,7 +65,7 @@ namespace SlopCity
         private void ResetPopulation()
         {
             residents=Array.Empty<Resident>();residentSlots=Array.Empty<int>();presentationStamp=Array.Empty<int>();residentIds.Clear();
-            interiorHomes.Clear();homeLookup.Clear();rememberedCooldowns.Clear();expandedPopulation=localAgentsInitialized=false;activeCount=0;simulationTime=0;
+            interiorHomes.Clear();homeLookup.Clear();rememberedCooldowns.Clear();expandedPopulation=localAgentsInitialized=false;activeCount=0;simulationTime=0;populationDiscoveryFailures=0;nextPopulationDiscovery=0;
         }
         private SlopCityNpcSeed NormalizedSeed(SlopCityNpcSeed seed,bool red)
         {
@@ -105,10 +107,18 @@ namespace SlopCity
         }
         private void TryPrepareExpandedPopulation()
         {
-            if(expandedPopulation||!Application.isPlaying||Time.unscaledTime<nextPopulationDiscovery)return;
+            if(expandedPopulation||!Application.isPlaying||populationDiscoveryFailures>=MaximumPopulationDiscoveryAttempts||Time.unscaledTime<nextPopulationDiscovery)return;
             nextPopulationDiscovery=Time.unscaledTime+1;
             SlopCityBuildingWorld world=GetComponentInParent<SlopCityBuildingWorld>();
-            if(world&&world.Buildings.Count>0)PreparePopulation(world);
+            if(!world||world.Buildings.Count==0)return;
+            try { PreparePopulation(world); }
+            catch(Exception error)
+            {
+                populationDiscoveryFailures++;
+                nextPopulationDiscovery=Time.unscaledTime+(1<<populationDiscoveryFailures);
+                // Keep the authored registry usable and stop retrying a permanently failed expansion.
+                Debug.LogWarning("Additional population unavailable (attempt "+populationDiscoveryFailures+"/"+MaximumPopulationDiscoveryAttempts+"): "+error.GetType().Name,this);
+            }
         }
         /// <summary>One registry expansion; no extra meshes/materials/physics objects are allocated per resident.</summary>
         public void PreparePopulation(SlopCityBuildingWorld world)
@@ -116,63 +126,82 @@ namespace SlopCity
             EnsureAgents();if(expandedPopulation||!world||world.Buildings.Count==0)return;
             var buildings=new List<SlopCityBuildingInterior>();foreach(var building in world.Buildings)if(building)buildings.Add(building);
             buildings.Sort((a,b)=>string.CompareOrdinal(HierarchyId(a.transform),HierarchyId(b.transform)));
+            // Build every fallible registry operation off to the side. A failed attempt
+            // must leave both live body mappings and home/identity registries unchanged.
+            var nextHomes=new List<InteriorHome>();
+            var nextHomeLookup=new Dictionary<long,int>();
+            var nextIds=new Dictionary<int,int>(residentIds);
             int max=0;foreach(var building in buildings)max=Mathf.Max(max,building.OccupiedFloorCount);
             for(int floor=0;floor<max;floor++)foreach(var building in buildings)
                 if(floor<building.OccupiedFloorCount)
-                {int home=interiorHomes.Count;interiorHomes.Add(new InteriorHome{building=building,floor=floor});homeLookup.Add(HomeKey(building,floor),home);}
+                {int home=nextHomes.Count;nextHomes.Add(new InteriorHome{building=building,floor=floor});nextHomeLookup.Add(HomeKey(building,floor),home);}
             int original=residents.Length,smiths=original-redContactCount;
             bool authoredCity=original==432;for(int id=1;id<=432&&authoredCity;id++)authoredCity=residentIds.ContainsKey(id);
             int addedSmiths=authoredCity?Mathf.Max(0,TargetSmithCount-smiths*4):0;
             int addedReds=authoredCity?Mathf.Max(0,TargetRedContactCount-redContactCount):0;
             int count=original+smiths*3+addedSmiths+addedReds;
             if(count>5000)throw new InvalidOperationException("Logical population exceeds the registry ceiling.");
-            Array.Resize(ref residents,count);int[] slots=new int[count];Array.Fill(slots,-1);Array.Copy(residentSlots,slots,residentSlots.Length);residentSlots=slots;Array.Resize(ref presentationStamp,count);
+            var nextResidents=new Resident[count];Array.Copy(residents,nextResidents,original);
+            var slots=new int[count];Array.Fill(slots,-1);
+            var stamps=new int[count];
             int next=original,indoor=0;
-            for(int source=0;source<original;source++)if(!residents[source].redContact)
+            for(int source=0;source<original;source++)if(!nextResidents[source].redContact)
                 for(int copy=0;copy<3;copy++)
                 {
-                    Resident record=residents[source];record.seed.residentId=100000+record.seed.residentId*4+copy;
+                    Resident record=nextResidents[source];record.seed.residentId=100000+record.seed.residentId*4+copy;
                     record.seed.appearance=(int)(ContactOrder(record.seed,copy)&int.MaxValue);record.seed.displayName="Agent Smith";record.redContact=false;record.talkReady=rememberedCooldowns.TryGetValue(record.seed.residentId,out float ready)?ready:0;record.pause=0;record.randomState=record.seed.residentId*139+173;record.lastUpdate=simulationTime;
-                    if(copy<2&&interiorHomes.Count>0){record.home=indoor++%interiorHomes.Count;record.seed.route=routes.Length+record.home;record.node=record.next=0;record.position=interiorHomes[record.home].building.LandingFeet(interiorHomes[record.home].floor);}
+                    if(copy<2&&nextHomes.Count>0){record.home=indoor++%nextHomes.Count;record.seed.route=routes.Length+record.home;record.node=record.next=0;record.position=nextHomes[record.home].building.LandingFeet(nextHomes[record.home].floor);}
                     else{record.home=-1;SlopCityCrowdRoute graph=PopulationRoute(record.seed.route);record.node=Mathf.Abs(record.seed.residentId)%graph.nodes.Length;record.next=graph.nodes[record.node].neighbors[0];record.position=graph.nodes[record.node].position;}
-                    if(!residentIds.TryAdd(record.seed.residentId,next))throw new InvalidOperationException("Duplicate generated resident ID.");residents[next++]=record;
+                    if(!nextIds.TryAdd(record.seed.residentId,next))throw new InvalidOperationException("Duplicate generated resident ID.");nextResidents[next++]=record;
                 }
             // Keep the preceding1695 records/IDs in their exact order. Supplements use
             // separate fixed ranges; no existing Smith is converted into a red contact.
             if(addedSmiths>0||addedReds>0)
             {
                 var smithTemplates=new List<int>(smiths);var redTemplates=new List<int>(redContactCount);
-                for(int source=0;source<original;source++)if(residents[source].redContact)redTemplates.Add(source);else smithTemplates.Add(source);
+                for(int source=0;source<original;source++)if(nextResidents[source].redContact)redTemplates.Add(source);else smithTemplates.Add(source);
                 for(int added=0;added<addedSmiths;added++)
                 {
-                    Resident record=Supplement(residents[smithTemplates[added%smithTemplates.Count]],200001+added,false,added);
-                    if(interiorHomes.Count>0)
+                    Resident record=Supplement(nextResidents[smithTemplates[added%smithTemplates.Count]],200001+added,false,added);
+                    if(nextHomes.Count>0)
                     {
-                        record.home=indoor++%interiorHomes.Count;record.seed.route=routes.Length+record.home;record.node=record.next=0;
-                        record.position=interiorHomes[record.home].building.LandingFeet(interiorHomes[record.home].floor);
+                        record.home=indoor++%nextHomes.Count;record.seed.route=routes.Length+record.home;record.node=record.next=0;
+                        record.position=nextHomes[record.home].building.LandingFeet(nextHomes[record.home].floor);
                     }
                     else PlaceSupplementOnStreet(ref record);
-                    AddSupplement(ref next,record);
+                    AddSupplement(ref next,record,nextResidents,nextIds);
                 }
                 // One rare contact per distinct ground-floor building. Farthest-first
                 // selection spreads them across the city; floors retain ordinary streaming.
-                var redHomes=SelectRedHomes(TargetIndoorRedCount);
+                var redHomes=SelectRedHomes(TargetIndoorRedCount,nextHomes);
                 for(int added=0;added<addedReds;added++)
                 {
-                    Resident record=Supplement(residents[redTemplates[added%redTemplates.Count]],300001+added,true,1000+added);
+                    Resident record=Supplement(nextResidents[redTemplates[added%redTemplates.Count]],300001+added,true,1000+added);
                     int indoorIndex=added-(addedReds-TargetIndoorRedCount);
                     if(indoorIndex>=0&&indoorIndex<redHomes.Count)
                     {
                         record.home=redHomes[indoorIndex];record.seed.route=routes.Length+record.home;record.node=record.next=0;
-                        record.position=interiorHomes[record.home].building.LandingFeet(0);indoor++;
+                        record.position=nextHomes[record.home].building.LandingFeet(0);indoor++;
                     }
                     else PlaceSupplementOnStreet(ref record);
-                    AddSupplement(ref next,record);
+                    AddSupplement(ref next,record,nextResidents,nextIds);
                 }
-                redContactCount+=addedReds;
             }
-            if(authoredCity)PlacePublicRedContactsAboveground();
-            InteriorResidentCount=indoor;expandedPopulation=true;
+            if(authoredCity)PlacePublicRedContactsAboveground(nextResidents);
+            // Only now retire relocated original bodies. All allocations/route validation
+            // above succeeded; refresh slot/stamp copies after the pool's swap-removals.
+            for(int index=0;index<original;index++)
+                if(residents[index].seed.route!=nextResidents[index].seed.route&&residentSlots[index]>=0)
+                {
+                    RetireResident(residentSlots[index]);
+                    Resident live=residents[index],placed=nextResidents[index];
+                    placed.phase=live.phase;placed.pause=live.pause;placed.talkReady=live.talkReady;placed.randomState=live.randomState;
+                    nextResidents[index]=placed;
+                }
+            Array.Copy(residentSlots,slots,residentSlots.Length);Array.Copy(presentationStamp,stamps,presentationStamp.Length);
+            residents=nextResidents;residentSlots=slots;presentationStamp=stamps;residentIds=nextIds;
+            interiorHomes=nextHomes;homeLookup=nextHomeLookup;redContactCount+=addedReds;
+            InteriorResidentCount=indoor;expandedPopulation=true;populationDiscoveryFailures=0;
             // Building callbacks can precede this registry during startup. Discover existing admitted roots once.
             foreach(var building in buildings)
             {
@@ -192,37 +221,34 @@ namespace SlopCity
             }
             return true;
         }
-        private void PlacePublicRedContactsAboveground()
+        private void PlacePublicRedContactsAboveground(Resident[] records)
         {
             var counts=new int[routes.Length];
-            for(int index=0;index<residents.Length;index++)
-            {Resident r=residents[index];if(r.redContact&&r.home<0&&AbovegroundPopulationRoute(r.seed.route))counts[r.seed.route]++;}
-            for(int index=0;index<residents.Length;index++)
+            for(int index=0;index<records.Length;index++)
+            {Resident r=records[index];if(r.redContact&&r.home<0&&AbovegroundPopulationRoute(r.seed.route))counts[r.seed.route]++;}
+            for(int index=0;index<records.Length;index++)
             {
-                Resident r=residents[index];if(!r.redContact||r.home>=0||AbovegroundPopulationRoute(r.seed.route))continue;
+                Resident r=records[index];if(!r.redContact||r.home>=0||AbovegroundPopulationRoute(r.seed.route))continue;
                 int route=-1;for(int candidate=0;candidate<routes.Length;candidate++)
                     if(AbovegroundPopulationRoute(candidate)&&(route<0||counts[candidate]<counts[route]))route=candidate;
                 if(route<0)throw new InvalidOperationException("No supported aboveground street route for a red contact.");
-                // The original platform women can already own body slots. Retire
-                // before relocating metadata so no old body/presentation remains.
-                if(residentSlots[index]>=0){RetireResident(residentSlots[index]);r=residents[index];}
                 r.seed.route=route;PlaceSupplementOnStreet(ref r);r.lastUpdate=simulationTime;
-                residents[index]=r;counts[route]++;
+                records[index]=r;counts[route]++;
                 // Normal bounded admission validates free physical space; no
                 // relocated body is forced into an occupied street node here.
             }
         }
-        private List<int> SelectRedHomes(int count)
+        private List<int> SelectRedHomes(int count,List<InteriorHome> homes)
         {
             var selected=new List<int>(count);
             for(int selection=0;selection<count;selection++)
             {
                 int best=-1;float bestDistance=-1;
-                for(int home=0;home<interiorHomes.Count;home++)
+                for(int home=0;home<homes.Count;home++)
                 {
-                    InteriorHome candidate=interiorHomes[home];if(candidate.floor!=0||!candidate.building||selected.Contains(home))continue;
+                    InteriorHome candidate=homes[home];if(candidate.floor!=0||!candidate.building||selected.Contains(home))continue;
                     Vector3 point=candidate.building.EntranceFeet;float nearest=selected.Count==0?point.sqrMagnitude:float.PositiveInfinity;
-                    foreach(int old in selected)nearest=Mathf.Min(nearest,(point-interiorHomes[old].building.EntranceFeet).sqrMagnitude);
+                    foreach(int old in selected)nearest=Mathf.Min(nearest,(point-homes[old].building.EntranceFeet).sqrMagnitude);
                     if(nearest>bestDistance){best=home;bestDistance=nearest;}
                 }
                 if(best<0)break;selected.Add(best);
@@ -245,10 +271,10 @@ namespace SlopCity
             Vector3 direction=graph.nodes[record.next].position-record.position;
             record.heading=Mathf.Atan2(direction.x,direction.z)*Mathf.Rad2Deg;
         }
-        private void AddSupplement(ref int next,Resident record)
+        private void AddSupplement(ref int next,Resident record,Resident[] records,Dictionary<int,int> ids)
         {
-            if(!residentIds.TryAdd(record.seed.residentId,next))throw new InvalidOperationException("Duplicate supplemental resident ID.");
-            residents[next++]=record;
+            if(!ids.TryAdd(record.seed.residentId,next))throw new InvalidOperationException("Duplicate supplemental resident ID.");
+            records[next++]=record;
         }
         private static string HierarchyId(Transform item){string value=item.name;for(Transform p=item.parent;p;p=p.parent)value=p.name+"/"+value;return value;}
         private static long HomeKey(SlopCityBuildingInterior building,int floor)=>((long)building.GetInstanceID()<<32)^(uint)floor;

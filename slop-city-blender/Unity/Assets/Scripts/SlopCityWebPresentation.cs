@@ -122,13 +122,7 @@ namespace SlopCity
             {
                 if (!worldTexture || !worldTexture.IsCreated() || worldTexture.width != width || worldTexture.height != height)
                 {
-                    candidate = new RenderTexture(width, height, 24, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Default)
-                    {
-                        name = "SlopCityBrowserWorld", filterMode = FilterMode.Bilinear,
-                        wrapMode = TextureWrapMode.Clamp, useMipMap = false,
-                        autoGenerateMips = false, antiAliasing = 1
-                    };
-                    if (!candidate.Create()) throw new InvalidOperationException("The city render target could not be allocated.");
+                    candidate = CreateTarget(width, height);
                 }
                 // Keep the previous usable target until the replacement and canvas exist.
                 EnsureCanvas();
@@ -198,10 +192,29 @@ namespace SlopCity
 #endif
         }
 
+        private static RenderTexture CreateTarget(int width, int height)
+        {
+            RenderTexture target = null;
+            try
+            {
+                // Own the native object before any configurable property can throw.
+                target = new RenderTexture(width, height, 24, RenderTextureFormat.ARGB32, RenderTextureReadWrite.Default);
+                target.name = "SlopCityBrowserWorld";
+                target.filterMode = FilterMode.Bilinear;
+                target.wrapMode = TextureWrapMode.Clamp;
+                target.useMipMap = false;
+                target.autoGenerateMips = false;
+                target.antiAliasing = 1;
+                if (!target.Create()) throw new InvalidOperationException("The city render target could not be allocated.");
+                return target;
+            }
+            catch { DisposeTexture(target); throw; }
+        }
+
         private void EnsureCanvas()
         {
             if (presentationCanvas && worldImage && recoveryMessage) return;
-            GameObject canvasObject = null;
+            GameObject canvasObject = null, imageObject = null, messageObject = null;
             try
             {
                 canvasObject = new GameObject("BrowserWorldPresentation", typeof(RectTransform), typeof(Canvas));
@@ -210,7 +223,7 @@ namespace SlopCity
                 Canvas canvas = canvasObject.GetComponent<Canvas>();
                 canvas.renderMode = RenderMode.ScreenSpaceOverlay;
                 canvas.sortingOrder = -1000;
-                var imageObject = new GameObject("WorldImage", typeof(RectTransform), typeof(RawImage));
+                imageObject = new GameObject("WorldImage", typeof(RectTransform), typeof(RawImage));
                 imageObject.transform.SetParent(canvasObject.transform, false);
                 var rect = imageObject.GetComponent<RectTransform>();
                 rect.anchorMin = Vector2.zero;
@@ -219,7 +232,7 @@ namespace SlopCity
                 RawImage image = imageObject.GetComponent<RawImage>();
                 image.color = Color.white;
                 image.raycastTarget = false;
-                var messageObject = new GameObject("GraphicsRecovery", typeof(RectTransform), typeof(Text));
+                messageObject = new GameObject("GraphicsRecovery", typeof(RectTransform), typeof(Text));
                 messageObject.transform.SetParent(canvasObject.transform, false);
                 Text message = messageObject.GetComponent<Text>();
                 message.font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
@@ -242,11 +255,14 @@ namespace SlopCity
                 worldImage = image;
                 recoveryMessage = message;
                 canvasObject.SetActive(true);
-                canvasObject = null;
+                canvasObject = imageObject = messageObject = null;
                 // No GraphicRaycaster: this display never owns mouse or touch input.
             }
             finally
             {
+                // A failed SetParent leaves a root outside the canvas hierarchy.
+                if (imageObject) { imageObject.SetActive(false); Destroy(imageObject); }
+                if (messageObject) { messageObject.SetActive(false); Destroy(messageObject); }
                 if (canvasObject) { canvasObject.SetActive(false); Destroy(canvasObject); }
             }
         }
@@ -268,20 +284,29 @@ namespace SlopCity
 
         private void ReleaseWorld()
         {
-            if (worldCamera)
+            try
             {
-                if (suspendedCamera) worldCamera.enabled = true;
-                if (worldCamera.targetTexture == worldTexture) worldCamera.targetTexture = null;
-                if (originalAutomaticAspect) worldCamera.ResetAspect(); else worldCamera.aspect = originalAspect;
+                if (worldCamera)
+                {
+                    if (suspendedCamera) worldCamera.enabled = true;
+                    if (worldCamera.targetTexture == worldTexture) worldCamera.targetTexture = null;
+                    if (originalAutomaticAspect) worldCamera.ResetAspect(); else worldCamera.aspect = originalAspect;
+                }
             }
-            worldCamera = null;
-            suspendedCamera = false;
-            if (worldImage) worldImage.texture = null;
-            if (presentationCanvas) presentationCanvas.enabled = false;
-            ReleaseTexture();
-            lastDisplayWidth = lastDisplayHeight = 0;
-            lastBudget = -1;
-            nextAllocation = 0;
+            finally
+            {
+                worldCamera = null;
+                suspendedCamera = false;
+                lastDisplayWidth = lastDisplayHeight = 0;
+                lastBudget = -1;
+                nextAllocation = 0;
+                try { if (worldImage) worldImage.texture = null; }
+                finally
+                {
+                    try { if (presentationCanvas) presentationCanvas.enabled = false; }
+                    finally { ReleaseTexture(); }
+                }
+            }
         }
 
         private void OnDisable() { Application.lowMemory -= ReduceMemory; ReleaseWorld(); }

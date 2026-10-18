@@ -21,7 +21,7 @@
     return element;
   }
 
-  // Chain the already installed policy wrappers. Never touch play, source, mute,
+  // Chain the already installed policy wrappers. Never alter play, source, mute,
   // volume, presentation, or insertion; the guard remains responsible for them.
   const owner = window.Document ? window.Document.prototype : document;
   ["createElement", "createElementNS"].forEach(function (name) {
@@ -34,6 +34,25 @@
   });
   if (document.querySelectorAll) document.querySelectorAll("video").forEach(track);
 
+  // iOS can reuse the same source-free element after decoder retirement, so a
+  // later source assignment must restore QA tracking without keeping that shell
+  // strongly reachable here. Chain the inline policy's existing setter.
+  const media = window.HTMLMediaElement && window.HTMLMediaElement.prototype;
+  const source = media && Object.getOwnPropertyDescriptor(media, "src");
+  if (source && source.set && source.configurable) {
+    Object.defineProperty(media, "src", Object.assign({}, source, {
+      set: function (value) {
+        source.set.call(this, value);
+        if (value && this.slopCityDestroyed !== true) track(this);
+      }
+    }));
+  }
+
+  function untrack(video, id) {
+    entries.delete(id);
+    if (video) seen.delete(video);
+  }
+
   function finite(value) { return Number.isFinite(value) ? value : null; }
   function shortName(source) {
     // Report only a filename, never origin, credentials, query, or fragment.
@@ -45,18 +64,18 @@
     const videos = [];
     entries.forEach(function (entry, id) {
       const video = weak ? entry.ref.deref() : entry.ref;
-      if (!video) { entries.delete(id); return; }
+      if (!video) { untrack(video, id); return; }
       // Decoder teardown is authoritative. Some browsers retain currentSrc
       // after removeAttribute('src')/load(), so it cannot prove a live resource.
       // Prune even without WeakRef, where this registry owns a strong reference.
-      if (video.slopCityDestroyed === true) { entries.delete(id); return; }
+      if (video.slopCityDestroyed === true) { untrack(video, id); return; }
       // Unity destroys a decoder by assigning src="". Its resolved .src can
       // then be the page URL, so consult the raw attribute first.
       const attribute = video.getAttribute("src");
       const source = attribute === null ? (video.currentSrc || "") : attribute;
       if (source) entry.hadSource = true;
       if (!source && (entry.hadSource || Date.now() - entry.createdAt > 5000)) {
-        entries.delete(id); return;
+        untrack(video, id); return;
       }
       videos.push({ id: id, src: shortName(source), currentTime: finite(video.currentTime),
         duration: finite(video.duration), volume: finite(video.volume), muted: !!video.muted,

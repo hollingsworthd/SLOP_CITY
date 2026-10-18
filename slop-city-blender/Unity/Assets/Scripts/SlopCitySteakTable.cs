@@ -232,72 +232,82 @@ namespace SlopCity
 
             internal Geometry()
             {
-                Shader shader = Shader.Find("Standard");
-                metal = Material(shader, "Steakhouse menu iron", new Color(.075f, .09f, .085f));
-                silver = Material(shader, "Steakhouse cutlery", new Color(.65f, .68f, .64f), .75f);
-                ceramic = Material(shader, "Steakhouse glazed plate", new Color(.91f, .86f, .73f));
-                meat = Material(shader, "Seared ribeye", new Color(.34f, .13f, .065f));
-                charcoal = Material(shader, "Steak grill marks", new Color(.065f, .035f, .02f));
-                green = Material(shader, "Grilled greens", new Color(.23f, .40f, .09f));
-                var build = new MeshBuilder();
-                build.Box(new Vector3(.78f, 1.13f, 0), new Vector3(.035f, .52f, .72f));
-                build.Box(new Vector3(.78f, .85f, 0), new Vector3(.10f, .04f, .52f));
-                menu = Mesh("Shared steakhouse table menu", build);
-                build = new MeshBuilder();
-                // Fork with four tines, and a broad knife beside the plate.
-                build.Box(new Vector3(-.29f, .831f, -.025f), new Vector3(.019f, .012f, .23f));
-                build.Box(new Vector3(-.29f, .831f, .102f), new Vector3(.055f, .012f, .045f));
-                for (int tine = 0; tine < 4; tine++)
-                    build.Box(new Vector3(-.313f + .015f * tine, .831f, .147f), new Vector3(.008f, .012f, .065f));
-                build.Box(new Vector3(.29f, .831f, -.07f), new Vector3(.023f, .016f, .16f));
-                build.Box(new Vector3(.282f, .831f, .09f), new Vector3(.04f, .012f, .16f));
-                cutlery = Mesh("Shared steak cutlery", build);
-                build = new MeshBuilder();
-                build.Disc(new Vector3(0, .83f, 0), .245f, .009f, 32);
-                build.Ring(new Vector3(0, .844f, 0), .21f, .245f, 32);
-                plate = Mesh("Shared steak dinner plate", build);
-                build = new MeshBuilder();
-                for (int stem = 0; stem < 3; stem++)
-                    build.Box(new Vector3(-.085f + stem * .07f, .855f, .165f), new Vector3(.022f, .018f, .095f));
-                garnish = Mesh("Shared steak greens", build);
-
-                var outline = new List<Vector2>
+                try
                 {
-                    new Vector2(-.175f, -.045f), new Vector2(-.15f, -.105f),
-                    new Vector2(-.055f, -.125f), new Vector2(.065f, -.105f),
-                    new Vector2(.155f, -.055f), new Vector2(.17f, .005f),
-                    new Vector2(.12f, .09f), new Vector2(.035f, .105f),
-                    new Vector2(-.07f, .08f), new Vector2(-.155f, .035f)
-                };
-                for (int index = 0; index < BitesPerMeal; index++)
-                {
-                    float min = -.18f + index * .12f, max = min + .12f;
-                    List<Vector2> slice = Clip(Clip(outline, min, true), max, false);
-                    build = new MeshBuilder(); build.Extrude(slice, .85f, .895f);
-                    steak[index] = Mesh("Shared ribeye portion " + index, build);
+                    Shader shader = Shader.Find("Standard");
+                    metal = Material(shader, "Steakhouse menu iron", new Color(.075f, .09f, .085f));
+                    silver = Material(shader, "Steakhouse cutlery", new Color(.65f, .68f, .64f), .75f);
+                    ceramic = Material(shader, "Steakhouse glazed plate", new Color(.91f, .86f, .73f));
+                    meat = Material(shader, "Seared ribeye", new Color(.34f, .13f, .065f));
+                    charcoal = Material(shader, "Steak grill marks", new Color(.065f, .035f, .02f));
+                    green = Material(shader, "Grilled greens", new Color(.23f, .40f, .09f));
+                    var build = new MeshBuilder();
+                    build.Box(new Vector3(.78f, 1.13f, 0), new Vector3(.035f, .52f, .72f));
+                    build.Box(new Vector3(.78f, .85f, 0), new Vector3(.10f, .04f, .52f));
+                    menu = Mesh("Shared steakhouse table menu", build);
                     build = new MeshBuilder();
-                    // Each slice retains its own char lines as earlier bites disappear.
-                    for (int mark = 0; mark < 2; mark++)
-                        build.Box(new Vector3(min + .035f + mark * .045f, .897f, -.008f), new Vector3(.009f, .003f, index == 1 ? .175f : .105f));
-                    marks[index] = Mesh("Shared grill marks " + index, build);
+                    // Fork with four tines, and a broad knife beside the plate.
+                    build.Box(new Vector3(-.29f, .831f, -.025f), new Vector3(.019f, .012f, .23f));
+                    build.Box(new Vector3(-.29f, .831f, .102f), new Vector3(.055f, .012f, .045f));
+                    for (int tine = 0; tine < 4; tine++)
+                        build.Box(new Vector3(-.313f + .015f * tine, .831f, .147f), new Vector3(.008f, .012f, .065f));
+                    build.Box(new Vector3(.29f, .831f, -.07f), new Vector3(.023f, .016f, .16f));
+                    build.Box(new Vector3(.282f, .831f, .09f), new Vector3(.04f, .012f, .16f));
+                    cutlery = Mesh("Shared steak cutlery", build);
+                    build = new MeshBuilder();
+                    build.Disc(new Vector3(0, .83f, 0), .245f, .009f, 32);
+                    build.Ring(new Vector3(0, .844f, 0), .21f, .245f, 32);
+                    plate = Mesh("Shared steak dinner plate", build);
+                    build = new MeshBuilder();
+                    for (int stem = 0; stem < 3; stem++)
+                        build.Box(new Vector3(-.085f + stem * .07f, .855f, .165f), new Vector3(.022f, .018f, .095f));
+                    garnish = Mesh("Shared steak greens", build);
+
+                    var outline = new List<Vector2>
+                    {
+                        new Vector2(-.175f, -.045f), new Vector2(-.15f, -.105f),
+                        new Vector2(-.055f, -.125f), new Vector2(.065f, -.105f),
+                        new Vector2(.155f, -.055f), new Vector2(.17f, .005f),
+                        new Vector2(.12f, .09f), new Vector2(.035f, .105f),
+                        new Vector2(-.07f, .08f), new Vector2(-.155f, .035f)
+                    };
+                    for (int index = 0; index < BitesPerMeal; index++)
+                    {
+                        float min = -.18f + index * .12f, max = min + .12f;
+                        List<Vector2> slice = Clip(Clip(outline, min, true), max, false);
+                        build = new MeshBuilder(); build.Extrude(slice, .85f, .895f);
+                        steak[index] = Mesh("Shared ribeye portion " + index, build);
+                        build = new MeshBuilder();
+                        // Each slice retains its own char lines as earlier bites disappear.
+                        for (int mark = 0; mark < 2; mark++)
+                            build.Box(new Vector3(min + .035f + mark * .045f, .897f, -.008f), new Vector3(.009f, .003f, index == 1 ? .175f : .105f));
+                        marks[index] = Mesh("Shared grill marks " + index, build);
+                    }
                 }
+                catch { Dispose(); throw; }
             }
 
             private Material Material(Shader shader, string label, Color color, float metallic = 0f)
             {
-                var material = new Material(shader) { name = label, color = color, enableInstancing = true };
+                var material = new Material(shader);
+                try { owned.Add(material); }
+                catch { owned.Remove(material); Release(material); throw; }
+                material.name = label; material.color = color; material.enableInstancing = true;
                 material.SetFloat("_Metallic", metallic); material.SetFloat("_Glossiness", .23f);
                 // Small shared emissive fill keeps the meal readable under the market canopy.
                 material.SetColor("_EmissionColor", color * .16f); material.EnableKeyword("_EMISSION");
-                owned.Add(material); return material;
+                return material;
             }
 
             private Mesh Mesh(string label, MeshBuilder build)
             {
-                var mesh = new Mesh { name = label };
+                var mesh = new Mesh();
+                try { owned.Add(mesh); }
+                catch { owned.Remove(mesh); Release(mesh); throw; }
+                mesh.name = label;
                 mesh.SetVertices(build.vertices); mesh.SetTriangles(build.triangles, 0);
                 mesh.RecalculateNormals(); mesh.RecalculateBounds(); mesh.UploadMeshData(true);
-                owned.Add(mesh); return mesh;
+                return mesh;
             }
 
             internal void Dispose()

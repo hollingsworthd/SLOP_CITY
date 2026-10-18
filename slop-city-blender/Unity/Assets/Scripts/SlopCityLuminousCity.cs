@@ -96,10 +96,19 @@ namespace SlopCity
                             && Peak(source.GetColor("_EmissionColor")) > .0001f;
                         bool concrete = false;
                         if (!wet && !emissive && !concrete) continue;
-                        replacement = new Material(source) { name = source.name + " [Luminous City]" };
-                        var pair = new MaterialPair { source = source, replacement = replacement, wet = wet, emissive = emissive, concrete = concrete };
-                        ConfigureReplacement(pair);
-                        materialPairs.Add(pair);
+                        replacement = new Material(source);
+                        try
+                        {
+                            replacement.name = source.name + " [Luminous City]";
+                            var pair = new MaterialPair { source = source, replacement = replacement, wet = wet, emissive = emissive, concrete = concrete };
+                            ConfigureReplacement(pair);
+                            materialPairs.Add(pair);
+                        }
+                        catch
+                        {
+                            if (Application.isPlaying) Destroy(replacement); else DestroyImmediate(replacement);
+                            throw;
+                        }
                         replacements.Add(source, replacement);
                         completed.Add(replacement);
                     }
@@ -163,6 +172,8 @@ namespace SlopCity
 
         private void OnDestroy()
         {
+            try
+            {
             // Restore surviving geometry when the profile itself is removed. Scene
             // unload may already have destroyed those renderers/materials.
             var originals = new Dictionary<Material, Material>();
@@ -178,12 +189,16 @@ namespace SlopCity
                     { slots[index] = original; changed = true; }
                 if (changed) renderer.sharedMaterials = slots;
             }
+            }
+            finally
+            {
             foreach (MaterialPair pair in materialPairs)
             {
                 if (!pair.replacement) continue;
                 if (Application.isPlaying) Destroy(pair.replacement); else DestroyImmediate(pair.replacement);
             }
             materialPairs.Clear();
+            }
         }
     }
 }

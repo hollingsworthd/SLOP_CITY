@@ -624,14 +624,22 @@ namespace SlopCity
             }
             internal void Install(Transform parent, string name, Material finish, List<Mesh> owned)
             {
-                Mesh mesh = new Mesh { name = name + "_MetricMesh", indexFormat = vertices.Count > 65535 ? IndexFormat.UInt32 : IndexFormat.UInt16 };
-                owned.Add(mesh);
+                Mesh mesh = new Mesh();
+                try { owned.Add(mesh); }
+                catch { owned.Remove(mesh); DisposeMesh(mesh); throw; }
+                mesh.name = name + "_MetricMesh";
+                mesh.indexFormat = vertices.Count > 65535 ? IndexFormat.UInt32 : IndexFormat.UInt16;
                 mesh.SetVertices(vertices); mesh.SetNormals(normals); mesh.SetUVs(0, uv); mesh.SetTriangles(triangles, 0); mesh.RecalculateBounds(); mesh.RecalculateTangents();
-                GameObject part = new GameObject(name); part.transform.SetParent(parent, false);
-                part.AddComponent<MeshFilter>().sharedMesh = mesh;
-                Renderer renderer = part.AddComponent<MeshRenderer>(); renderer.sharedMaterial = finish;
-                renderer.shadowCastingMode = ShadowCastingMode.Off; renderer.receiveShadows = true;
-                part.isStatic = true;
+                GameObject part = new GameObject(name);
+                try
+                {
+                    part.transform.SetParent(parent, false);
+                    part.AddComponent<MeshFilter>().sharedMesh = mesh;
+                    Renderer renderer = part.AddComponent<MeshRenderer>(); renderer.sharedMaterial = finish;
+                    renderer.shadowCastingMode = ShadowCastingMode.Off; renderer.receiveShadows = true;
+                    part.isStatic = true;
+                }
+                catch { if (Application.isPlaying) Destroy(part); else DestroyImmediate(part); throw; }
             }
         }
     }

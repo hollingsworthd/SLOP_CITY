@@ -52,10 +52,9 @@ namespace SlopCity
             branding.quad = CreateQuad();
             branding.cityMaterial = ArtworkMaterial(shader, cityLogo);
             branding.publisherMaterial = ArtworkMaterial(shader, publisherLogo);
-            branding.backingMaterial = new Material(shader)
-            {
-                name = "Brand plaque charcoal backing", color = new Color(.035f, .047f, .047f, 1f)
-            };
+            branding.backingMaterial = new Material(shader);
+            branding.backingMaterial.name = "Brand plaque charcoal backing";
+            branding.backingMaterial.color = new Color(.035f, .047f, .047f, 1f);
 
             // Lounge's original HRR poster occupies the middle of the west wall.
             // These plaques occupy the empty southern end and the wall left of the TV.
@@ -111,11 +110,24 @@ namespace SlopCity
         }
 
         private static Material ArtworkMaterial(Shader shader, Texture texture)
-            => new Material(shader) { name = "Official " + texture.name, mainTexture = texture, color = Color.white };
+        {
+            var material = new Material(shader);
+            try
+            {
+                material.name = "Official " + texture.name;
+                material.mainTexture = texture;
+                material.color = Color.white;
+                return material;
+            }
+            catch { Release(material); throw; }
+        }
 
         private static Mesh CreateQuad()
         {
-            var mesh = new Mesh { name = "Shared physical brand plaque" };
+            var mesh = new Mesh();
+            try
+            {
+            mesh.name = "Shared physical brand plaque";
             mesh.vertices = new[] { new Vector3(-.5f, -.5f, 0), new Vector3(-.5f, .5f, 0), new Vector3(.5f, .5f, 0), new Vector3(.5f, -.5f, 0) };
             mesh.uv = new[] { new Vector2(0, 0), new Vector2(0, 1), new Vector2(1, 1), new Vector2(1, 0) };
             mesh.triangles = new[] { 0, 1, 2, 0, 2, 3 };
@@ -123,6 +135,8 @@ namespace SlopCity
             mesh.RecalculateBounds();
             mesh.UploadMeshData(true);
             return mesh;
+            }
+            catch { Release(mesh); throw; }
         }
 
         private void OnDestroy()

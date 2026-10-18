@@ -31,7 +31,7 @@ namespace SlopCity
         public int ContactsFound => progress.contacts;
         public int MealsEaten => progress.meals;
         public int CircuitsCompleted => progress.circuits;
-        public float MealSpeedMultiplier => Time.time < fedUntil ? 1.15f : 1f;
+        public float MealSpeedMultiplier => Time.time < fedUntil ? 2f : 1f;
         public string ProgressText => progress.contacts + " CONTACTS FOUND  /  " + progress.meals + " STEAKS"
             + (Time.time < fedUntil ? "  /  WELL FED" : "");
         public string ObjectiveText => Stage == SearchStage.FindContact
@@ -278,7 +278,7 @@ namespace SlopCity
             ReleaseDinnerGate();
             EnsureTarget();
             Save();
-            return "STEAK FINISHED / Well fed: quicker movement for two minutes. Continue your city work whenever you're ready.";
+            return "STEAK FINISHED / Well fed: double walking, running and driving speed for two minutes. Continue your city work whenever you're ready.";
         }
 
         /// <summary>The job and optional contact search share one bounded beam pool.</summary>

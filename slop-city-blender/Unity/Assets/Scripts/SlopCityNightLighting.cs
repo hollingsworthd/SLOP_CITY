@@ -65,7 +65,7 @@ namespace SlopCity
 
             if (!originalSky && RenderSettings.skybox != eveningSky) originalSky = RenderSettings.skybox;
             if (!eveningSky && originalSky)
-                eveningSky = new Material(originalSky) { name = "Slop City / Blue Sky With Clouds" };
+                eveningSky = new Material(originalSky);
             if (eveningSky && originalSky)
             {
                 // The retained HDR photograph contains blue sky and real white cumulus.
