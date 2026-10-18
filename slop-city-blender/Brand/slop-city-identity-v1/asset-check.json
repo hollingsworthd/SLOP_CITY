@@ -1,0 +1,22 @@
+{
+  "passed": true,
+  "assets": [
+    {
+      "file": "slop-city-logo-tm.png",
+      "width": 1672,
+      "height": 941,
+      "bytes": 935766,
+      "sha256": "7196e44a1750811ecc5e8115300b934c7979caba3bbfc70d7dfb6477c22ebb7d",
+      "firstRowFullyTransparent": true,
+      "alphaChannel": true
+    },
+    {
+      "file": "slop-city-poster-tm.png",
+      "width": 1024,
+      "height": 1536,
+      "bytes": 3009389,
+      "sha256": "f956ad688c1f818b40181e3f0824b0c26b63c6b30bbece87851353463312888e"
+    }
+  ],
+  "visualReview": "Poster and logo text verified: SLOP CITY with TM marks and exact SLOPCITY.org. Matching rabbit/broadcast identity."
+}

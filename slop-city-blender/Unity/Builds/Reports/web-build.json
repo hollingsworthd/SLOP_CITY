@@ -1,0 +1,28 @@
+{
+    "operation": "webgl-build",
+    "result": "Succeeded",
+    "unityVersion": "6000.3.26f1",
+    "applicationVersion": "0.11.5",
+    "architecture": "WebAssembly / WebGL 2",
+    "scriptingBackend": "IL2CPP",
+    "compression": "gzip with decompression fallback",
+    "textureCompression": "ETC2",
+    "startedAtUtc": "2026-10-13T01:26:52.9686430Z",
+    "finishedAtUtc": "2026-10-13T01:32:04.6976470Z",
+    "scenePath": "Assets/Scenes/SlopCity_CouchSpawn.unity",
+    "outputPath": "/Users/daniel/knoxvillains/slop-city-blender/Unity/Builds/WebGL-v0.11.5",
+    "totalBytes": "672469509",
+    "totalSeconds": 256.156834,
+    "totalErrors": 0,
+    "totalWarnings": 5,
+    "cleanBuild": true,
+    "capturedGeometryBounds": 10476,
+    "errors": [],
+    "warnings": [
+        "Compile scripts: Assets/Scripts/SlopCityFirstPerson.cs(30,40): warning CS0414: The field 'SlopCityFirstPerson.couchDistance' is assigned but its value is never used",
+        "Postprocess built player: Library/Bee/artifacts/WebGL/build/debug_WebGL_wasm/build.framework.js.unmarked: /Users/daniel/knoxvillains/slop-city-blender/Unity/Assets/Plugins/WebGL/SlopCityVideoPlayback.jslib: signature redefinition for: JS_Video_Pause__sig",
+        "Postprocess built player: Library/Bee/artifacts/WebGL/build/debug_WebGL_wasm/build.framework.js.unmarked: /Users/daniel/knoxvillains/slop-city-blender/Unity/Assets/Plugins/WebGL/SlopCityVideoTexture.jslib: signature redefinition for: JS_Video_UpdateToTexture__sig",
+        "Postprocess built player: Library/Bee/artifacts/WebGL/build/debug_WebGL_wasm/build.framework.js.unmarked: /Users/daniel/knoxvillains/slop-city-blender/Unity/Assets/Plugins/WebGL/SlopCityVideoPlayback.jslib: signature redefinition for: JS_Video_Play__sig",
+        "Postprocess built player: Library/Bee/artifacts/WebGL/build/debug_WebGL_wasm/build.framework.js.unmarked: /Users/daniel/knoxvillains/slop-city-blender/Unity/Assets/Plugins/WebGL/SlopCityVideoPlayback.jslib: signature redefinition for: JS_Video_Pause__sig"
+    ]
+}

@@ -1,0 +1,15 @@
+{
+  "family": "Noto Sans CJK JP",
+  "style": "Bold",
+  "provider": "Noto Fonts",
+  "sourceUrl": "https://github.com/notofonts/noto-cjk/tree/main/Sans/OTF/Japanese",
+  "downloadUrl": "https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/OTF/Japanese/NotoSansCJKjp-Bold.otf",
+  "license": "SIL Open Font License 1.1",
+  "licenseUrl": "https://github.com/notofonts/noto-cjk/blob/main/Sans/LICENSE",
+  "licenseFile": "OFL-NotoSansCJK.txt",
+  "filename": "NotoSansCJKjp-Bold.otf",
+  "sha256": "e53dcb0dcb2922e45d01aae1ebd2f382bb81d4229b18b6b883bd170678af1f76",
+  "bytes": 17032620,
+  "downloadedAtUtc": "2026-10-11T00:35:20.726812+00:00",
+  "usage": "Unmodified source font for Japanese signage atlas generation. Generated sign textures are original game artwork. Bundled license accompanies the source font."
+}

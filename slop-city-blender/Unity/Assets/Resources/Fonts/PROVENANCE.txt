@@ -1,0 +1,27 @@
+Slop City Brand Sans Bold (modified subset)
+
+Source: the authored Noto Sans CJK JP Bold font already included in this game.
+Original source URL: https://github.com/notofonts/noto-cjk/tree/main/Sans/OTF/Japanese
+Original download URL: https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/OTF/Japanese/NotoSansCJKjp-Bold.otf
+Original copyright: © 2014-2021 Adobe (http://www.adobe.com/).
+Original SHA-256: e53dcb0dcb2922e45d01aae1ebd2f382bb81d4229b18b6b883bd170678af1f76
+License: SIL Open Font License 1.1; full license in OFL-NotoSansCJK.txt.
+
+Modifications by Machine Publishers, LLC, October 17, 2026:
+- Subset to Basic Latin, Latin-1, general punctuation and U+2122 TRADE MARK SIGN.
+- Remove unused layout features and glyphs; retain original glyph outlines.
+- Rename family, full, unique and PostScript names to Slop City Brand Sans Bold.
+- Preserve source copyright, version and license metadata.
+
+Subset: 21,296 bytes
+Subset SHA-256: 4daf8a501f565902eee2c5355aaecb37d0edaf3e6f0b87777fdc4f2a63b7e28d
+
+Reproduce using FontTools 4.60.1:
+  python3 scripts/subset-brand-font.py
+Check without writes:
+  python3 scripts/subset-brand-font.py --check
+
+The small font provides actual ™ glyph geometry for branded uGUI labels without
+bundling the approximately 17 MB Japanese source font into player Resources.
+Ordinary HUD labels retain their existing font. The font is OFL-covered third-party
+software; the game's AGPL terms and Unity exception do not replace its license.

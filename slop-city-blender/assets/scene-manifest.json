@@ -1,0 +1,43 @@
+{
+  "native": "/Users/daniel/knoxvillains/slop-city-blender/SlopCity_CouchSpawn.blend",
+  "meshes": 936,
+  "markers": {
+    "Spawn_Daniel_Seated": [
+      0.0,
+      0.9399999976158142,
+      1.1799999475479126
+    ],
+    "Spawn_Daniel_Stand": [
+      0.0,
+      -0.20000000298023224,
+      0.07999999821186066
+    ],
+    "LookAt_Daniel_Seated": [
+      2.299999952316284,
+      -2.450000047683716,
+      1.1799999475479126
+    ],
+    "Interact_TV": [
+      2.299999952316284,
+      -2.5999999046325684,
+      1.100000023841858
+    ],
+    "Interact_Radio": [
+      -2.549999952316284,
+      0.47999998927116394,
+      0.75
+    ],
+    "Light_TableLamp": [
+      -2.549999952316284,
+      0.699999988079071,
+      1.6799999475479126
+    ]
+  },
+  "renders": [
+    "/Users/daniel/knoxvillains/slop-city-blender/renders/01-couch-spawn-hero.png",
+    "/Users/daniel/knoxvillains/slop-city-blender/renders/02-couch-comfort.png",
+    "/Users/daniel/knoxvillains/slop-city-blender/renders/03-seated-spawn.png"
+  ],
+  "source": "authored procedural geometry; no external models",
+  "units": "meters"
+}

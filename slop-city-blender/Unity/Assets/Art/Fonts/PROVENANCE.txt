@@ -1,0 +1,9 @@
+Noto Sans CJK JP Bold
+
+Official unmodified Japanese OTF from the Noto Fonts project.
+Source: https://github.com/notofonts/noto-cjk/tree/main/Sans/OTF/Japanese
+Download: https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/OTF/Japanese/NotoSansCJKjp-Bold.otf
+License: SIL Open Font License 1.1; see OFL-NotoSansCJK.txt.
+SHA-256: e53dcb0dcb2922e45d01aae1ebd2f382bb81d4229b18b6b883bd170678af1f76
+
+Used to bake Japanese sign artwork. No system-installed Japanese font is needed to render the saved sign atlases in a player build. The font itself remains under OFL 1.1; the font license does not apply to documents and sign images created with it.

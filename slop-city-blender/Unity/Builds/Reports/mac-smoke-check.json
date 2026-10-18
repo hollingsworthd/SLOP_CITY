@@ -1,0 +1,30 @@
+{
+  "checkedAtUtc": "2026-10-11T00:52:44.349239+00:00",
+  "platform": "macOS Apple Silicon (Apple M4)",
+  "buildVersion": "0.5.0",
+  "buildReceipt": "mac-build.json",
+  "observedPassed": [
+    "Native v0.5.0 standalone app launches with the rebuilt lounge and materials",
+    "Return starts play; bundled lounge video visibly changes frames",
+    "E stands from the couch with changed camera height and gameplay prompts",
+    "W input changes player position in the lounge",
+    "H hides the playing HUD",
+    "Escape displays the pause menu while the HUD is hidden",
+    "Return resumes from pause with the HUD still hidden",
+    "M displays broadcast controls and the correct 61-city-screen count while HUD is hidden",
+    "Player.log diagnostic matches recorded below",
+    "R returns to the couch, with seated prompt restored",
+    "App left open at the pause menu"
+  ],
+  "playerLogIssues": [
+    "Color primaries EBU_3213 is unknown or unsupported by AVFoundationVideoMedia. Falling back to default may result in color shift. /Users/daniel/knoxvillains/slop-city-blender/Unity/Builds/macOS/SLOP CITY.app/Contents/Resources/Data/StreamingAssets/Media/duet.mp4"
+  ],
+  "scope": "Direct native app UI observations through computer use. Separate batch receipts cover city traversal, physics, contracts, NPC behavior, E conversations and native screen decode. Saved-scene renders are not standalone screenshots.",
+  "notVerified": [
+    "Audible speaker output",
+    "Exhaustive manual city exploration or standalone street crowd visual inspection",
+    "Remote latest-post feed synchronization",
+    "Production Mac signing and notarization",
+    "Performance benchmark or subjective perfect photorealism"
+  ]
+}

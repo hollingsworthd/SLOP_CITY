@@ -1,0 +1,558 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <link rel="canonical" href="https://slopcity.org/">
+  <script id="slop-city-primary-domain">
+    if (location.hostname === "www.slopcity.org") {
+      const url = new URL(location.href);
+      url.hostname = "slopcity.org";
+      url.protocol = "https:";
+      url.port = "";
+      location.replace(url.href);
+    }
+  </script>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#090d10">
+  <meta name="description" content="SLOP CITY™ — explore the city, catch a broadcast, and find your way home. Follow white-rabbit clues and discover independent broadcasts. Play in your browser with keyboard/mouse or mobile touch.">
+  <title>SLOP CITY™ — v{{{ PRODUCT_VERSION }}}</title>
+  <script src="slop-city-browser-links.js?v={{{ PRODUCT_VERSION }}}"></script>
+  <script src="slop-city-inline-video.js?v={{{ PRODUCT_VERSION }}}"></script>
+  <script src="slop-city-media-diagnostics.js?v={{{ PRODUCT_VERSION }}}"></script>
+  <style>
+    :root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #e1e7e6; background: #090d10; --muted: #8b999d; --accent: #adecc8; --line: #273238; }
+    * { box-sizing: border-box; }
+    body { margin: 0; overflow: hidden; overscroll-behavior: none; }
+    button, select { font: inherit; cursor: pointer; }
+    #fps { margin-left: auto; color: var(--accent); font-size: 10px; white-space: nowrap; }
+    .resolution { max-width: 118px; }
+    button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; }
+    [hidden] { display: none !important; }
+    .toolbar { height: 56px; display: flex; align-items: center; gap: 18px; padding: 0 24px; border-bottom: 1px solid var(--line); }
+    .wordmark { font-size: 15px; letter-spacing: .14em; font-weight: 800; white-space: nowrap; }
+    .edition { font-size: 10px; letter-spacing: .1em; color: var(--muted); }
+    .toolbar-actions { display: flex; gap: 10px; }
+    .tool { background: transparent; color: #c2cdce; border: 1px solid #354148; padding: 8px 12px; font-size: 11px; }
+    .tool:hover { border-color: var(--accent); color: #fff; }
+    .tool:disabled { opacity: .35; cursor: default; }
+    #stage { position: relative; height: calc(100vh - 100px); height: calc(100dvh - 100px); min-height: 220px; background: #080b0e; }
+    #stage:fullscreen { height: 100vh; width: 100vw; }
+    #unity-canvas { touch-action: none; -webkit-user-select: none; user-select: none; display: block; width: 100%; height: 100%; outline: none; background: #080b0e; }
+    #gate { position: absolute; inset: 0; display: grid; place-items: center; overflow: auto; padding: 30px; background: radial-gradient(ellipse at 73% 26%, #18372d70, transparent 52%), linear-gradient(135deg, #0e171e 0%, #090c11 67%); }
+    #gate::before { content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .23; background-image: linear-gradient(#a9cbc811 1px, transparent 1px), linear-gradient(90deg, #a9cbc811 1px, transparent 1px); background-size: 64px 64px; }
+    .gate-content { position: relative; width: min(660px, 100%); padding: 46px 0; }
+    .eyebrow { display: flex; align-items: center; gap: 10px; font-size: 10px; color: var(--accent); letter-spacing: .2em; margin: 0 0 22px; }
+    .eyebrow::before { content: ""; width: 7px; height: 7px; background: var(--accent); box-shadow: 0 0 18px #adecc860; }
+    h1 { font: 900 clamp(52px, 9vw, 102px)/.91 Arial, Helvetica, sans-serif; letter-spacing: -.06em; margin: 0 0 25px; }
+    .brand-lockup { display: flex; align-items: center; gap: 28px; margin-bottom: 22px; }
+    .brand-lockup h1 { flex: 1; margin: 0; line-height: 0; }
+    .city-logo { display: block; width: 100%; max-width: 480px; height: auto; }
+    .publisher { flex: 0 0 96px; text-align: center; color: var(--muted); font-size: 9px; line-height: 1.6; }
+    .publisher img { display: block; width: 96px; height: 96px; margin-bottom: 8px; border-radius: 50%; }
+    .site-address { color: var(--accent); text-decoration: none; }
+    @media (max-width: 620px) { .brand-lockup { gap: 12px; } .publisher { flex-basis: 64px; font-size: 8px; } .publisher img { width: 64px; height: 64px; } }
+    @media (max-height: 600px) and (min-width: 621px) { .city-logo { width: 310px; } .brand-lockup { max-width: 450px; } }
+    .intro { color: #b1bfc2; font-size: 13px; line-height: 1.8; max-width: 470px; margin: 0 0 30px; }
+    #launch { display: inline-flex; align-items: center; gap: 42px; padding: 16px 20px; background: var(--accent); color: #10231d; font-size: 12px; font-weight: 800; border: 0; }
+    #launch:hover { background: #d0ffe3; }
+    .hint { color: var(--muted); font-size: 10px; line-height: 1.7; margin-top: 20px; }
+    #loading { max-width: 460px; margin-top: 28px; }
+    .loading-label { display: flex; justify-content: space-between; font-size: 11px; letter-spacing: .04em; margin-bottom: 12px; }
+    progress { display: block; appearance: none; width: 100%; height: 3px; border: 0; background: #26332f; color: var(--accent); }
+    progress::-webkit-progress-bar { background: #26332f; }
+    progress::-webkit-progress-value { background: var(--accent); transition: width .15s; }
+    progress::-moz-progress-bar { background: var(--accent); }
+    #error { max-width: 600px; color: #ffc9b0; font-size: 12px; line-height: 1.7; }
+    #error pre { max-height: 110px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 10px; color: #a7b2b6; }
+    #error .tool { margin-top: 10px; }
+    #controls { position: absolute; z-index: 2; top: 14px; right: 18px; width: min(340px, calc(100% - 36px)); padding: 22px; background: #10181df5; border: 1px solid #40524c; box-shadow: 0 8px 32px #0008; font-size: 12px; }
+    #controls h2 { margin: 0 0 16px; font-size: 12px; letter-spacing: .12em; }
+    #controls dl { display: grid; grid-template-columns: auto 1fr; gap: 12px 24px; margin: 0; }
+    #controls dt { color: var(--accent); }
+    #controls dd { margin: 0; color: #b9c5c8; }
+    #controls p { color: var(--muted); font-size: 10px; line-height: 1.7; margin: 22px 0 0; }
+    #media-support { padding: 18px; margin: 0 0 24px; background: #14211e; border: 1px solid #557568; font-size: 12px; line-height: 1.6; }
+    #media-support h2 { font-size: 14px; line-height: 1.4; margin: 0 0 10px; }
+    #media-support p { margin: 10px 0; }
+    #media-support .tool { min-height: 44px; }
+    #media-support .media-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+    #media-support.floating { position: absolute; z-index: 3; right: 14px; bottom: 14px; width: min(380px, calc(100% - 28px)); max-height: calc(100% - 28px); overflow: auto; margin: 0; box-shadow: 0 8px 32px #0008; }
+    #media-copy-status { display: block; color: var(--accent); }
+    footer { height: 44px; display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 0 24px; border-top: 1px solid var(--line); color: var(--muted); font-size: 9px; letter-spacing: .05em; }
+    #status { color: #a4beb0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #media-help { color: var(--accent); border: 0; background: none; padding: 0 4px; min-height: 44px; font-size: 10px; white-space: nowrap; }
+    footer .site-address { white-space: nowrap; }
+    @media (max-width: 620px) { .toolbar { padding: 0 14px; gap: 10px; } .edition, .footer-controls { display: none; } .wordmark { font-size: 11px; letter-spacing: .03em; } .resolution { max-width: 78px; } #help { display: none; } .toolbar-actions { gap: 6px; } .tool { padding: 8px; font-size: 10px; } footer { padding: 0 14px; } .gate-content { padding: 10px 0; } .intro { font-size: 12px; } }
+    @media (max-height: 600px) { h1 { font-size: 54px; } .eyebrow { margin-bottom: 14px; } .intro { margin-bottom: 18px; } .gate-content { padding: 8px 0; } .hint { margin-top: 14px; } }
+    /* Desktop copy should remain readable at ordinary browser window sizes. */
+    @media (min-width: 621px) {
+      .desktop-ui .wordmark { font-size: 19px; letter-spacing: .08em; }
+      .desktop-ui .edition, .desktop-ui footer { font-size: 13px; }
+      .desktop-ui #fps, .desktop-ui #media-help { font-size: 14px; }
+      .desktop-ui .tool { font-size: 15px; }
+      .desktop-ui .resolution { max-width: 155px; }
+      .desktop-ui .eyebrow, .desktop-ui .hint, .desktop-ui #controls p { font-size: 14px; }
+      .desktop-ui .publisher { font-size: 11px; }
+      .desktop-ui .intro { font-size: 18px; max-width: 640px; line-height: 1.6; }
+      .desktop-ui #launch, .desktop-ui #controls, .desktop-ui #error, .desktop-ui #media-support { font-size: 16px; }
+      .desktop-ui .loading-label { font-size: 15px; }
+      .desktop-ui #error pre { font-size: 13px; }
+      .desktop-ui #controls { width: min(420px, calc(100% - 36px)); max-height: calc(100% - 28px); overflow: auto; }
+      .desktop-ui #controls h2, .desktop-ui #media-support h2 { font-size: 18px; }
+    }
+    @media (min-width: 621px) and (max-width: 1100px) {
+      .desktop-ui .edition, .desktop-ui .footer-controls { display: none; }
+      .desktop-ui .toolbar { gap: 12px; padding: 0 18px; }
+    }
+  </style>
+</head>
+<body>
+  <header class="toolbar">
+    <div class="wordmark">SLOP CITY™</div>
+    <span class="edition">v{{{ PRODUCT_VERSION }}}</span>
+    <output id="fps" aria-label="Game frame rate" title="Measured Unity frame rate">— FPS</output>
+    <div class="toolbar-actions">
+      <select class="tool resolution" id="resolution" aria-label="City detail" title="City detail. Menus and HUD always use full display resolution."><option value="540">Low · 540p</option><option value="720" selected>Fast · 720p</option><option value="1080">Sharp · 1080p</option><option value="0">Native</option></select>
+      <button class="tool" id="help" aria-expanded="false" aria-controls="controls">Controls</button>
+      <button class="tool" id="fullscreen" disabled>Fullscreen ↗</button>
+    </div>
+  </header>
+  <main id="stage" aria-label="SLOP CITY™ game">
+    <canvas id="unity-canvas" width="{{{ WIDTH }}}" height="{{{ HEIGHT }}}" tabindex="-1" aria-label="SLOP CITY™. Use WASD to move and your mouse to look. Press Escape to release the mouse."></canvas>
+    <section id="gate" aria-label="Launch game">
+      <div class="gate-content">
+        <p class="eyebrow">MACHINE PUBLISHERS / v{{{ PRODUCT_VERSION }}}</p>
+        <div class="brand-lockup">
+          <h1><img class="city-logo" src="Brand/slop-city-logo.png" width="1672" height="941" alt="SLOP CITY™ — SLOPCITY.org"></h1>
+          <div class="publisher"><img src="Brand/machine-publishers.png" width="400" height="400" alt="Machine Publishers official seal">MACHINE PUBLISHERS</div>
+        </div>
+        <p class="intro">Take on 40 different jobs in a city full of Smiths.<br>Polish dusty objects, collect salvage and sell it at Signal Yard Pawn Shop.<br>Follow dispatch beams, ride the subway and explore inside the buildings.</p>
+        <section id="media-support" aria-labelledby="media-support-title" hidden>
+          <h2 id="media-support-title">No video or sound?</h2>
+          <p id="media-support-message">Tap the city once to allow video and sound. Check the volume and playback controls in MEDIA.</p>
+          <p>Inside TikTok? Open its menu and choose <strong>Open in browser</strong>, if available. Or copy <a class="site-address" href="https://slopcity.org/">SLOPCITY.org</a> and open it in Safari or Chrome.</p>
+          <div class="media-actions"><button class="tool" id="media-copy">Copy game link</button><button class="tool" id="media-dismiss">Close</button></div>
+          <output id="media-copy-status" role="status"></output>
+        </section>
+        <p class="hint">© 2026 Machine Publishers, LLC · Original game code: <a class="site-address" href="license.html" target="_blank" rel="noopener noreferrer">GNU AGPLv3-or-later · License, source + trademarks</a></p>
+        <button id="launch">LOAD CITY <span aria-hidden="true">↗</span></button>
+        <p class="hint" id="launch-hint">Keyboard + mouse or two-thumb touch controls.<br>After loading, choose PLAY to enter the city and enable sound.</p>
+        <div id="loading" hidden>
+          <div class="loading-label"><span id="loading-label">CONNECTING TO CITY</span><span id="percent">0%</span></div>
+          <progress id="progress" value="0" max="1" aria-label="Loading game"></progress>
+          <p class="hint">The first visit downloads the city. Future visits use your browser’s cache.</p>
+        </div>
+        <div id="error" role="alert" hidden>
+          <p id="error-message"></p>
+          <details><summary>Technical details</summary><pre id="error-detail"></pre></details>
+          <button class="tool" id="reload">Reload page</button>
+        </div>
+        <noscript><p>This game needs JavaScript enabled in your browser.</p></noscript>
+      </div>
+    </section>
+    <aside id="controls" hidden>
+      <h2>CITY CONTROLS</h2>
+      <dl>
+        <dt>Left thumb</dt><dd>Move with the floating joystick</dd>
+        <dt>Right thumb</dt><dd>Drag to look; tap USE / JUMP. Hold RUN to sprint.</dd>
+        <dt>W A S D / ↑ ↓ ← →</dt><dd>Move</dd>
+        <dt>Mouse</dt><dd>Look around</dd>
+        <dt>Shift / Space</dt><dd>Sprint / jump</dd>
+        <dt>E</dt><dd>Use the object under the bullseye · within 3.4 m</dd>
+        <dt>C / CLEAN</dt><dd>Polish a dusty surface with four presses</dd>
+        <dt>F / TAKE</dt><dd>Pick up a removable object</dd>
+        <dt>I / BAG</dt><dd>Open your inventory; sell at Signal Yard Pawn Shop</dd>
+        <dt>Q</dt><dd>New job</dd>
+        <dt>T / SIGNAL</dt><dd>Replay the intercepted transmission</dd>
+        <dt>M</dt><dd>Media controls</dd>
+        <dt>R</dt><dd>Return to couch</dd>
+        <dt>H</dt><dd>Toggle HUD</dd>
+        <dt>Esc</dt><dd>Pause / release mouse</dd>
+      </dl>
+      <p>Choose PLAY to begin. Touch controls appear automatically on phones and tablets; landscape gives you more room. Follow white-rabbit traces and intercepted transmissions to find your job.</p>
+    </aside>
+  </main>
+  <footer><a class="site-address" href="license.html" target="_blank" rel="noopener noreferrer">AGPLv3+ / Trademarks</a><span id="status" role="status">CITY READY</span><button id="media-help" aria-expanded="false" aria-controls="media-support">Media help</button><a class="site-address" href="https://slopcity.org/">SLOPCITY.org</a><span class="footer-controls">WASD MOVE · MOUSE LOOK · E INTERACT · ESC PAUSE</span></footer>
+  <script src="slop-city-browser-media.js?v={{{ PRODUCT_VERSION }}}"></script>
+  <script>
+    const canvas = document.getElementById("unity-canvas");
+    const stage = document.getElementById("stage");
+    const gate = document.getElementById("gate");
+    const launch = document.getElementById("launch");
+    const loading = document.getElementById("loading");
+    const status = document.getElementById("status");
+    const fullscreen = document.getElementById("fullscreen");
+    let graphicsLost = false;
+    let sessionFailed = false;
+    let startupWatch = null;
+    let startupAt = 0;
+    let startupProgressAt = 0;
+    let startupProgress = -1;
+    let maxCanvasDimension = 8192;
+    document.addEventListener("slopcityvideoblocked", function () {
+      if (graphicsLost || sessionFailed) return;
+      status.textContent = "THIS BROWSER CANNOT KEEP VIDEO ON CITY SCREENS / PLAYBACK STOPPED";
+    });
+    const playbackHint = "TAP THE CITY TO ENABLE VIDEO / SOUND";
+    document.addEventListener("slopcityvideoplayback", function (event) {
+      if (graphicsLost || sessionFailed || !event.detail) return;
+      if (event.detail.pendingCount > 0) {
+        if (window.slopCityInlineVideoPolicy && !window.slopCityInlineVideoPolicy.blockedCount) status.textContent = playbackHint;
+      } else if (status.textContent === playbackHint) {
+        status.textContent = "CITY CONNECTED";
+      }
+    });
+    function mediaQuery(query) {
+      try { return typeof window.matchMedia === "function" ? window.matchMedia(query) : null; }
+      catch (_) { return null; }
+    }
+    const pointerQuery = mediaQuery('(pointer: coarse)');
+    const touchDevice = navigator.maxTouchPoints > 0 && (!pointerQuery || pointerQuery.matches);
+    window.slopCityTouchControls = touchDevice || /(?:^|[?&])touch=1(?:&|$)/.test(location.search);
+    document.documentElement.classList.toggle("desktop-ui", !window.slopCityTouchControls);
+    if (window.slopCityTouchControls) {
+      document.getElementById("launch-hint").innerHTML = "Left thumb moves. Right thumb looks.<br>Turn your phone sideways for more room. Choose PLAY to enable sound.";
+      canvas.setAttribute("aria-label", "SLOP CITY™. Left thumb moves, right thumb looks. Use the on-screen jump, interact and pause buttons.");
+      document.querySelector('.footer-controls').textContent = "LEFT MOVE · RIGHT LOOK · USE · JUMP";
+    }
+    let unityInstance = null;
+    let loadingStarted = false;
+    let navigationDisposed = false;
+    let navigationModule = null;
+    const navigationDisposedModules = new WeakSet();
+
+    function disposeNavigationModule(module) {
+      if (!module || navigationDisposedModules.has(module)) return;
+      navigationDisposedModules.add(module);
+      // The bridge owns detached video elements that DOM queries cannot find.
+      // Retire their callbacks, retries, sources and decode surfaces before
+      // stopping frames; a queued Unity Quit needs a future engine frame.
+      try {
+        if (module.slopCityDisposeOwnedVideoDecoders) module.slopCityDisposeOwnedVideoDecoders();
+      } catch (error) { console.warn("Navigation video cleanup failed.", error); }
+      try { if (module.pauseMainLoop) module.pauseMainLoop(); }
+      catch (error) { console.warn("Navigation frame cleanup failed.", error); }
+      try {
+        // Pinned Unity publishes its current GL context as Module.ctx. Release
+        // only this game's existing context; asking the canvas for one could
+        // create a new context while a still-starting page is being left.
+        const context = module.ctx;
+        if (context && context.canvas === canvas && typeof context.getExtension === "function") {
+          const loss = context.getExtension("WEBGL_lose_context");
+          if (loss) loss.loseContext();
+        }
+      } catch (error) { console.warn("Navigation graphics cleanup failed.", error); }
+      // These owned resources retire synchronously. A cached page may retain
+      // its Wasm memory until eviction; this is not an engine Quit completion.
+    }
+
+    window.addEventListener("pagehide", function () {
+      if (!loadingStarted || navigationDisposed) return;
+      navigationDisposed = true;
+      sessionFailed = true;
+      if (startupWatch !== null) { clearInterval(startupWatch); startupWatch = null; }
+      const reason = new Error("City startup cancelled because this page was left.");
+      try { if (window.slopCityChunks) window.slopCityChunks.abortAll(reason); }
+      catch (error) { console.warn("Navigation download cleanup failed.", error); }
+      try { if (window.slopCityStopStartup) window.slopCityStopStartup(reason); }
+      catch (error) { console.warn("Navigation startup cleanup failed.", error); }
+      disposeNavigationModule(navigationModule || (unityInstance && unityInstance.Module));
+    });
+    window.addEventListener("pageshow", function (event) {
+      if (!event.persisted || !navigationDisposed) return;
+      // A cached page has deliberately retired its decoders and engine loop.
+      // Cold loading rebuilds coherent ownership instead of resuming that world.
+      gate.hidden = false;
+      launch.hidden = true;
+      loading.hidden = true;
+      fullscreen.disabled = true;
+      resolution.disabled = true;
+      status.textContent = "RECONNECTING CITY";
+      try { location.reload(); }
+      catch (error) {
+        document.getElementById("error").hidden = false;
+        document.getElementById("error-message").textContent = "Reload the page to reconnect to the city.";
+        document.getElementById("error-detail").textContent = String(error);
+        console.warn("Cached city could not reload.", error);
+      }
+    });
+
+    const resolution = document.getElementById("resolution");
+    const performanceOutput = document.getElementById("fps");
+    if (window.slopCityTouchControls) resolution.value = "540";
+    function resizeGame() {
+      if (graphicsLost || sessionFailed) return;
+      const bounds = canvas.getBoundingClientRect();
+      const density = Number(window.devicePixelRatio);
+      const ratio = Number.isFinite(density) && density > 0 ? Math.max(1, density) : 1;
+      // UI is drawn at display resolution. Only the world camera uses the selected budget.
+      window.slopCitySceneRenderHeight = Number(resolution.value);
+      // Touch displays need a total-pixel bound as well as a per-axis device
+      // limit: a retina tablet otherwise retains several full-size color/depth
+      // surfaces even when its world camera is set to 540p. Preserve aspect ratio.
+      const pixelRatioLimit = window.slopCityTouchControls
+        ? Math.sqrt((1920 * 1080) / (Math.max(1, bounds.width) * Math.max(1, bounds.height))) : Infinity;
+      const safeRatio = Math.min(ratio, pixelRatioLimit, maxCanvasDimension / Math.max(1, bounds.width), maxCanvasDimension / Math.max(1, bounds.height));
+      window.slopCityDisplayPixelRatio = safeRatio;
+      const width = Math.max(1, Math.floor(bounds.width * safeRatio));
+      const height = Math.max(1, Math.floor(bounds.height * safeRatio));
+      if (canvas.width !== width || canvas.height !== height) {
+        canvas.width = width;
+        canvas.height = height;
+      }
+      canvas.dataset.displayResolution = width + "x" + height;
+      canvas.dataset.pixelRatio = String(safeRatio);
+    }
+    try { if (typeof ResizeObserver === "function") new ResizeObserver(resizeGame).observe(stage); }
+    catch (error) { console.warn("Using window resize events for the city display.", error); }
+    window.addEventListener("resize", resizeGame);
+    document.addEventListener("fullscreenchange", resizeGame);
+    function watchDisplayDensity() {
+      const query = mediaQuery("(resolution: " + (window.devicePixelRatio || 1) + "dppx)");
+      if (!query) return;
+      const changed = function () {
+        if (typeof query.removeEventListener === "function") query.removeEventListener("change", changed);
+        else if (typeof query.removeListener === "function") query.removeListener(changed);
+        resizeGame(); watchDisplayDensity();
+      };
+      if (typeof query.addEventListener === "function") query.addEventListener("change", changed, {once: true});
+      else if (typeof query.addListener === "function") query.addListener(changed);
+    }
+    watchDisplayDensity();
+    resolution.addEventListener("change", function () { resizeGame(); canvas.focus(); });
+    resizeGame();
+    window.slopCityReportPerformance = function (fps, frameMs, p95Ms, width, height) {
+      performanceOutput.textContent = Math.round(fps) + " FPS";
+      const presentation = window.slopCityPresentation;
+      const worldWidth = presentation ? presentation.worldWidth : width;
+      const worldHeight = presentation ? presentation.worldHeight : height;
+      performanceOutput.title = frameMs.toFixed(1) + " ms average / " + p95Ms.toFixed(1) + " ms p95 / city " + worldWidth + " × " + worldHeight + " / UI " + width + " × " + height;
+      performanceOutput.dataset.fps = fps.toFixed(2);
+      performanceOutput.dataset.frameMs = frameMs.toFixed(2);
+      performanceOutput.dataset.p95Ms = p95Ms.toFixed(2);
+      performanceOutput.dataset.resolution = width + "x" + height;
+      performanceOutput.dataset.worldResolution = worldWidth + "x" + worldHeight;
+    };
+
+    // Embedded browsers can reject pointer capture. Unity's generated bridge does
+    // not consume the request promise, so handle that expected rejection here.
+    if (canvas.requestPointerLock && !window.slopCityTouchControls) {
+      const captureMouse = canvas.requestPointerLock.bind(canvas);
+      const captureUnavailable = function () {
+        if (graphicsLost || sessionFailed) return;
+        status.textContent = "MOUSE CAPTURE UNAVAILABLE / TRY FULLSCREEN OR A DESKTOP BROWSER";
+      };
+      canvas.requestPointerLock = function (options) {
+        try {
+          const result = captureMouse(options);
+          if (result && typeof result.catch === "function") return result.catch(captureUnavailable);
+          return result;
+        } catch (error) { captureUnavailable(); }
+      };
+    }
+
+    function fail(message, detail) {
+      if (sessionFailed) return;
+      sessionFailed = true;
+      if (startupWatch !== null) { clearInterval(startupWatch); startupWatch = null; }
+      try { if (window.slopCityChunks) window.slopCityChunks.abortAll(detail); }
+      catch (error) { console.warn("Download cleanup could not complete.", error); }
+      try { if (window.slopCityStopStartup) window.slopCityStopStartup(detail); }
+      catch (error) { console.warn("Startup cleanup could not complete.", error); }
+      stopAfterGraphicsLoss();
+      fullscreen.disabled = true;
+      resolution.disabled = true;
+      gate.hidden = false;
+      launch.hidden = true;
+      document.getElementById("launch-hint").hidden = true;
+      loading.hidden = true;
+      document.getElementById("error").hidden = false;
+      document.getElementById("error-message").textContent = message;
+      document.getElementById("error-detail").textContent = String(detail || message);
+      status.textContent = "CONNECTION INTERRUPTED";
+      console.error("SLOP CITY™ session stopped:", detail || message);
+    }
+
+    function stopAfterGraphicsLoss() {
+      if (!unityInstance) return;
+      // A lost context invalidates Unity's GPU resources. Stop this session and
+      // offer a fresh load instead of continuing through invalid video textures.
+      const module = unityInstance.Module;
+      if (!module) return;
+      try { if (module.slopCityPauseVideoForGraphicsLoss) module.slopCityPauseVideoForGraphicsLoss(); }
+      catch (error) { console.warn("Video cleanup could not complete.", error); }
+      try { if (module.pauseMainLoop) module.pauseMainLoop(); }
+      catch (error) { console.warn("The game loop could not be paused.", error); }
+    }
+    canvas.addEventListener("webglcontextlost", function () {
+      graphicsLost = true;
+      stopAfterGraphicsLoss();
+      fullscreen.disabled = true;
+      resolution.disabled = true;
+      fail("The browser lost its graphics connection. Reload to return to the city.",
+        "WebGL context lost. The game has stopped; reloading creates a fresh graphics session.");
+    });
+
+    function showBanner(message, type) {
+      if (type === "error") fail("The city encountered a problem. Reload the page to reconnect.", message);
+      else console.warn(message);
+    }
+
+    const config = {
+      dataUrl: "Build/{{{ DATA_FILENAME }}}",
+      frameworkUrl: "Build/{{{ FRAMEWORK_FILENAME }}}",
+      codeUrl: "Build/{{{ CODE_FILENAME }}}",
+#if MEMORY_FILENAME
+      memoryUrl: "Build/{{{ MEMORY_FILENAME }}}",
+#endif
+#if SYMBOLS_FILENAME
+      symbolsUrl: "Build/{{{ SYMBOLS_FILENAME }}}",
+#endif
+      streamingAssetsUrl: "StreamingAssets",
+      companyName: {{{ JSON.stringify(COMPANY_NAME) }}},
+      productName: {{{ JSON.stringify(PRODUCT_NAME) }}},
+      productVersion: {{{ JSON.stringify(PRODUCT_VERSION) }}},
+      onRuntimeInitialized: function () {
+        navigationModule = this;
+        if (navigationDisposed) {
+          disposeNavigationModule(this);
+          // Instantiation may finish after pagehide. Stop before C++ main opens
+          // the scene, even when the browser has already frozen queued work.
+          throw new Error("City startup cancelled because this page was left.");
+        }
+      },
+      showBanner: showBanner,
+      onAbort: function (reason) { fail("The city stopped. Reload to start a fresh session.", reason); },
+      errorHandler: function (message, filename) {
+        // The Unity loader observes global errors. Claim only errors identifying
+        // its framework/Wasm; unrelated page errors keep their normal reporting.
+        if (!/wasm-function|WebGL(?:-[A-Za-z0-9][A-Za-z0-9.-]*)?\.framework|unityFramework|\.wasm(?:\b|:)/i.test(String(message) + " " + (filename || ""))) return false;
+        fail("The game encountered an error. Reload to return to the city.", message);
+        return true;
+      },
+      devicePixelRatio: window.slopCityDisplayPixelRatio || 1,
+      matchWebGLToCanvasSize: false
+    };
+
+    launch.addEventListener("click", function () {
+      if (loadingStarted || sessionFailed) return;
+      if (window.slopCityInlineVideoPolicyVersion !== 3) {
+        fail("The playback update could not load. Reload the page to try again.", "The required in-world video guard is missing or out of date.");
+        return;
+      }
+      if (location.protocol === "file:") {
+        fail("Open this webpage through a local web server or a hosted URL.", "Browsers cannot load Unity game files through file:// URLs. Serve the entire export directory over HTTP or HTTPS.");
+        return;
+      }
+      if (typeof WebAssembly !== "object" || typeof fetch !== "function"
+          || typeof ReadableStream !== "function" || typeof AbortController !== "function" || typeof Worker !== "function") {
+        fail("This game needs a browser with WebGL 2 and WebAssembly enabled.", "Try a current desktop browser with hardware acceleration enabled.");
+        return;
+      }
+      let probe;
+      try { probe = document.createElement("canvas").getContext("webgl2"); }
+      catch (error) { fail("The browser could not initialize graphics. Reload or try another browser.", error); return; }
+      if (!probe) {
+        fail("This game needs WebGL 2 enabled.", "Try a current browser with hardware acceleration enabled.");
+        return;
+      }
+      try {
+        const viewport = probe.getParameter(probe.MAX_VIEWPORT_DIMS);
+        maxCanvasDimension = Math.max(1, Math.min(probe.getParameter(probe.MAX_TEXTURE_SIZE), probe.getParameter(probe.MAX_RENDERBUFFER_SIZE), viewport[0], viewport[1]));
+      } catch (error) { console.warn("Graphics limits could not be read; using the safe display limit.", error); }
+      finally {
+        try {
+          const loseContext = probe.getExtension("WEBGL_lose_context");
+          if (loseContext) loseContext.loseContext();
+        } catch (error) { console.warn("Graphics probe cleanup could not complete.", error); }
+        probe = null;
+      }
+      resizeGame();
+      loadingStarted = true;
+      launch.hidden = true;
+      document.getElementById("launch-hint").hidden = true;
+      loading.hidden = false;
+      status.textContent = "DOWNLOADING CITY";
+      startupAt = startupProgressAt = Date.now();
+      startupWatch = setInterval(function () {
+        if (document.hidden) return;
+        const now = Date.now();
+        if (now - startupProgressAt > 300000 || now - startupAt > 900000)
+          fail("The city stopped loading. Check your connection and reload to try again.", "Startup exceeded its download/opening deadline.");
+      }, 1000);
+      const script = document.createElement("script");
+      script.src = "Build/{{{ LOADER_FILENAME }}}";
+      script.onerror = function () { fail("The game files could not be reached. Reload to try again.", "Could not load " + script.src); };
+      script.onload = function () {
+        if (sessionFailed) return;
+        if (typeof createUnityInstance !== "function") { fail("The game loader could not start. Reload to retry.", "Unity loader unavailable."); return; }
+        try {
+        createUnityInstance(canvas, config, function (progress) {
+          if (sessionFailed) return;
+          const value = Math.min(1, Math.max(0, progress));
+          if (value > startupProgress) { startupProgress = value; startupProgressAt = Date.now(); }
+          document.getElementById("progress").value = value;
+          document.getElementById("percent").textContent = Math.round(value * 100) + "%";
+          document.getElementById("loading-label").textContent = value < .9 ? "DOWNLOADING CITY" : "OPENING THE STREETS";
+        }).then(function (instance) {
+          unityInstance = instance;
+          if (navigationDisposed) { disposeNavigationModule(instance.Module); return; }
+          if (sessionFailed || graphicsLost) {
+            stopAfterGraphicsLoss();
+            try { if (instance.Quit) Promise.resolve(instance.Quit()).catch(error => console.warn("Late game cleanup failed.", error)); }
+            catch (error) { console.warn("Late game cleanup failed.", error); }
+            return;
+          }
+          if (startupWatch !== null) { clearInterval(startupWatch); startupWatch = null; }
+          resizeGame();
+          gate.hidden = true;
+          document.dispatchEvent(new CustomEvent("slopcityready"));
+          fullscreen.disabled = false;
+          status.textContent = "CITY CONNECTED / CHOOSE PLAY TO BEGIN";
+          canvas.focus();
+          // The in-game PLAY button supplies a fresh user gesture for sound and pointer lock.
+        }).catch(function (error) {
+          if (graphicsLost) return;
+          fail("The city could not start. Reload the page to try again.", error);
+        });
+        } catch (error) { fail("The game loader could not start. Reload to retry.", error); }
+      };
+      try { document.body.appendChild(script); }
+      catch (error) { fail("The game loader could not start. Reload to retry.", error); }
+    });
+
+    document.getElementById("reload").addEventListener("click", function () { location.reload(); });
+    let hiddenAt = 0;
+    document.addEventListener("visibilitychange", function () {
+      if (document.hidden) hiddenAt = Date.now();
+      else if (hiddenAt) {
+        const suspended = Date.now() - hiddenAt;
+        startupAt += suspended; startupProgressAt += suspended; hiddenAt = 0;
+      }
+    });
+    document.getElementById("help").addEventListener("click", function () {
+      const controls = document.getElementById("controls");
+      controls.hidden = !controls.hidden;
+      this.setAttribute("aria-expanded", String(!controls.hidden));
+      if (controls.hidden && unityInstance) canvas.focus();
+    });
+    fullscreen.addEventListener("click", function () {
+      if (!unityInstance || graphicsLost || sessionFailed) return;
+      const unavailable = function () { if (!sessionFailed) status.textContent = "FULLSCREEN UNAVAILABLE IN THIS BROWSER"; };
+      try {
+        const result = stage.requestFullscreen ? stage.requestFullscreen() : unityInstance.SetFullscreen(1);
+        if (result && typeof result.catch === "function") result.catch(unavailable);
+      } catch (error) { unavailable(); }
+    });
+    document.addEventListener("pointerlockchange", function () {
+      if (graphicsLost || sessionFailed) return;
+      if (unityInstance && !window.slopCityTouchControls) status.textContent = document.pointerLockElement === canvas ? "CITY CONNECTED" : "CITY CONNECTED / MOUSE RELEASED";
+    });
+    canvas.addEventListener("pointerdown", function () {
+      if (graphicsLost || sessionFailed) return;
+      if (unityInstance && window.slopCityTouchControls) status.textContent = "CITY CONNECTED / TOUCH CONTROLS ACTIVE";
+    });
+    canvas.addEventListener("contextmenu", function (event) { event.preventDefault(); });
+  </script>
+</body>
+</html>

@@ -1,0 +1,144 @@
+{
+    "result": "Passed",
+    "startedAtUtc": "2026-10-11T01:23:58.0843280Z",
+    "finishedAtUtc": "2026-10-11T01:24:29.4413860Z",
+    "syncedAtUtc": "2026-10-11T01:24:03.2156090Z",
+    "unityVersion": "6000.3.26f1",
+    "graphicsDevice": "Metal / Apple M4",
+    "syncStatus": "78 TikTok posts / 4 slideshows / up to date.",
+    "scope": "Real public-network catalogue sync and native on-demand media decode in the saved scene. Completeness is checked against current public counts; private/deleted posts are excluded. Only sampled videos and one complete photo post are downloaded/decoded, not every catalogued video. Speaker output is not listened to.",
+    "passed": true,
+    "userPlaybackSettingsRestored": true,
+    "publicPostCount": 78,
+    "publicVideoCount": 74,
+    "publicSlideshowCount": 4,
+    "screenCount": 61,
+    "maxNativeDecoders": 3,
+    "photoImageCount": 4,
+    "audioCacheBytes": 10587904,
+    "photoPostId": "7695014223260159263",
+    "rotationFrom": "7695178004015697182",
+    "rotationTo": "7695017161705721119",
+    "audioClipSeconds": 59.99800109863281,
+    "accounts": [
+        {
+            "creator": "machine_publishers",
+            "status": "All public posts synchronized.",
+            "discovered": 10,
+            "reported": 10,
+            "complete": true
+        },
+        {
+            "creator": "1984drh",
+            "status": "All public posts synchronized.",
+            "discovered": 68,
+            "reported": 68,
+            "complete": true
+        }
+    ],
+    "decodedVideos": [
+        {
+            "creator": "machine_publishers",
+            "postId": "7695178004015697182",
+            "firstFrame": 6,
+            "lastFrame": 11,
+            "nativeWidth": 720,
+            "nativeHeight": 1280,
+            "firstSeconds": 0.2,
+            "lastSeconds": 0.36666666666666666,
+            "durationSeconds": 36.70000076293945,
+            "pixelVariance": 0.07386592103556472
+        },
+        {
+            "creator": "1984drh",
+            "postId": "7695108859941096734",
+            "firstFrame": 7,
+            "lastFrame": 12,
+            "nativeWidth": 720,
+            "nativeHeight": 1280,
+            "firstSeconds": 0.23333333333333335,
+            "lastSeconds": 0.4,
+            "durationSeconds": 20.634000778198243,
+            "pixelVariance": 0.048429222073119507
+        }
+    ],
+    "photoFrames": [
+        {
+            "index": 0,
+            "pixelVariance": 0.06099258801499264
+        },
+        {
+            "index": 1,
+            "pixelVariance": 0.063886887346926
+        },
+        {
+            "index": 2,
+            "pixelVariance": 0.053428969490846359
+        },
+        {
+            "index": 3,
+            "pixelVariance": 0.052837611427407889
+        }
+    ],
+    "checks": [
+        "Saved scene initializes the real public TikTok synchronizer and city network.",
+        "Saved player retains its real input component.",
+        "Fresh catalogue uses version 2 and contains no duplicate authored post IDs.",
+        "Fresh sync includes exactly one account record for @machine_publishers.",
+        "@machine_publishers reaches terminal pagination with every currently reported public post, without assuming a fixed historical count.",
+        "Every imported @machine_publishers post retains validated ownership and playable source metadata.",
+        "Fresh sync includes exactly one account record for @1984drh.",
+        "@1984drh reaches terminal pagination with every currently reported public post, without assuming a fixed historical count.",
+        "Every imported @1984drh post retains validated ownership and playable source metadata.",
+        "Creator channels contain their complete public catalogues and the third channel combines both.",
+        "Live catalogue status identifies synchronized posts truthfully.",
+        "All saved megacity displays register with the shared live network.",
+        "Every display on channel 0 shares one material and native render texture.",
+        "Every display on channel 1 shares one material and native render texture.",
+        "Every display on channel 2 shares one material and native render texture.",
+        "Public metadata can synchronize while the start menu creates no decoders.",
+        "Native creator channel owns the expected account.",
+        "Native video decodes the requested post from its persistent on-demand cache.",
+        "Native @machine_publishers video produces nonuniform visible decoded pixels.",
+        "Native @machine_publishers video routes its real audio track through the shared spatial source.",
+        "Native creator channel owns the expected account.",
+        "Native video decodes the requested post from its persistent on-demand cache.",
+        "Native @1984drh video produces nonuniform visible decoded pixels.",
+        "Native @1984drh video routes its real audio track through the shared spatial source.",
+        "Identical, duplicate, empty and invalid refreshes preserve the active frame and deduplicated last-known playlist.",
+        "Native decoder supports a real near-end seek.",
+        "Seeking near the native clip end produces a real loopPointReached event and selects a different catalogue post.",
+        "Current public catalogue includes a multi-image post with music for genuine slideshow coverage.",
+        "Slideshow image 0 resolves to the persistent media cache.",
+        "Slideshow image 0 uses a native JPEG/PNG format.",
+        "Slideshow image 1 resolves to the persistent media cache.",
+        "Slideshow image 1 uses a native JPEG/PNG format.",
+        "Slideshow image 2 resolves to the persistent media cache.",
+        "Slideshow image 2 uses a native JPEG/PNG format.",
+        "Slideshow image 3 resolves to the persistent media cache.",
+        "Slideshow image 3 uses a native JPEG/PNG format.",
+        "Real post music resolves to a cached native audio file.",
+        "Slideshow music is converted to playable PCM WAV rather than relabeled compressed bytes.",
+        "Native decoder supports a real near-end seek.",
+        "Native decoder supports a real near-end seek.",
+        "Converted post music produces nonzero decoded PCM samples.",
+        "Real slideshow image 0 decodes into nonuniform shared display pixels.",
+        "Actual game pause holds slideshow image and music clocks beyond the five-second image interval.",
+        "Real slideshow image 1 decodes into nonuniform shared display pixels.",
+        "Real slideshow image 2 decodes into nonuniform shared display pixels.",
+        "Real slideshow image 3 decodes into nonuniform shared display pixels.",
+        "Slideshow music resumes with the image sequence.",
+        "Video rotation and photo playback reuse the same three native decoder objects.",
+        "A partial empty creator response cannot erase prior playlists.",
+        "A terminal empty account with unknown reported total clears only its creator queue and combined entries; the missing other account retains its posts.",
+        "Explicit successful empty results for both accounts clear all future catalogue queues.",
+        "Authoritative empty refreshes preserve the current playing post until its normal clip boundary.",
+        "The complete synchronized catalogue is restored after focused photo and empty-account coverage.",
+        "No unexpected runtime, decoder or conversion errors occurred."
+    ],
+    "errors": [],
+    "runtimeErrors": [],
+    "editorDiagnostics": [
+        "ArgumentOutOfRangeException: Index was out of range. Must be non-negative and less than the size of the collection.\nParameter name: index\nSystem.Collections.Generic.List`1[T].get_Item (System.Int32 index) (at <4ac0ee785b7843ea944af6fc649f4ee5>:0)\nUnityEditor.Search.SearchDatabase+<EnumerateAll>d__83.MoveNext () (at /Users/bokken/build/output/unity/unity/Modules/QuickSearch/Editor/Indexing/SearchDatabase.cs:453)\nSystem.Linq.Enumerable.TryGetFirst[TSource] (System.Collections.Generic.IEnumerable`1[T] source, System.Boolean& found) (at <5eca27bd76e34b3f8e153e23d18e4c9d>:0)\nSystem.Linq.Enumerable.First[TSource] (System.Collections.Generic.IEnumerable`1[T] source) (at <5eca27bd76e34b3f8e153e23d18e4c9d>:0)\nUnityEditor.Search.SearchDatabase.GetDefaultSearchDatabase () (at /Users/bokken/build/output/unity/unity/Modules/QuickSearch/Editor/Indexing/SearchDatabase.cs:428)\nUnityEditor.Search.SearchInit.IndexationOnStartup () (at /Users/bokken/build/output/unity/unity/Modules/QuickSearch/Editor/SearchInit.cs:109)\nUnityEditor.EditorApplication.Internal_CallDelayFunctions () (at /Users/bokken/build/output/unity/unity/Editor/Mono/EditorApplication.cs:407)\n"
+    ]
+}

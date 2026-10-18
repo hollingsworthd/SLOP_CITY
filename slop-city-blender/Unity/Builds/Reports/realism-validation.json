@@ -1,0 +1,17 @@
+{
+    "passed": true,
+    "checkedAtUtc": "2026-10-13T01:25:51.5622290Z",
+    "unityVersion": "6000.3.26f1",
+    "scenePath": "Assets/Scenes/SlopCity_CouchSpawn.unity",
+    "scope": "Freshly opened saved scene: photographic map imports and smoothness data, HDR/camera finish, metric road UVs, persisted detailed geometry, baked reflections, and source-license/hash integrity. Gameplay behavior is covered by separate smoke tests.",
+    "checks": 1668,
+    "scannedMaterials": 180,
+    "packedSurfaceSets": 14,
+    "bakedReflectionProbes": 8,
+    "beveledMeshAssets": 324,
+    "detailedVehicles": 4,
+    "branchingTrees": 10,
+    "sourceFilesChecked": 50,
+    "maximumRoadUVMetreError": 0.0,
+    "errors": []
+}

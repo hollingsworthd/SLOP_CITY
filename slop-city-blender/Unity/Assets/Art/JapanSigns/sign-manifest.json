@@ -1,0 +1,1202 @@
+{
+  "schema": 1,
+  "font": "../Fonts/NotoSansCJKjp-Bold.otf",
+  "license": "SIL OFL 1.1",
+  "fontSha256": "e53dcb0dcb2922e45d01aae1ebd2f382bb81d4229b18b6b883bd170678af1f76",
+  "atlasSize": [
+    4096,
+    4096
+  ],
+  "albedo": "JapanKanban-Albedo.png",
+  "emission": "JapanKanban-Emission.png",
+  "missingGlyphs": [],
+  "labels": [
+    "夜市",
+    "深夜食堂",
+    "電脳商店",
+    "機械出版",
+    "未来薬局",
+    "修理工房",
+    "中央線",
+    "地下鉄",
+    "都市案内",
+    "喫茶",
+    "ラーメン",
+    "カラオケ",
+    "夢境ホテル",
+    "古書",
+    "中古家電",
+    "東京通信",
+    "夜間診療",
+    "無人酒店",
+    "両替",
+    "ゲーム",
+    "携帯修理",
+    "監視区域",
+    "燃料",
+    "居住区",
+    "屋上庭園",
+    "電器店",
+    "写真館",
+    "映画館",
+    "駅前市場",
+    "新宿放送",
+    "防災センター",
+    "営業中"
+  ],
+  "entries": [
+    {
+      "id": 0,
+      "label": "夜市",
+      "english": "NIGHT MARKET",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        0,
+        0,
+        1024,
+        256
+      ],
+      "uv": [
+        0.00048828125,
+        0.93798828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 1,
+      "label": "深夜食堂",
+      "english": "LATE NIGHT DINER",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        1024,
+        0,
+        1024,
+        256
+      ],
+      "uv": [
+        0.25048828125,
+        0.93798828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 2,
+      "label": "電脳商店",
+      "english": "CYBER STORE",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        2048,
+        0,
+        1024,
+        256
+      ],
+      "uv": [
+        0.50048828125,
+        0.93798828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 3,
+      "label": "機械出版",
+      "english": "MACHINE PUBLISHERS",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        3072,
+        0,
+        1024,
+        256
+      ],
+      "uv": [
+        0.75048828125,
+        0.93798828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 4,
+      "label": "未来薬局",
+      "english": "FUTURE PHARMACY",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        0,
+        256,
+        1024,
+        256
+      ],
+      "uv": [
+        0.00048828125,
+        0.87548828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 5,
+      "label": "修理工房",
+      "english": "REPAIRS",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        1024,
+        256,
+        1024,
+        256
+      ],
+      "uv": [
+        0.25048828125,
+        0.87548828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 6,
+      "label": "中央線",
+      "english": "CENTRAL LINE",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        2048,
+        256,
+        1024,
+        256
+      ],
+      "uv": [
+        0.50048828125,
+        0.87548828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 7,
+      "label": "地下鉄",
+      "english": "SUBWAY",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        3072,
+        256,
+        1024,
+        256
+      ],
+      "uv": [
+        0.75048828125,
+        0.87548828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 8,
+      "label": "都市案内",
+      "english": "CITY INFORMATION",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        0,
+        512,
+        1024,
+        256
+      ],
+      "uv": [
+        0.00048828125,
+        0.81298828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 9,
+      "label": "喫茶",
+      "english": "COFFEE",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        1024,
+        512,
+        1024,
+        256
+      ],
+      "uv": [
+        0.25048828125,
+        0.81298828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 10,
+      "label": "ラーメン",
+      "english": "RAMEN",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        2048,
+        512,
+        1024,
+        256
+      ],
+      "uv": [
+        0.50048828125,
+        0.81298828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 11,
+      "label": "カラオケ",
+      "english": "KARAOKE",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        3072,
+        512,
+        1024,
+        256
+      ],
+      "uv": [
+        0.75048828125,
+        0.81298828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 12,
+      "label": "夢境ホテル",
+      "english": "DREAM HOTEL",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        0,
+        768,
+        1024,
+        256
+      ],
+      "uv": [
+        0.00048828125,
+        0.75048828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 13,
+      "label": "古書",
+      "english": "BOOKS",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        1024,
+        768,
+        1024,
+        256
+      ],
+      "uv": [
+        0.25048828125,
+        0.75048828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 14,
+      "label": "中古家電",
+      "english": "USED ELECTRONICS",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        2048,
+        768,
+        1024,
+        256
+      ],
+      "uv": [
+        0.50048828125,
+        0.75048828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 15,
+      "label": "東京通信",
+      "english": "TOKYO SIGNAL",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        3072,
+        768,
+        1024,
+        256
+      ],
+      "uv": [
+        0.75048828125,
+        0.75048828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 16,
+      "label": "夜間診療",
+      "english": "NIGHT CLINIC",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        0,
+        1024,
+        1024,
+        256
+      ],
+      "uv": [
+        0.00048828125,
+        0.68798828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 17,
+      "label": "無人酒店",
+      "english": "AUTOMATED LIQUOR",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        1024,
+        1024,
+        1024,
+        256
+      ],
+      "uv": [
+        0.25048828125,
+        0.68798828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 18,
+      "label": "両替",
+      "english": "EXCHANGE",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        2048,
+        1024,
+        1024,
+        256
+      ],
+      "uv": [
+        0.50048828125,
+        0.68798828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 19,
+      "label": "ゲーム",
+      "english": "CITY ARCADE",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        3072,
+        1024,
+        1024,
+        256
+      ],
+      "uv": [
+        0.75048828125,
+        0.68798828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 20,
+      "label": "携帯修理",
+      "english": "PHONE REPAIR",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        0,
+        1280,
+        1024,
+        256
+      ],
+      "uv": [
+        0.00048828125,
+        0.62548828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 21,
+      "label": "監視区域",
+      "english": "SURVEILLANCE AREA",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        1024,
+        1280,
+        1024,
+        256
+      ],
+      "uv": [
+        0.25048828125,
+        0.62548828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 22,
+      "label": "燃料",
+      "english": "FUEL",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        2048,
+        1280,
+        1024,
+        256
+      ],
+      "uv": [
+        0.50048828125,
+        0.62548828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 23,
+      "label": "居住区",
+      "english": "RESIDENTIAL",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        3072,
+        1280,
+        1024,
+        256
+      ],
+      "uv": [
+        0.75048828125,
+        0.62548828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 24,
+      "label": "屋上庭園",
+      "english": "ROOF GARDEN",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        0,
+        1536,
+        1024,
+        256
+      ],
+      "uv": [
+        0.00048828125,
+        0.56298828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 25,
+      "label": "電器店",
+      "english": "ELECTRONICS",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        1024,
+        1536,
+        1024,
+        256
+      ],
+      "uv": [
+        0.25048828125,
+        0.56298828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 26,
+      "label": "写真館",
+      "english": "PHOTO STUDIO",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        2048,
+        1536,
+        1024,
+        256
+      ],
+      "uv": [
+        0.50048828125,
+        0.56298828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 27,
+      "label": "映画館",
+      "english": "CINEMA",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        3072,
+        1536,
+        1024,
+        256
+      ],
+      "uv": [
+        0.75048828125,
+        0.56298828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 28,
+      "label": "駅前市場",
+      "english": "STATION MARKET",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        0,
+        1792,
+        1024,
+        256
+      ],
+      "uv": [
+        0.00048828125,
+        0.50048828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 29,
+      "label": "新宿放送",
+      "english": "SHINJUKU BROADCAST",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        1024,
+        1792,
+        1024,
+        256
+      ],
+      "uv": [
+        0.25048828125,
+        0.50048828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 30,
+      "label": "防災センター",
+      "english": "CIVIL DEFENCE",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        2048,
+        1792,
+        1024,
+        256
+      ],
+      "uv": [
+        0.50048828125,
+        0.50048828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 31,
+      "label": "営業中",
+      "english": "OPEN",
+      "orientation": "horizontal",
+      "rectPixelsTopLeft": [
+        3072,
+        1792,
+        1024,
+        256
+      ],
+      "uv": [
+        0.75048828125,
+        0.50048828125,
+        0.2490234375,
+        0.0615234375
+      ]
+    },
+    {
+      "id": 32,
+      "label": "夜市",
+      "english": "NIGHT MARKET",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        0,
+        2048,
+        256,
+        1024
+      ],
+      "uv": [
+        0.00048828125,
+        0.25048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 33,
+      "label": "深夜食堂",
+      "english": "LATE NIGHT DINER",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        256,
+        2048,
+        256,
+        1024
+      ],
+      "uv": [
+        0.06298828125,
+        0.25048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 34,
+      "label": "電脳商店",
+      "english": "CYBER STORE",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        512,
+        2048,
+        256,
+        1024
+      ],
+      "uv": [
+        0.12548828125,
+        0.25048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 35,
+      "label": "機械出版",
+      "english": "MACHINE PUBLISHERS",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        768,
+        2048,
+        256,
+        1024
+      ],
+      "uv": [
+        0.18798828125,
+        0.25048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 36,
+      "label": "未来薬局",
+      "english": "FUTURE PHARMACY",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        1024,
+        2048,
+        256,
+        1024
+      ],
+      "uv": [
+        0.25048828125,
+        0.25048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 37,
+      "label": "修理工房",
+      "english": "REPAIRS",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        1280,
+        2048,
+        256,
+        1024
+      ],
+      "uv": [
+        0.31298828125,
+        0.25048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 38,
+      "label": "中央線",
+      "english": "CENTRAL LINE",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        1536,
+        2048,
+        256,
+        1024
+      ],
+      "uv": [
+        0.37548828125,
+        0.25048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 39,
+      "label": "地下鉄",
+      "english": "SUBWAY",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        1792,
+        2048,
+        256,
+        1024
+      ],
+      "uv": [
+        0.43798828125,
+        0.25048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 40,
+      "label": "都市案内",
+      "english": "CITY INFORMATION",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        2048,
+        2048,
+        256,
+        1024
+      ],
+      "uv": [
+        0.50048828125,
+        0.25048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 41,
+      "label": "喫茶",
+      "english": "COFFEE",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        2304,
+        2048,
+        256,
+        1024
+      ],
+      "uv": [
+        0.56298828125,
+        0.25048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 42,
+      "label": "ラーメン",
+      "english": "RAMEN",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        2560,
+        2048,
+        256,
+        1024
+      ],
+      "uv": [
+        0.62548828125,
+        0.25048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 43,
+      "label": "カラオケ",
+      "english": "KARAOKE",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        2816,
+        2048,
+        256,
+        1024
+      ],
+      "uv": [
+        0.68798828125,
+        0.25048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 44,
+      "label": "夢境ホテル",
+      "english": "DREAM HOTEL",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        3072,
+        2048,
+        256,
+        1024
+      ],
+      "uv": [
+        0.75048828125,
+        0.25048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 45,
+      "label": "古書",
+      "english": "BOOKS",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        3328,
+        2048,
+        256,
+        1024
+      ],
+      "uv": [
+        0.81298828125,
+        0.25048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 46,
+      "label": "中古家電",
+      "english": "USED ELECTRONICS",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        3584,
+        2048,
+        256,
+        1024
+      ],
+      "uv": [
+        0.87548828125,
+        0.25048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 47,
+      "label": "東京通信",
+      "english": "TOKYO SIGNAL",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        3840,
+        2048,
+        256,
+        1024
+      ],
+      "uv": [
+        0.93798828125,
+        0.25048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 48,
+      "label": "夜間診療",
+      "english": "NIGHT CLINIC",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        0,
+        3072,
+        256,
+        1024
+      ],
+      "uv": [
+        0.00048828125,
+        0.00048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 49,
+      "label": "無人酒店",
+      "english": "AUTOMATED LIQUOR",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        256,
+        3072,
+        256,
+        1024
+      ],
+      "uv": [
+        0.06298828125,
+        0.00048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 50,
+      "label": "両替",
+      "english": "EXCHANGE",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        512,
+        3072,
+        256,
+        1024
+      ],
+      "uv": [
+        0.12548828125,
+        0.00048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 51,
+      "label": "ゲーム",
+      "english": "CITY ARCADE",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        768,
+        3072,
+        256,
+        1024
+      ],
+      "uv": [
+        0.18798828125,
+        0.00048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 52,
+      "label": "携帯修理",
+      "english": "PHONE REPAIR",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        1024,
+        3072,
+        256,
+        1024
+      ],
+      "uv": [
+        0.25048828125,
+        0.00048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 53,
+      "label": "監視区域",
+      "english": "SURVEILLANCE AREA",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        1280,
+        3072,
+        256,
+        1024
+      ],
+      "uv": [
+        0.31298828125,
+        0.00048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 54,
+      "label": "燃料",
+      "english": "FUEL",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        1536,
+        3072,
+        256,
+        1024
+      ],
+      "uv": [
+        0.37548828125,
+        0.00048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 55,
+      "label": "居住区",
+      "english": "RESIDENTIAL",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        1792,
+        3072,
+        256,
+        1024
+      ],
+      "uv": [
+        0.43798828125,
+        0.00048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 56,
+      "label": "屋上庭園",
+      "english": "ROOF GARDEN",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        2048,
+        3072,
+        256,
+        1024
+      ],
+      "uv": [
+        0.50048828125,
+        0.00048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 57,
+      "label": "電器店",
+      "english": "ELECTRONICS",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        2304,
+        3072,
+        256,
+        1024
+      ],
+      "uv": [
+        0.56298828125,
+        0.00048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 58,
+      "label": "写真館",
+      "english": "PHOTO STUDIO",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        2560,
+        3072,
+        256,
+        1024
+      ],
+      "uv": [
+        0.62548828125,
+        0.00048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 59,
+      "label": "映画館",
+      "english": "CINEMA",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        2816,
+        3072,
+        256,
+        1024
+      ],
+      "uv": [
+        0.68798828125,
+        0.00048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 60,
+      "label": "駅前市場",
+      "english": "STATION MARKET",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        3072,
+        3072,
+        256,
+        1024
+      ],
+      "uv": [
+        0.75048828125,
+        0.00048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 61,
+      "label": "新宿放送",
+      "english": "SHINJUKU BROADCAST",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        3328,
+        3072,
+        256,
+        1024
+      ],
+      "uv": [
+        0.81298828125,
+        0.00048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 62,
+      "label": "防災センター",
+      "english": "CIVIL DEFENCE",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        3584,
+        3072,
+        256,
+        1024
+      ],
+      "uv": [
+        0.87548828125,
+        0.00048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    },
+    {
+      "id": 63,
+      "label": "営業中",
+      "english": "OPEN",
+      "orientation": "vertical",
+      "rectPixelsTopLeft": [
+        3840,
+        3072,
+        256,
+        1024
+      ],
+      "uv": [
+        0.93798828125,
+        0.00048828125,
+        0.0615234375,
+        0.2490234375
+      ]
+    }
+  ],
+  "note": "Baked Japanese glyphs; vertical prolonged sound marks rotated for tategaki."
+}
