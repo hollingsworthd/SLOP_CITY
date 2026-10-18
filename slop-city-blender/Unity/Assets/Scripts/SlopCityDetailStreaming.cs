@@ -39,6 +39,8 @@ namespace SlopCity
         private UnityWebRequest pendingRequest;
         private BoundedDownload pendingDownload;
         private Coroutine pendingRoutine;
+        private int requestIndex = -1, requestGeneration, retirementFrame = -1;
+        private bool cleanupWarning;
 #if UNITY_WEBGL && !UNITY_EDITOR
         private Camera view;
         private float nextTick;
@@ -129,10 +131,16 @@ namespace SlopCity
         private int Begin(int index)
         {
             EnsureLeases();
-            if (disposed || index < 0 || index >= entries.Length || pendingIndex >= 0 || leases[index].mesh
+            if (pendingIndex < 0 && (pendingRequest != null || pendingDownload != null || pendingRoutine != null)) CancelPending();
+            if (disposed || index < 0 || index >= entries.Length || pendingIndex >= 0 || pendingRequest != null
+                || pendingDownload != null || pendingRoutine != null || Time.frameCount == retirementFrame || leases[index].mesh
                 || !ValidEntry(entries[index]) || residentBytes + entries[index].geometryBytes > ResidentBudgetBytes) return -1;
-            pendingIndex = index;
-            return ++leases[index].generation;
+            // A failed proxy setter may leave a now-destroyed owned mesh in the
+            // filter. Repair only an empty/dead binding; never replace foreign geometry.
+            try { if (!entries[index].target.sharedMesh) entries[index].target.sharedMesh = entries[index].farProxy; }
+            catch (Exception) { WarnCleanup(); return -1; }
+            pendingIndex = requestIndex = index;
+            return requestGeneration = ++leases[index].generation;
         }
         private IEnumerator Load(int index, int token)
         {
@@ -166,27 +174,35 @@ namespace SlopCity
                 {
                     if (pendingIndex == index && leases[index].generation == token) Failed(index, token);
                 }
-                finally { ClearRequest(); }
+                finally
+                {
+                    // A coroutine that could not be stopped must not dispose a
+                    // later generation's request/handler when it eventually ends.
+                    if (requestIndex == index && requestGeneration == token)
+                    { pendingRoutine = null; ClearRequest(); }
+                }
             }
         }
         private bool Complete(int index, int token, byte[] bytes)
         {
             EnsureLeases();
             if (disposed || pendingIndex != index || index < 0 || index >= entries.Length || leases[index].generation != token) return false;
-            Mesh mesh = null;
+            Mesh mesh = null; int geometryBytes = 0;
             try
             {
                 DetailEntry entry = entries[index];
                 if (!ValidEntry(entry) || residentBytes + entry.geometryBytes > ResidentBudgetBytes)
                     throw new InvalidDataException("Detail admission exceeds its resident budget.");
-                mesh = SlopCityDetailMeshCodec.Decode(bytes, entry.sha256, entry.payloadBytes, out int geometryBytes);
+                mesh = SlopCityDetailMeshCodec.DecodeOwned(bytes, entry.sha256, entry.payloadBytes, out geometryBytes, ref mesh, expectedGeometryBytes: entry.geometryBytes);
                 if (geometryBytes != entry.geometryBytes || !entry.target || entry.target.sharedMesh != entry.farProxy)
                     throw new InvalidDataException("Detail geometry or binding changed during its request.");
-                entry.target.sharedMesh = mesh;
+                // Transfer before the fallible renderer binding. The exact lease
+                // owns both successful and rejected decoded native geometry.
                 leases[index].mesh = mesh;
                 residentBytes += geometryBytes;
-                leases[index].failures = 0;
                 mesh = null;
+                entry.target.sharedMesh = leases[index].mesh;
+                leases[index].failures = 0;
                 pendingIndex = -1;
 #if UNITY_WEBGL && !UNITY_EDITOR
                 // Fill the nearby budget one request at a time without imposing
@@ -197,8 +213,15 @@ namespace SlopCity
             }
             catch (Exception)
             {
-                if (mesh) DestroyOwned(mesh);
+                // DecodeOwned exposes allocation before any native setter, so a
+                // decode/binding rollback cannot strand a local native handle.
+                if (!ReferenceEquals(mesh, null))
+                {
+                    leases[index].mesh = mesh;
+                    residentBytes += geometryBytes;
+                }
                 Failed(index, token);
+                Retire(index);
                 return false;
             }
         }
@@ -209,22 +232,33 @@ namespace SlopCity
             leases[index].retryAt = Time.unscaledTime + Mathf.Min(60f, 2f * Mathf.Pow(2f, leases[index].failures));
             if (pendingIndex == index) pendingIndex = -1;
         }
+        private void WarnCleanup()
+        {
+            if (cleanupWarning) return;
+            cleanupWarning = true;
+            Debug.LogWarning("Detail cleanup was interrupted; unreleased resources remain owned for retry.", this);
+        }
         private void ClearRequest()
         {
             UnityWebRequest request = pendingRequest; BoundedDownload download = pendingDownload;
-            pendingRequest = null; pendingDownload = null; pendingRoutine = null;
+            requestIndex = -1; pendingRequest = null; pendingDownload = null;
+            // A failed native Dispose cannot be advertised as reclamation. Keep
+            // that exact handle and block admission until a later cleanup succeeds.
             try { if (request != null) request.Dispose(); }
-            finally { if (download != null) download.Dispose(); }
+            catch (Exception) { pendingRequest = request; WarnCleanup(); }
+            try { if (download != null) download.Dispose(); }
+            catch (Exception) { pendingDownload = download; WarnCleanup(); }
         }
         private void CancelPending()
         {
             if (pendingIndex >= 0) { leases[pendingIndex].generation++; pendingIndex = -1; }
+            requestIndex = -1;
             try { if (pendingRequest != null) pendingRequest.Abort(); }
-            finally
-            {
-                try { if (pendingRoutine != null) StopCoroutine(pendingRoutine); }
-                finally { ClearRequest(); }
-            }
+            catch (Exception) { WarnCleanup(); }
+            Coroutine routine = pendingRoutine; pendingRoutine = null;
+            try { if (routine != null) StopCoroutine(routine); }
+            catch (Exception) { pendingRoutine = routine; WarnCleanup(); }
+            ClearRequest();
         }
         private void Retire(int index)
         {
@@ -232,11 +266,22 @@ namespace SlopCity
             if (index < 0 || index >= entries.Length) return;
             if (pendingIndex == index) CancelPending();
             Lease lease = leases[index]; lease.generation++;
-            if (!lease.mesh) return;
+            Mesh mesh = lease.mesh;
+            if (ReferenceEquals(mesh, null)) return;
             DetailEntry entry = entries[index];
-            if (entry.target && entry.target.sharedMesh == lease.mesh) entry.target.sharedMesh = entry.farProxy;
+            try { if (entry.target && entry.target.sharedMesh == mesh) entry.target.sharedMesh = entry.farProxy; }
+            catch (Exception) { WarnCleanup(); }
+            // Proxy restoration failure must not skip destruction, and a refused
+            // Destroy must retain both the native handle and resident accounting.
+            try { if (mesh) DestroyOwned(mesh); }
+            catch (Exception) { WarnCleanup(); return; }
+            lease.mesh = null;
             residentBytes -= entry.geometryBytes;
-            DestroyOwned(lease.mesh); lease.mesh = null;
+#if UNITY_EDITOR
+            if (Application.isPlaying) retirementFrame = Time.frameCount;
+#else
+            retirementFrame = Time.frameCount;
+#endif
         }
         private static void DestroyOwned(Mesh mesh)
         {
@@ -251,7 +296,13 @@ namespace SlopCity
             CancelPending();
             for (int i = 0; i < entries.Length; i++) Retire(i);
         }
-        private void OnDestroy() { OnDisable(); disposed = true; }
+        private void OnEnable()
+        {
+            // Retry any handle whose native teardown was refused while disabled.
+            // Normal re-enable is a no-op once all leases/resources were released.
+            if (!disposed && leases != null) OnDisable();
+        }
+        private void OnDestroy() { disposed = true; OnDisable(); }
         public void InitializeForTesting() { testing = true; EnsureLeases(); }
         public int BeginForTesting(int index) { if (!testing) throw new InvalidOperationException("Initialize test routing first."); return Begin(index); }
         public bool CompleteForTesting(int index, int token, byte[] bytes) { if (!testing) throw new InvalidOperationException("Initialize test routing first."); return Complete(index, token, bytes); }
@@ -349,42 +400,51 @@ namespace SlopCity
             => Decode(payload, expectedHash, expectedBytes, out _, discardCpuData);
         public static Mesh Decode(byte[] payload, string expectedHash, int expectedBytes, out int geometryBytes, bool discardCpuData = true)
         {
-            geometryBytes = 0;
-            if (payload == null || expectedBytes <= 0 || expectedBytes > MaximumPayloadBytes || payload.Length != expectedBytes
-                || !ValidHash(expectedHash) || ComputeHash(payload) != expectedHash) throw new InvalidDataException("Detail payload integrity failed.");
-            Layout layout = Parse(payload);
-            Mesh mesh = new Mesh();
-            try
-            {
-                mesh.name = "Owned_Browser_Detail_" + expectedHash.Substring(0, 12);
-                mesh.SetVertexBufferParams(layout.vertexCount, layout.attributes);
-                for (int stream = 0; stream < layout.strides.Length; stream++)
-                {
-                    if (mesh.GetVertexBufferStride(stream) != layout.strides[stream]) throw new InvalidDataException("Detail vertex layout changed.");
-                    mesh.SetVertexBufferData(payload, layout.offsets[stream], 0, layout.lengths[stream], stream, MeshUpdateFlags.DontRecalculateBounds);
-                }
-                mesh.SetIndexBufferParams(layout.indexBytes / (layout.indexFormat == IndexFormat.UInt16 ? 2 : 4), layout.indexFormat);
-                mesh.SetIndexBufferData(payload, layout.indexOffset, 0, layout.indexBytes, MeshUpdateFlags.DontRecalculateBounds);
-                // Unity 6000.3's bulk SetSubMeshes path resets firstVertex to zero
-                // for a nonzero-baseVertex submesh. The individual setter retains
-                // the authored descriptors as well as the exact index bytes.
-                mesh.subMeshCount = layout.submeshes.Length;
-                for (int sub = 0; sub < layout.submeshes.Length; sub++)
-                    mesh.SetSubMesh(sub, layout.submeshes[sub], MeshUpdateFlags.DontRecalculateBounds);
-                mesh.bounds = layout.bounds;
-                mesh.UploadMeshData(discardCpuData);
-                geometryBytes = layout.geometryBytes;
-                return mesh;
-            }
+            Mesh owned = null;
+            try { return DecodeOwned(payload, expectedHash, expectedBytes, out geometryBytes, ref owned, discardCpuData); }
             catch
             {
 #if UNITY_EDITOR
-                if (!Application.isPlaying) UnityEngine.Object.DestroyImmediate(mesh); else UnityEngine.Object.Destroy(mesh);
+                if (!Application.isPlaying) UnityEngine.Object.DestroyImmediate(owned); else UnityEngine.Object.Destroy(owned);
 #else
-                UnityEngine.Object.Destroy(mesh);
+                UnityEngine.Object.Destroy(owned);
 #endif
                 throw;
             }
+        }
+        // Runtime ownership is exposed immediately after construction, before
+        // fallible native configuration. The caller must retire this exact ref
+        // on any exception; this method never discards or destroys its owner.
+        internal static Mesh DecodeOwned(byte[] payload, string expectedHash, int expectedBytes, out int geometryBytes,
+            ref Mesh owned, bool discardCpuData = true, int expectedGeometryBytes = -1)
+        {
+            geometryBytes = 0;
+            if (!ReferenceEquals(owned, null)) throw new InvalidOperationException("A detail decode owner must be empty.");
+            if (payload == null || expectedBytes <= 0 || expectedBytes > MaximumPayloadBytes || payload.Length != expectedBytes
+                || !ValidHash(expectedHash) || ComputeHash(payload) != expectedHash) throw new InvalidDataException("Detail payload integrity failed.");
+            Layout layout = Parse(payload);
+            if (expectedGeometryBytes >= 0 && layout.geometryBytes != expectedGeometryBytes)
+                throw new InvalidDataException("Detail geometry differs from its admission reservation.");
+            geometryBytes = layout.geometryBytes;
+            owned = new Mesh();
+            owned.name = "Owned_Browser_Detail_" + expectedHash.Substring(0, 12);
+            owned.SetVertexBufferParams(layout.vertexCount, layout.attributes);
+            for (int stream = 0; stream < layout.strides.Length; stream++)
+            {
+                if (owned.GetVertexBufferStride(stream) != layout.strides[stream]) throw new InvalidDataException("Detail vertex layout changed.");
+                owned.SetVertexBufferData(payload, layout.offsets[stream], 0, layout.lengths[stream], stream, MeshUpdateFlags.DontRecalculateBounds);
+            }
+            owned.SetIndexBufferParams(layout.indexBytes / (layout.indexFormat == IndexFormat.UInt16 ? 2 : 4), layout.indexFormat);
+            owned.SetIndexBufferData(payload, layout.indexOffset, 0, layout.indexBytes, MeshUpdateFlags.DontRecalculateBounds);
+            // Unity 6000.3's bulk SetSubMeshes path resets firstVertex to zero
+            // for a nonzero-baseVertex submesh. The individual setter retains
+            // the authored descriptors as well as the exact index bytes.
+            owned.subMeshCount = layout.submeshes.Length;
+            for (int sub = 0; sub < layout.submeshes.Length; sub++)
+                owned.SetSubMesh(sub, layout.submeshes[sub], MeshUpdateFlags.DontRecalculateBounds);
+            owned.bounds = layout.bounds;
+            owned.UploadMeshData(discardCpuData);
+            return owned;
         }
         private static Layout Parse(byte[] bytes)
         {

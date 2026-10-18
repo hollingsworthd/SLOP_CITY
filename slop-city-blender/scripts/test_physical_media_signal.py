@@ -26,7 +26,7 @@ namespace SlopCity {
  public class SlopCityMediaPlayer:Object {public Transform transform=new Transform();public int plays;public SlopCityMediaChannel channel;public void Play(SlopCityMediaChannel c){plays++;channel=c;}}
  public class SlopCityHud:Object {public int opens;public void ShowSourceTitleOnly(){opens++;}}
  public class SlopCityDoor:Object {public bool isActiveAndEnabled=true,IsMoving;public bool Toggle(Transform t)=>true;}
- public class SlopCitySandbox:Object {public bool IsDriving,IsTravelling,IsResting;public Transform target;public int dispatches;public Transform BrowserTarget(Camera c)=>target;public string DispatchContact(){dispatches++;return "Current job";}}
+ public class SlopCitySandbox:Object {public bool IsDriving,IsTravelling,IsResting;public Transform target;public int dispatches;public object CurrentJobAssignment=new object();public Transform BrowserTarget(Camera c)=>target;public string DispatchContact(){dispatches++;return "Current job";}}
  public class SlopCityCrowd:Object {public static SlopCityCrowd Instance;public bool IsRedContact(int i)=>i==1||i==2;}
  public class SlopCitySignalBeams:Object {public int clears;public void Clear(){clears++;}}
  public class SlopCityFirstPerson:Object {
@@ -43,7 +43,7 @@ namespace SlopCity {
  }
  public class SlopCityMatrixHunt {
   class Progress {public int contacts;}
-  Progress progress=new Progress();HashSet<int> found=new HashSet<int>();public bool ready=true;float signalUntil,nextRoute,nextPresentation;bool showingJobRoute;
+  Progress progress=new Progress();HashSet<int> found=new HashSet<int>();public bool ready=true;float signalUntil,nextRoute,nextPresentation;bool showingJobRoute;SlopCitySandbox instructionSandbox;object instructionAssignment;
   public int saves,choices;public SlopCityFirstPerson player=new SlopCityFirstPerson();SlopCitySignalBeams beams=new SlopCitySignalBeams();
   void ChooseContact(){choices++;}void Save(){saves++;}static int Increment(int v)=>v<int.MaxValue?v+1:v;
   public int Contacts=>progress.contacts;
@@ -101,9 +101,9 @@ def main():
         source = (scripts / name).read_text()
         for forbidden in ['KeyCode.M)', '.mKey.', 'KeyCode.T)', '.tKey.', 'RequestMedia(', 'ConsumeMedia(', 'ReplaySignal(', 'ReplayTransmission(', 'TryIntercept(', 'CanIntercept(', '"TouchMedia"', '"ReplaySignal"']:
             assert forbidden not in source, (name, forbidden)
-    assert 'transmission.enabled = !paused && search && search.SignalVisible;' in (scripts / 'SlopCityHud.cs').read_text()
+    assert '(sandbox.HasWaypoint ? search.JobInstructionsVisible : search.SignalVisible)' in (scripts / 'SlopCityHud.cs').read_text()
     assert 'if (!SignalVisible)' in hunt and 'if (!SignalVisible ||' in hunt
-    assert '!signalOwner.SignalVisible' in (scripts / 'SlopCityRabbitTrail.cs').read_text()
+    assert '!signalOwner.JobInstructionsVisible' in (scripts / 'SlopCityRabbitTrail.cs').read_text()
     assert 'case SlopCityMediaChannel.Record: filename = "in-q-tel.mp4";' in (scripts / 'SlopCityMediaPlayer.cs').read_text()
     with tempfile.TemporaryDirectory(prefix='slop-physical-media-signal-') as directory:
         source = Path(directory) / 'Checks.cs'

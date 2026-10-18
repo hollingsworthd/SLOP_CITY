@@ -16,6 +16,8 @@ namespace SlopCity
         private Vector3 plannedFrom, plannedTarget;
         private string district, landmark, transmission = "The job receiver is listening.";
         private string hintedJobId, hintedAction;
+        private object hintedAssignment;
+        private bool instructionBeamActive;
         private SlopCityInteractable levelEntrance;
         private int proximity = -1;
         private SlopCityDoor messageDoor;
@@ -41,7 +43,7 @@ namespace SlopCity
         private void Update()
         {
             if (paused || !sandbox || !player || !view || !sandbox.HasWaypoint) { HideTrail(); return; }
-            if (!signalOwner || !signalOwner.SignalVisible) { HideTrail(); return; }
+            if (!signalOwner || !signalOwner.JobInstructionsVisible) { HideTrail(); return; }
             RefreshObjective();
             Vector3 feet = player.transform.position;
             if (player.IsSeated || sandbox.IsDriving || sandbox.IsResting || sandbox.IsTravelling)
@@ -51,6 +53,25 @@ namespace SlopCity
                     : "Your job and cargo are kept. Continue on foot to follow the dispatch beam.";
                 nextTransmissionAt = 0f;
                 return;
+            }
+            if (!signalOwner.SignalVisible)
+            {
+                // Keep the job instruction after the six-second physical signal,
+                // without continuing route searches or submitting expired beams.
+                HideTrail();
+                int instructionBand = ProximityBand(sandbox.WaypointDistance);
+                if (instructionBeamActive || instructionBand != proximity || Time.time >= nextTransmissionAt)
+                {
+                    instructionBeamActive = false; messageDoor = null; proximity = instructionBand;
+                    transmission = ComposeJobInstructions(feet, instructionBand);
+                    transmissionUntil = Time.time + 9f; nextTransmissionAt = Time.time + 22f;
+                }
+                return;
+            }
+            if (!instructionBeamActive)
+            {
+                instructionBeamActive = true;
+                nextRouteAt = nextTransmissionAt = 0f;
             }
             bool anotherLevel = Mathf.Abs(sandbox.WaypointPosition.y - feet.y) > 2.5f;
             SlopCityInteractable routeTarget = anotherLevel && levelEntrance ? levelEntrance : target;
@@ -83,9 +104,10 @@ namespace SlopCity
         {
             SlopCityInteractable nextTarget = sandbox.ObjectiveTarget;
             string jobId = sandbox.CurrentJobId, action = sandbox.ObjectiveAction;
+            object assignment = sandbox.CurrentJobAssignment;
             bool targetChanged = target != nextTarget;
-            if (!targetChanged && hintedJobId == jobId && hintedAction == action) return;
-            hintedJobId = jobId; hintedAction = action;
+            if (!targetChanged && ReferenceEquals(hintedAssignment, assignment) && hintedJobId == jobId && hintedAction == action) return;
+            hintedAssignment = assignment; hintedJobId = jobId; hintedAction = action;
             // A repair, retune or restart can be a new stage at the same device.
             // Refresh its instruction now without restarting an unchanged route.
             nextTransmissionAt = nextBeamAt = 0f; proximity = -1;
@@ -145,6 +167,17 @@ namespace SlopCity
             return place + "\n" + (band <= 1 ? "Very close. Check the next corner; follow the last faint beam."
                 : band == 2 ? "The signal is on this block. Follow the faint dispatch beam."
                 : "Head " + Bearing(feet, sandbox.WaypointPosition) + ". Faint beams mark the passages.");
+        }
+
+        private string ComposeJobInstructions(Vector3 feet, int band)
+        {
+            string place = district + ": " + landmark + ".";
+            string action = sandbox.ObjectiveAction + ".";
+            if (Mathf.Abs(sandbox.WaypointPosition.y - feet.y) > 2.5f)
+                return place + "\nThe job is " + (sandbox.WaypointPosition.y > feet.y ? "above" : "below") + " this level. "
+                    + (levelEntrance ? "Use " + levelEntrance.DisplayName + " to change levels."
+                        : "Find the stairs or an access lift.") + "\n" + action;
+            return place + "\n" + (band <= 1 ? "" : "Head " + Bearing(feet, sandbox.WaypointPosition) + ". ") + action;
         }
 
         private SlopCityDoor NextDoor(Vector3 feet)

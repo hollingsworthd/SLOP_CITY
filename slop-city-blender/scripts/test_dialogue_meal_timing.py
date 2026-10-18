@@ -39,15 +39,17 @@ class Player:Object{public Sandbox Sandbox;}
 class Hunt:Object {
  class Progress{public int contacts,meals;}
  private Progress progress=new Progress();private HashSet<int> found=new HashSet<int>();
+ private SlopCitySandbox instructionSandbox;private object instructionAssignment;
  private bool ready=true,showingJobRoute;private float signalUntil,fedUntil,nextRoute,nextPresentation;
  private SlopCitySignalBeams beams=new SlopCitySignalBeams();public Player player=new Player();
  private void ChooseContact(){}private void Save(){}private void ReleaseDinnerGate(){}private void EnsureTarget(){}
  private static int Increment(int i)=>i+1;
  __HUNT__
- public bool Hint(bool paused){Hunt search=this;return __HINT__;}
+ public bool Hint(bool paused){Hunt search=this;Sandbox sandbox=player.Sandbox;return __HINT__;}
 }
 class Sandbox:Object {
  class Target{public int npcIndex;public bool isNpc=true;}
+ public bool HasWaypoint=true;public object CurrentJobAssignment=new object();
  public Hunt MatrixHunt;private Action<string> feedback,npcDialogue;private bool npcDialogueActive;
  private bool municipalOperationActive,persistenceUnavailable;private string municipalOperationMessage;
  private const string PersistenceNotice="Persistence unavailable";private float boostUntil;public float vehicleSpeed;
@@ -71,7 +73,7 @@ static class Check {
   box.unique=true;box.Interact(0);Near(view.Until,21.25f,"Unique NPC branch uses extended dialogue");box.unique=false;
   box.Interact(1);Near(view.Until,21.25f,"Lady contact dialogue lasts2.5x");Assert(view.Text.Contains("CONTACT FOUND"),"Actual contact text delivered");
   for(int tick=0;tick<24;tick++){Time.time=10+tick*.25f;Time.unscaledTime=Time.time;Assert(hunt.SignalVisible&&hunt.Hint(false)&&view.Visible,"Hint/dialogue stay throughout entire six-second signal window");}
-  Time.time=Time.unscaledTime=16;Assert(!hunt.SignalVisible&&!hunt.Hint(false)&&view.Visible,"Signal and hint expire at6 while dialogue remains");
+  Time.time=Time.unscaledTime=16;Assert(!hunt.SignalVisible&&hunt.Hint(false)&&view.Visible,"Beam expires at6 while current-job instruction and dialogue remain");
   Time.unscaledTime=21.249f;Assert(view.Visible,"NPC dialogue visible until11.25");Time.unscaledTime=21.25f;Assert(!view.Visible,"NPC dialogue expires exactly at11.25");
   Time.time=Time.unscaledTime=30;box.Interact(1);Assert(view.Text.Contains("KNOWN CONTACT")&&hunt.Hint(false),"Known Lady reactivates window and dialogue");Assert(!hunt.Hint(true),"Pause still hides hint");
   box.SystemMessage("After NPC");Near(view.Until,34.5f,"NPC scope never lengthens later system feedback");
@@ -108,7 +110,7 @@ def main():
     hud = (SCRIPTS / 'SlopCityHud.cs').read_text()
     code = re.search(r'private const float FeedbackDuration[^;]+;', first)[0] + '\n' + '\n'.join(block(first, s) for s in ['public void ShowFeedback(', 'public void ShowNpcDialogue(', 'private void ShowFeedbackFor('])
     source = HARNESS.replace('__FIRST__', code)
-    source = source.replace('__HUNT__', 'public bool SignalVisible => ' + expression(hunt, 'SignalVisible') + '; public float MealSpeedMultiplier => ' + expression(hunt, 'MealSpeedMultiplier') + ';\n' + block(hunt, 'public bool TryContact(') + block(hunt, 'public string OnSteakEaten('))
+    source = source.replace('__HUNT__', 'public bool SignalVisible => ' + expression(hunt, 'SignalVisible') + '; public float MealSpeedMultiplier => ' + expression(hunt, 'MealSpeedMultiplier') + ';\n' + block(hunt, 'public bool JobInstructionsVisible') + block(hunt, 'public bool TryContact(') + block(hunt, 'public string OnSteakEaten('))
     source = source.replace('__NPC__', block(block(sandbox, 'public bool Interact('), 'if (target.isNpc && SlopCityCrowd.Instance)'))
     source = source.replace('__SANDBOX__', block(sandbox, 'private void Say(') + '\nprivate float MealSpeedMultiplier => ' + expression(sandbox, 'MealSpeedMultiplier') + '; public float SpeedMultiplier => ' + expression(sandbox, 'SpeedMultiplier') + ';')
     drive = sandbox[sandbox.index('            float mealSpeed = MealSpeedMultiplier;'):sandbox.index('            Transform car =', sandbox.index('            float mealSpeed = MealSpeedMultiplier;'))]

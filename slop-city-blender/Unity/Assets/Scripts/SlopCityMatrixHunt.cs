@@ -23,9 +23,26 @@ namespace SlopCity
         private float nextRoute, nextPresentation, fedUntil, signalUntil;
         private Vector3 routeOrigin, routeDestination;
         private bool saveAvailable = true, ready, showingJobRoute;
+        private SlopCitySandbox instructionSandbox;
+        private object instructionAssignment;
         private string clue = "Find a woman in red and use her contact for a brief signal.";
         public bool Ready => ready;
         public bool SignalVisible => ready && Time.time < signalUntil;
+        public bool JobInstructionsVisible
+        {
+            get
+            {
+                SlopCitySandbox sandbox = player ? player.Sandbox : null;
+                if (!ready || !sandbox || instructionAssignment == null
+                    || !ReferenceEquals(instructionSandbox, sandbox)
+                    || !ReferenceEquals(instructionAssignment, sandbox.CurrentJobAssignment))
+                {
+                    instructionSandbox = null; instructionAssignment = null;
+                    return false;
+                }
+                return true;
+            }
+        }
         public SearchStage Stage => (SearchStage)progress.stage;
         public int TargetIndex => progress.target;
         public int ContactsFound => progress.contacts;
@@ -264,6 +281,10 @@ namespace SlopCity
             }
             SlopCitySandbox sandbox = player ? player.Sandbox : null;
             string dispatch = sandbox ? sandbox.DispatchContact() : "Check a dispatch terminal for city work.";
+            // Only physical contact binds instructions to this exact assignment.
+            // Job steps can change; a later assignment, even of the same type, cannot inherit it.
+            instructionSandbox = sandbox;
+            instructionAssignment = sandbox ? sandbox.CurrentJobAssignment : null;
             // A physical contact is the only signal activation. Known contacts
             // can repeat it without adding discoveries or resetting progress.
             signalUntil = Time.time + 6f;

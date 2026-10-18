@@ -98,6 +98,9 @@ namespace SlopCity
         public int RareFindCount => progress.rareFinds;
         public int AvailableJobTypes => availableJobs.Count;
         public string CurrentJobId => currentJobId;
+        // An assignment owns its step objects across ordinary and unique phases.
+        // A repeated catalog job receives new steps, without changing the save format.
+        public object CurrentJobAssignment => HasWaypoint ? steps[0] : null;
         public string CurrentJobTitle => contractTitle ?? "City work";
         public string CurrentJobOutcome => currentJobOutcome ?? "Find work at a street terminal.";
         public string CargoLabel => cargo ?? "";

@@ -228,7 +228,8 @@ namespace SlopCity
             rabbitTrail.Present(sandbox, camera, paused);
             SlopCityMatrixHunt search = sandbox.MatrixHunt;
             if (paused && search) search.SuspendVisuals();
-            transmission.enabled = !paused && search && search.SignalVisible;
+            transmission.enabled = !paused && search
+                && (sandbox.HasWaypoint ? search.JobInstructionsVisible : search.SignalVisible);
             transmission.text = !transmission.enabled ? "" : sandbox.HasWaypoint ? rabbitTrail.TransmissionText
                 : search && search.Ready ? "OPTIONAL CONTACT / " + search.TransmissionText : "Check a dispatch terminal for city work.";
             Color color = Lime; color.a = sandbox.HasWaypoint ? rabbitTrail.TransmissionOpacity : .85f; transmission.color = color;
