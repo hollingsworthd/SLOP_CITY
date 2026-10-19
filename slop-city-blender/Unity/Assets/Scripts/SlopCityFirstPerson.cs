@@ -34,6 +34,7 @@ namespace SlopCity
         private bool seated;
         private bool paused = true;
         private bool started;
+        private bool initializationComplete;
         private bool sourceOpen;
         private bool stoodUp;
         private bool inspectedBroadcast;
@@ -112,6 +113,29 @@ namespace SlopCity
 
         private void Start()
         {
+            try
+            {
+                InitializeWorld();
+                initializationComplete = true;
+            }
+            finally
+            {
+                // Unity still invokes Update and live HUD callbacks after a Start
+                // exception. Keep an incomplete world out of gameplay.
+                if (!initializationComplete)
+                {
+                    paused = true;
+                    if (playerInput) playerInput.SetGameplayEnabled(false);
+                    if (controller) controller.enabled = false;
+                    Time.timeScale = 0f;
+                    if (!cityMedia) cityMedia = SlopCityCityMedia.Instance;
+                    RefreshMediaSuspension();
+                }
+            }
+        }
+
+        private void InitializeWorld()
+        {
             doors = FindObjectsByType<SlopCityDoor>(FindObjectsSortMode.None);
             GameObject floor = GameObject.Find("Floor_Main");
             Renderer floorRenderer = floor ? floor.GetComponent<Renderer>() : null;
@@ -156,6 +180,7 @@ namespace SlopCity
         public bool InventoryOpen => inventoryOpen;
         public void SetInventoryOpen(bool value)
         {
+            if (value && !initializationComplete) return;
             if (value == inventoryOpen) return;
             inventoryOpen = value;
             SetPaused(value);
@@ -164,6 +189,7 @@ namespace SlopCity
 
         private void Update()
         {
+            if (!initializationComplete) return;
             if (inventoryOpen)
             {
                 if (playerInput.ConsumeInventory() || playerInput.ConsumePause()) SetInventoryOpen(false);
@@ -260,6 +286,7 @@ namespace SlopCity
 
         public void PlayOrResume()
         {
+            if (!initializationComplete) return;
             bool firstPlay = !started;
             started = true; sourceOpen = false;
             if (hud) hud.HideSource();
@@ -269,6 +296,7 @@ namespace SlopCity
 
         public void RestartLounge()
         {
+            if (!initializationComplete) return;
             stoodUp = inspectedBroadcast = returnedHome = false;
             System.Array.Clear(visitedBlocks, 0, visitedBlocks.Length);
             VisitedBlockCount = 0;
@@ -301,6 +329,7 @@ namespace SlopCity
 
         private void SetPaused(bool value)
         {
+            if (!value && !initializationComplete) return;
             paused = value;
 #if UNITY_WEBGL && !UNITY_EDITOR
             browserCursorLocked = false;
@@ -417,7 +446,7 @@ namespace SlopCity
             Physics.SyncTransforms();
         }
 
-        public void NewContract() { if (sandbox) sandbox.RerollObjective(); }
+        public void NewContract() { if (initializationComplete && sandbox) sandbox.RerollObjective(); }
 
         private NearbyAction FindNearbyAction()
         {
