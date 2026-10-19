@@ -8,6 +8,7 @@ namespace SlopCity
     public sealed class SlopCityMatrixHunt : MonoBehaviour
     {
         public enum SearchStage { Intercept, FindContact, Dine }
+        public const float SignalDurationSeconds = 30f;
         private const string SaveKey = "SlopCity.MatrixSearch.Progress.v1";
         [Serializable] private sealed class Progress
         {
@@ -21,7 +22,8 @@ namespace SlopCity
         private SlopCitySignalBeams beams;
         private readonly List<SlopCityInteractable> levelAccess = new List<SlopCityInteractable>();
         private float nextRoute, nextPresentation, fedUntil, signalUntil;
-        private Vector3 routeOrigin, routeDestination;
+        private Vector3 routeDestination;
+        private Transform routeDestinationRoot;
         private bool saveAvailable = true, ready, showingJobRoute;
         private SlopCitySandbox instructionSandbox;
         private object instructionAssignment;
@@ -165,14 +167,26 @@ namespace SlopCity
                 }
                 if (access) { destination = access.InteractionPoint; destinationRoot = access.transform; }
             }
-            if ((Time.time >= nextRoute && route.Finished) || nextRoute == 0
-                || (feet - routeOrigin).sqrMagnitude > 100f || (destination - routeDestination).sqrMagnitude > 16f)
+            bool recalculate = nextRoute == 0 || routeDestinationRoot != destinationRoot;
+            if (!recalculate && route.Finished && Time.time >= nextRoute)
             {
-                routeOrigin = feet; routeDestination = destination;
-                route.Begin(feet, destination, player.transform, destinationRoot);
-                nextRoute = Time.time + 6f;
+                // Following a valid path is progress, not a reason to erase it.
+                // Recheck at a bounded cadence with room for ordinary movement.
+                nextRoute = Time.time + 2f;
+                recalculate = !route.ReachedTarget || route.DistanceFromPathSquared(feet) > 8f * 8f
+                    || (destination - routeDestination).sqrMagnitude > 8f * 8f;
             }
+            if (recalculate)
+            {
+                beams.Clear();
+                routeDestinationRoot = destinationRoot;
+                routeDestination = destination;
+                route.Begin(feet, destination, player.transform, destinationRoot);
+                nextRoute = Time.time + 2f;
+            }
+            bool wasFinished = route.Finished;
             route.Step();
+            if (!wasFinished && route.Finished && !route.ReachedTarget) nextRoute = Time.time + 6f;
             if (Time.time < nextPresentation) return;
             nextPresentation = Time.time + .25f;
             if (route.ReachedTarget && route.Points.Count > 1)
@@ -241,6 +255,7 @@ namespace SlopCity
                         if (current < distance) { distance = current; best = index; }
                     }
             }
+            if (progress.target != best && beams) beams.Clear();
             progress.target = best; progress.stage = (int)SearchStage.Intercept;
             nextRoute = nextPresentation = 0; Save();
         }
@@ -287,7 +302,7 @@ namespace SlopCity
             instructionAssignment = sandbox ? sandbox.CurrentJobAssignment : null;
             // A physical contact is the only signal activation. Known contacts
             // can repeat it without adding discoveries or resetting progress.
-            signalUntil = Time.time + 6f;
+            signalUntil = Time.time + SignalDurationSeconds;
             nextRoute = nextPresentation = 0;
             message = (discovered ? "CONTACT FOUND / " : "KNOWN CONTACT / ") + dispatch;
             return true;
@@ -306,7 +321,7 @@ namespace SlopCity
         public void PresentJobRoute(IReadOnlyList<Vector3> points, int startIndex)
         {
             SlopCitySandbox sandbox = player ? player.Sandbox : null;
-            if (!SignalVisible || !isActiveAndEnabled || !beams || !sandbox || !sandbox.HasWaypoint || player.IsPaused || player.IsSeated
+            if (!SignalVisible || !JobInstructionsVisible || !isActiveAndEnabled || !beams || !sandbox || !sandbox.HasWaypoint || player.IsPaused || player.IsSeated
                 || sandbox.IsDriving || sandbox.IsResting || sandbox.IsTravelling)
             { ClearJobGuidance(); return; }
             showingJobRoute = true;

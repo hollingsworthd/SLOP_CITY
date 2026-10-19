@@ -9,11 +9,11 @@ namespace SlopCity
         private SlopCitySandbox sandbox;
         private SlopCityFirstPerson player;
         private Camera view;
-        private SlopCityInteractable target;
+        private SlopCityInteractable target, plannedRouteTarget;
         private SlopCityMatrixHunt signalOwner;
         private bool paused = true;
         private float nextRouteAt, nextTransmissionAt, transmissionUntil, nextBeamAt;
-        private Vector3 plannedFrom, plannedTarget;
+        private Vector3 plannedTarget;
         private string district, landmark, transmission = "The job receiver is listening.";
         private string hintedJobId, hintedAction;
         private object hintedAssignment;
@@ -56,7 +56,7 @@ namespace SlopCity
             }
             if (!signalOwner.SignalVisible)
             {
-                // Keep the job instruction after the six-second physical signal,
+                // Keep the job instruction after the physical signal expires,
                 // without continuing route searches or submitting expired beams.
                 HideTrail();
                 int instructionBand = ProximityBand(sandbox.WaypointDistance);
@@ -77,17 +77,32 @@ namespace SlopCity
             SlopCityInteractable routeTarget = anotherLevel && levelEntrance ? levelEntrance : target;
             if (!routeTarget) { HideTrail(); return; }
             Vector3 routeDestination = routeTarget.InteractionPoint;
-            if ((Time.time >= nextRouteAt && route.Finished) || nextRouteAt == 0f)
+            bool recalculate = nextRouteAt == 0f || plannedRouteTarget != routeTarget;
+            if (!recalculate && route.Finished && Time.time >= nextRouteAt)
             {
-                plannedFrom = feet; plannedTarget = routeDestination;
-                route.Begin(feet, plannedTarget, player.transform, routeTarget.transform);
-                nextRouteAt = Time.time + 6f;
+                // Walking along the checked path does not invalidate it. Tiny
+                // movement and a stale timer alone must not erase the signal.
+                nextRouteAt = Time.time + 2f;
+                recalculate = !route.ReachedTarget || route.DistanceFromPathSquared(feet) > 8f * 8f
+                    || (routeDestination - plannedTarget).sqrMagnitude > 8f * 8f;
             }
-            if ((feet - plannedFrom).sqrMagnitude > 100f || (routeDestination - plannedTarget).sqrMagnitude > 4f)
-                nextRouteAt = 0f;
+            if (recalculate)
+            {
+                HideTrail();
+                plannedRouteTarget = routeTarget;
+                plannedTarget = routeDestination;
+                route.Begin(feet, plannedTarget, player.transform, routeTarget.transform);
+                nextRouteAt = Time.time + 2f;
+            }
+            // An unfinished query is bounded by the solver; movement cannot
+            // repeatedly restart it before it produces a route or a failure.
             bool wasFinished = route.Finished;
             route.Step();
-            if (!wasFinished && route.Finished) nextTransmissionAt = 0f;
+            if (!wasFinished && route.Finished)
+            {
+                nextTransmissionAt = 0f;
+                if (!route.ReachedTarget) nextRouteAt = Time.time + 6f;
+            }
             DrawTrail(feet);
             SlopCityDoor door = NextDoor(feet);
             if (door != messageDoor) { messageDoor = door; nextTransmissionAt = 0f; }
@@ -113,6 +128,7 @@ namespace SlopCity
             nextTransmissionAt = nextBeamAt = 0f; proximity = -1;
             if (targetChanged)
             {
+                HideTrail(); plannedRouteTarget = null;
                 target = nextTarget; nextRouteAt = 0f;
                 DescribeDestination();
             }

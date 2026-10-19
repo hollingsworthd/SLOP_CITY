@@ -47,6 +47,7 @@ namespace SlopCity {
   public int saves,choices;public SlopCityFirstPerson player=new SlopCityFirstPerson();SlopCitySignalBeams beams=new SlopCitySignalBeams();
   void ChooseContact(){choices++;}void Save(){saves++;}static int Increment(int v)=>v<int.MaxValue?v+1:v;
   public int Contacts=>progress.contacts;
+  // SIGNAL_DURATION
   // SIGNAL_PROPERTY
   // CONTACT_METHOD
  }
@@ -65,10 +66,10 @@ namespace SlopCity {
    var hunt=new SlopCityMatrixHunt();SlopCityCrowd.Instance=new SlopCityCrowd();Time.time=10;
    Check(!hunt.SignalVisible,"no signal before contact");Check(!hunt.TryContact(0,out _)&&!hunt.SignalVisible,"ordinary resident cannot activate signal");
    Check(hunt.TryContact(1,out _)&&hunt.SignalVisible&&hunt.Contacts==1,"red contact activates signal and counts once");
-   Time.time=15.99f;Check(hunt.SignalVisible,"signal remains within six active seconds");Time.time=16;Check(!hunt.SignalVisible,"signal expires at six seconds");
+   Time.time=39.99f;Check(hunt.SignalVisible,"signal remains for thirty active seconds");Time.time=40;Check(!hunt.SignalVisible,"signal expires at thirty seconds");
    Check(hunt.TryContact(1,out _)&&hunt.SignalVisible&&hunt.Contacts==1&&hunt.choices==1,"known contact reactivates without new discovery");
    Check(hunt.player.Sandbox.dispatches==2,"known contact still provides normal dispatch help");
-   Time.time=22;Check(!hunt.SignalVisible,"reactivated signal also expires");
+   Time.time=70;Check(!hunt.SignalVisible,"reactivated signal also expires after thirty seconds");
    Check(!hunt.TryContact(9,out _)&&!hunt.SignalVisible,"unrelated contact cannot revive expired signal");
    Check(hunt.TryContact(2,out _)&&hunt.Contacts==2&&hunt.SignalVisible,"another red contact works independently");
    hunt.ready=false;Check(!hunt.SignalVisible,"unready component never exposes signal");
@@ -95,7 +96,8 @@ def main():
         '        public void PlayMedia(',
     ])
     prop = next(line.strip() for line in hunt.splitlines() if 'public bool SignalVisible =>' in line)
-    fixture = STUBS.replace('// FIRST_METHODS', methods).replace('// SIGNAL_PROPERTY', prop).replace('// CONTACT_METHOD', block(hunt, '        public bool TryContact('))
+    duration = next(line.strip() for line in hunt.splitlines() if 'public const float SignalDurationSeconds =' in line)
+    fixture = STUBS.replace('// SIGNAL_DURATION', duration).replace('// FIRST_METHODS', methods).replace('// SIGNAL_PROPERTY', prop).replace('// CONTACT_METHOD', block(hunt, '        public bool TryContact('))
     # Protect absent entry points as well as exercising actual positive dispatch.
     for name in ['SlopCityPlayerInput.cs', 'SlopCityFirstPerson.cs', 'SlopCityHud.cs', 'SlopCityMatrixHunt.cs', 'SlopCityRabbitTrail.cs', 'SlopCityMobileControls.cs']:
         source = (scripts / name).read_text()

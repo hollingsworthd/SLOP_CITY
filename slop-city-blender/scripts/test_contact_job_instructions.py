@@ -29,7 +29,7 @@ public class SlopCityDoor:Object {}
 public class SlopCityFirstPerson:Object {public SlopCitySandbox Sandbox;public bool IsPaused,IsSeated;public Transform transform=new Transform();}
 public class SlopCityCrowd:Object {public static SlopCityCrowd Instance=new SlopCityCrowd();public bool IsRedContact(int i)=>i==1;}
 public class SlopCitySignalBeams:Object {public int paths,clears;public void SetPath(IReadOnlyList<Vector3> p,int i,bool b,Color c){paths++;}public void Clear(){clears++;}}
-public class SlopCityHintRoute {public int begins,steps;public bool Finished=true,ReachedTarget=true;public List<Vector3> Points=new List<Vector3>{new Vector3(),new Vector3(0,0,2)};public void Begin(Vector3 a,Vector3 b,Transform c,Transform d){begins++;}public void Step(){steps++;}}
+public class SlopCityHintRoute {public float DistanceFromPathSquared(Vector3 point)=>0;public int begins,steps;public bool Finished=true,ReachedTarget=true;public List<Vector3> Points=new List<Vector3>{new Vector3(),new Vector3(0,0,2)};public void Begin(Vector3 a,Vector3 b,Transform c,Transform d){begins++;}public void Step(){steps++;}}
 public enum SlopCityJobAction {First,Second}
 public class SlopCityJobDefinition {public string id="same-job",title="Repeatable job",outcome="Useful outcome";}
 public static class SlopCityJobCatalog {public static SlopCityJobDefinition[] All={new SlopCityJobDefinition()};}
@@ -67,7 +67,7 @@ public class SlopCityMatrixHunt:Object {
 RABBIT=r'''
 public class SlopCityRabbitTrail:Object {
  __CODE__
- private readonly SlopCityHintRoute route=new SlopCityHintRoute();private SlopCitySandbox sandbox;private SlopCityFirstPerson player;private Camera view=new Camera();private SlopCityInteractable target,levelEntrance;private SlopCityMatrixHunt signalOwner;private bool paused;
+ private readonly SlopCityHintRoute route=new SlopCityHintRoute();private SlopCitySandbox sandbox;private SlopCityFirstPerson player;private Camera view=new Camera();private SlopCityInteractable target,plannedRouteTarget,levelEntrance;private SlopCityMatrixHunt signalOwner;private bool paused;
  private float nextRouteAt,nextTransmissionAt,transmissionUntil,nextBeamAt;private Vector3 plannedFrom,plannedTarget;
  private string district,landmark,transmission="Listening",hintedJobId,hintedAction;private object hintedAssignment;private bool instructionBeamActive;private int proximity=-1;private SlopCityDoor messageDoor;
  private void DescribeDestination(){district="Test block";landmark=target.DisplayName;}
@@ -93,8 +93,8 @@ public static class Checks {
   Check(!hunt.TryContact(9,out _)&&!hunt.JobInstructionsVisible,"Ordinary residents cannot activate instructions");
   Check(hunt.TryContact(1,out _)&&hunt.JobInstructionsVisible&&hunt.SignalVisible,"Physical red contact binds the exact job");rabbit.Tick();hud.Render(sandbox,false);Check(hud.transmission.enabled,"Contact instruction is displayed");
   object identity=sandbox.CurrentJobAssignment;int beams=hunt.beams.paths;Check(beams>0,"Physical signal emits bounded route");
-  Time.time=15.99f;Check(hunt.SignalVisible,"Beam remains visible before six seconds");
-  Time.time=16;rabbit.Tick();hud.Render(sandbox,false);Check(!hunt.SignalVisible&&hunt.JobInstructionsVisible&&hud.transmission.enabled,"Instruction outlives exact six-second beam expiry");
+  Time.time=39.99f;Check(hunt.SignalVisible,"Beam remains visible before thirty seconds");
+  Time.time=40;rabbit.Tick();hud.Render(sandbox,false);Check(!hunt.SignalVisible&&hunt.JobInstructionsVisible&&hud.transmission.enabled,"Instruction outlives exact thirty-second beam expiry");
   Check(hud.transmission.text.Contains("Take the component")&&!hud.transmission.text.Contains("beam"),"Expired-beam instructions retain actual current action without promising a beam");
   int begins=rabbit.RouteBegins,steps=rabbit.RouteSteps;
   Time.time=1000;rabbit.Tick();Check(rabbit.RouteBegins==begins&&rabbit.RouteSteps==steps&&hunt.beams.paths==beams,"Persistent instructions neither restart routes nor draw expired beams");
@@ -109,7 +109,7 @@ public static class Checks {
   sandbox.SelectJob("same-job");Check(!ReferenceEquals(identity,sandbox.CurrentJobAssignment)&&!hunt.JobInstructionsVisible,"Explicit same-catalog replacement also clears instructions");hud.Render(sandbox,false);Check(!hud.transmission.enabled,"Still-live beam clock cannot reveal replacement job instructions");
   sandbox.canDispatch=false;sandbox.Advance();sandbox.Advance();hunt.TryContact(1,out _);Check(!hunt.JobInstructionsVisible,"No reachable assignment never retains a job binding");
   sandbox.canDispatch=true;sandbox.SelectJob("same-job");Check(!hunt.JobInstructionsVisible,"New job after empty dispatch requires another contact");hunt.TryContact(1,out _);hunt.ready=false;Check(!hunt.JobInstructionsVisible&&!hunt.SignalVisible,"Unready hunt hides both");hunt.ready=true;Check(!hunt.JobInstructionsVisible,"Expired binding never revives on readiness");
-  Console.WriteLine("PASS "+checks+" actual contact/assignment/HUD/Rabbit instruction checks; six-second beams independent, ordinary stages/280unique-phase writes refresh, same-ID completion/replacement clear, pause preserved.");
+  Console.WriteLine("PASS "+checks+" actual contact/assignment/HUD/Rabbit instruction checks; thirty-second beams independent, ordinary stages/280unique-phase writes refresh, same-ID completion/replacement clear, pause preserved.");
  }
 }
 '''
@@ -123,7 +123,7 @@ def main():
  unique=block(files['SlopCitySandbox.Jobs.cs'],'private void RefreshUniqueWaypoint(')
  writes=re.findall(r'steps\[stepIndex\]\.(?:site|instruction)\s*=[^;]+;',unique)
  assert len(writes)==2 and not re.search(r'steps\.(?:Clear|Add|AddRange|Remove)',unique)
- hunt_code='\n'.join([line(hunt,'public bool SignalVisible'),block(hunt,'public bool JobInstructionsVisible')]+[block(hunt,sig) for sig in ['public bool TryContact(','public void PresentJobRoute(','public void ClearJobGuidance(','public void SuspendVisuals(']])
+ hunt_code='\n'.join([line(hunt,'public const float SignalDurationSeconds'),line(hunt,'public bool SignalVisible'),block(hunt,'public bool JobInstructionsVisible')]+[block(hunt,sig) for sig in ['public bool TryContact(','public void PresentJobRoute(','public void ClearJobGuidance(','public void SuspendVisuals(']])
  rabbit_code='\n'.join([line(rabbit,'public string TransmissionText'),line(rabbit,'public float TransmissionOpacity'),line(rabbit,'public static int ProximityBand')]+[block(rabbit,sig) for sig in ['private void Update(','private void RefreshObjective(','private string ComposeJobInstructions(','public static string Bearing(','private void HideTrail(']])
  enabled=re.search(r'transmission.enabled =[^;]+;',hud)[0];text=re.search(r'transmission.text = !transmission.enabled[^;]+;',hud)[0]
  source=STUBS+SANDBOX.replace('__CODE__',sandbox_code).replace('__UNIQUE_WRITES__',''.join(writes))+HUNT.replace('__CODE__',hunt_code)+RABBIT.replace('__CODE__',rabbit_code).replace('__HUD__',enabled+text)+CHECKS

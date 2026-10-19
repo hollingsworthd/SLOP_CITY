@@ -82,6 +82,22 @@ namespace SlopCity
             }
         }
 
+        /// <summary>Distance to the checked route, rather than distance from its starting point.</summary>
+        public float DistanceFromPathSquared(Vector3 point)
+        {
+            if (!Finished || !ReachedTarget || path.Count < 2) return float.PositiveInfinity;
+            float nearest = float.PositiveInfinity;
+            // The solver caps expanded nodes at 6,000; scan without extra allocations.
+            for (int i = 1; i < path.Count; i++)
+            {
+                Vector3 edge = path[i] - path[i - 1];
+                Vector3 offset = point - path[i - 1];
+                float along = edge.sqrMagnitude > .0001f ? Mathf.Clamp01(Vector3.Dot(offset, edge) / edge.sqrMagnitude) : 0f;
+                nearest = Mathf.Min(nearest, (offset - edge * along).sqrMagnitude);
+            }
+            return nearest;
+        }
+
         private bool Ground(Vector3 point, out Vector3 supported)
         {
             supported = point;
