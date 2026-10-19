@@ -623,49 +623,63 @@ namespace SlopCity
             constrainedCrowd = false;
 #endif
             SubmittedVertexCount = detailedPresented = 0;
-            foreach (DrawBatch batch in batches) batch.count = 0;
+            foreach (DrawBatch batch in batches) { batch.count = 0; batch.reserved = 0; }
             if(presentationSerial==int.MaxValue){Array.Clear(presentationStamp,0,presentationStamp.Length);presentationSerial=0;}
             presentationSerial++;lastPresentationFrame=Time.frameCount;PresentedCount=WholePeopleDeferred=0;
-            GeometryUtility.CalculateFrustumPlanes(camera, frustum);Vector3 eye=camera.transform.position;
-            if (constrainedCrowd)
+            try
             {
-                RenderTouchCrowd(camera, eye);
+                GeometryUtility.CalculateFrustumPlanes(camera, frustum);Vector3 eye=camera.transform.position;
+                if (constrainedCrowd)
+                {
+                    RenderTouchCrowd(camera, eye);
+                    DrawBatches(camera);
+                    return;
+                }
+                int selected=0,eligible=0,budget=MaximumPresentedCount;
+                for(int slot=0;slot<activeCount;slot++)
+                {
+                    Agent person=agents[slot];if(!ValidNode(person.seed.route,person.node))continue;
+                    float distance=(person.position-eye).sqrMagnitude;
+#if UNITY_WEBGL && !UNITY_EDITOR
+                    if(distance>60*60)continue;
+#else
+                    if(distance>135*135)continue;
+#endif
+                    if(!GeometryUtility.TestPlanesAABB(frustum,new Bounds(person.position+Vector3.up*person.seed.height*.5f,new Vector3(.9f,person.seed.height+.15f,.9f))))continue;
+                    eligible++;
+                    // Stable logical identity breaks distance ties. A nearby conversation gets priority.
+                    float priority=person.talkReady>simulationTime&&distance<16f?-1f:distance;
+                    int insert=selected;
+                    while(insert>0&&(priority<visibleDistance[insert-1]||(Mathf.Approximately(priority,visibleDistance[insert-1])&&person.seed.residentId<agents[visibleOrder[insert-1]].seed.residentId)))insert--;
+                    if(insert>=budget)continue;int end=Mathf.Min(selected,budget-1);
+                    for(int i=end;i>insert;i--){visibleOrder[i]=visibleOrder[i-1];visibleDistance[i]=visibleDistance[i-1];}
+                    visibleOrder[insert]=slot;visibleDistance[insert]=priority;if(selected<budget)selected++;
+                }
+                WholePeopleDeferred=eligible-selected;
+                for(int index=0;index<selected;index++)
+                {
+                    Agent person=agents[visibleOrder[index]];float distance=(person.position-eye).sqrMagnitude;
+#if UNITY_WEBGL && !UNITY_EDITOR
+                    bool details=distance<12*12;
+#else
+                    bool details=distance<32*32;
+#endif
+                    if(!TryReservePerson(person,details)){WholePeopleDeferred++;continue;}
+                    CommitReservedPerson();presentationStamp[person.residentIndex]=presentationSerial;PresentedCount++;
+                }
                 DrawBatches(camera);
-                return;
             }
-            int selected=0,eligible=0,budget=MaximumPresentedCount;
-            for(int slot=0;slot<activeCount;slot++)
+            catch (Exception error)
             {
-                Agent person=agents[slot];if(!ValidNode(person.seed.route,person.node))continue;
-                float distance=(person.position-eye).sqrMagnitude;
-#if UNITY_WEBGL && !UNITY_EDITOR
-                if(distance>60*60)continue;
-#else
-                if(distance>135*135)continue;
-#endif
-                if(!GeometryUtility.TestPlanesAABB(frustum,new Bounds(person.position+Vector3.up*person.seed.height*.5f,new Vector3(.9f,person.seed.height+.15f,.9f))))continue;
-                eligible++;
-                // Stable logical identity breaks distance ties. A nearby conversation gets priority.
-                float priority=person.talkReady>simulationTime&&distance<16f?-1f:distance;
-                int insert=selected;
-                while(insert>0&&(priority<visibleDistance[insert-1]||(Mathf.Approximately(priority,visibleDistance[insert-1])&&person.seed.residentId<agents[visibleOrder[insert-1]].seed.residentId)))insert--;
-                if(insert>=budget)continue;int end=Mathf.Min(selected,budget-1);
-                for(int i=end;i>insert;i--){visibleOrder[i]=visibleOrder[i-1];visibleDistance[i]=visibleDistance[i-1];}
-                visibleOrder[insert]=slot;visibleDistance[insert]=priority;if(selected<budget)selected++;
+                // Camera callbacks recur every frame. A partial reservation or draw
+                // failure must not retry with corrupted batch state or overrun buffers.
+                renderingAllocationFailed = true;
+                Array.Clear(pendingParts, 0, pendingParts.Length); pendingPartCount = 0;
+                foreach (DrawBatch batch in batches) { batch.count = 0; batch.reserved = 0; }
+                lastPresentationFrame = -1; PresentedCount = WholePeopleDeferred = 0;
+                Debug.LogWarning("Crowd rendering stopped after an unexpected failure; retry requires reconfiguration or re-enabling. "
+                    + error.GetType().Name, this);
             }
-            WholePeopleDeferred=eligible-selected;
-            for(int index=0;index<selected;index++)
-            {
-                Agent person=agents[visibleOrder[index]];float distance=(person.position-eye).sqrMagnitude;
-#if UNITY_WEBGL && !UNITY_EDITOR
-                bool details=distance<12*12;
-#else
-                bool details=distance<32*32;
-#endif
-                if(!TryReservePerson(person,details)){WholePeopleDeferred++;continue;}
-                CommitReservedPerson();presentationStamp[person.residentIndex]=presentationSerial;PresentedCount++;
-            }
-            DrawBatches(camera);
         }
         private void RenderTouchCrowd(Camera camera, Vector3 eye)
         {
@@ -718,16 +732,22 @@ namespace SlopCity
         {
             if (renderingAllocationFailed) return;
             foreach (DrawBatch batch in batches)
-                if (batch.count > 0 && batch.mesh && batch.material && batch.material.enableInstancing)
+            {
+                if (batch.count <= 0 || !batch.mesh || !batch.material || !batch.material.enableInstancing) continue;
+                if (batch.count > batch.matrices.Length || batch.count > 1023)
                 {
-                    if(batch.properties!=null)batch.properties.SetVectorArray("_HipPose",batch.hipPoses);
-                    Graphics.DrawMeshInstanced(batch.mesh, 0, batch.material, batch.matrices, batch.count,
+                    renderingAllocationFailed = true;
+                    Debug.LogWarning("Crowd instance count exceeded its reserved matrix buffer; retry requires reconfiguration or re-enabling.", this);
+                    return;
+                }
+                if(batch.properties!=null)batch.properties.SetVectorArray("_HipPose",batch.hipPoses);
+                Graphics.DrawMeshInstanced(batch.mesh, 0, batch.material, batch.matrices, batch.count,
 #if UNITY_WEBGL && !UNITY_EDITOR
                         batch.properties, ShadowCastingMode.Off, false, gameObject.layer, camera, LightProbeUsage.Off);
 #else
                         batch.properties, ShadowCastingMode.On, true, gameObject.layer, camera, LightProbeUsage.BlendProbes);
 #endif
-                }
+            }
         }
         private bool TryReservePerson(Agent person,bool details)
         {
@@ -743,14 +763,16 @@ namespace SlopCity
             foreach(DrawBatch batch in batches)batch.reserved=0;
             pendingPartCount=reservedVertices=0;reserveOnly=true;reservationFailed=false;
             try { RenderPerson(person, details); }
-            catch (OutOfMemoryException)
+            catch (Exception error)
             {
                 // Matrix/batch growth is attempted from a recurring camera
                 // callback. A failed admission must not retry every frame.
                 renderingAllocationFailed = true;
                 Array.Clear(pendingParts, 0, pendingParts.Length); pendingPartCount = 0;
+                foreach (DrawBatch batch in batches) batch.reserved = 0;
                 lastPresentationFrame = -1; PresentedCount = WholePeopleDeferred = 0;
-                Debug.LogWarning("Crowd draw buffers could not grow; retry requires reconfiguration or re-enabling.", this);
+                Debug.LogWarning("Crowd draw buffers could not grow; retry requires reconfiguration or re-enabling. "
+                    + error.GetType().Name, this);
                 return false;
             }
             finally { reserveOnly = false; }

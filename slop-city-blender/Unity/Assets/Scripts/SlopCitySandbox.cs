@@ -77,7 +77,8 @@ namespace SlopCity
         private int[] webScenerySeen = Array.Empty<int>();
         private int webSceneryQuery;
         private bool webSceneryReady, webSceneryWarning;
-        private readonly RaycastHit[] webTargetHits = new RaycastHit[64];
+        private const int WebTargetHitCapacity = 192;
+        private readonly RaycastHit[] webTargetHits = new RaycastHit[WebTargetHitCapacity];
         private Camera webTargetCamera;
         private Ray webTargetRay;
         private int webTargetFrame = -1;
