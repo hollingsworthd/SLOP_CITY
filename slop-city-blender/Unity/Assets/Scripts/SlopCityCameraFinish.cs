@@ -25,6 +25,7 @@ namespace SlopCity
         private bool lightweightFinish;
         private bool optionalBloomDisabled;
         private bool allocationWarning;
+        private bool finishAllocationFailed;
         public float Exposure => exposure;
         public float BloomStrength => bloomStrength;
         public float ReflectionStrength => reflectionStrength;
@@ -48,6 +49,7 @@ namespace SlopCity
 
         public void Configure(Shader shader)
         {
+            if (finishShader != shader) finishAllocationFailed = false;
             finishShader = shader;
             Initialize();
         }
@@ -121,8 +123,22 @@ namespace SlopCity
             view.depthTextureMode = lightweightFinish ? DepthTextureMode.None : DepthTextureMode.DepthNormals;
 #endif
             if (!finishShader) finishShader = Shader.Find("Hidden/SlopCity/CameraFinish");
-            if (!material && finishShader && finishShader.isSupported)
-                material = CreateFinishMaterial(finishShader);
+            if (!material && !finishAllocationFailed && finishShader && finishShader.isSupported)
+            {
+                try { material = CreateFinishMaterial(finishShader); }
+                catch (System.Exception error)
+                {
+                    // Keep the camera and its light budget running, but do not
+                    // retry an unavailable optional material every rendered frame.
+                    finishAllocationFailed = true;
+                    ReduceMemory();
+                    if (!allocationWarning)
+                    {
+                        allocationWarning = true;
+                        Debug.LogWarning("City finishing is unavailable; using the camera image: " + error.Message, this);
+                    }
+                }
+            }
         }
 
         private static Material CreateFinishMaterial(Shader shader)
@@ -194,7 +210,7 @@ namespace SlopCity
             RenderTexture reflection = null, reflectedBlur = null, graded = null;
             try
             {
-                if (!material) Initialize();
+                if (!material && !finishAllocationFailed) Initialize();
                 if (!material) { Graphics.Blit(source, destination); return; }
                 material.SetFloat("_Exposure", exposure);
                 material.SetFloat("_BloomStrength", 0);

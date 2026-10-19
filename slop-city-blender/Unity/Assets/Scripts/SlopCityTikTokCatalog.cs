@@ -22,20 +22,65 @@ namespace SlopCity
 
         internal static UnityWebRequest Get(string url, int maximumBytes, int timeout)
         {
+            // A refused native Dispose remains owned, and blocks new allocation
+            // until cleanup succeeds. This ledger holds one failed construction.
+            if (!RetryConstructionCleanup()) return null;
             UnityWebRequest request = null;
+            DownloadHandler download = null;
             try
             {
                 request = new UnityWebRequest(url, UnityWebRequest.kHttpVerbGET);
-                request.downloadHandler = new BoundedDownload(maximumBytes);
+                request.disposeDownloadHandlerOnDispose = false;
+                download = new BoundedDownload(maximumBytes);
+                request.downloadHandler = download;
                 request.timeout = timeout;
+                request.disposeDownloadHandlerOnDispose = true;
                 return request;
             }
             catch (Exception error)
             {
-                request?.Dispose();
+                // The handler is owned even if its native assignment failed
+                // before attachment. Neither cleanup may skip the other.
+                constructionRequest = request;
+                constructionDownload = download;
+                RetryConstructionCleanup();
                 Debug.LogWarning("Media request unavailable: " + error.GetType().Name);
                 return null;
             }
+        }
+
+        private static UnityWebRequest constructionRequest;
+        private static DownloadHandler constructionDownload;
+        private static bool cleaningConstruction, warnedConstruction;
+
+        private static bool RetryConstructionCleanup()
+        {
+            if (cleaningConstruction) return false;
+            cleaningConstruction = true;
+            try
+            {
+                if (constructionRequest != null)
+                {
+                    try { constructionRequest.Dispose(); constructionRequest = null; }
+                    catch (Exception) { WarnConstructionCleanup(); }
+                }
+                if (constructionDownload != null)
+                {
+                    try { constructionDownload.Dispose(); constructionDownload = null; }
+                    catch (Exception) { WarnConstructionCleanup(); }
+                }
+                bool cleared = constructionRequest == null && constructionDownload == null;
+                if (cleared) warnedConstruction = false;
+                return cleared;
+            }
+            finally { cleaningConstruction = false; }
+        }
+
+        private static void WarnConstructionCleanup()
+        {
+            if (warnedConstruction) return;
+            warnedConstruction = true;
+            Debug.LogWarning("Media request cleanup is pending; further requests wait for native disposal.");
         }
 
         internal static UnityWebRequestAsyncOperation Send(UnityWebRequest request)

@@ -221,7 +221,12 @@ namespace SlopCity
                     try
                     {
                     if (!item.Elevator && buildings.Count(other => other.IsTower && other.Elevator) >= TowerBudget)
-                    { item.StreamAround(feet, DetailedFloorBudget); continue; }
+                    {
+                        // The previous tower can remain pinned or retain a failed
+                        // retirement. Its rooms still occupy the shared budget;
+                        // a blocked candidate must not allocate another set of floors.
+                        continue;
+                    }
                     item.EnsureElevator();
                     item.StreamAround(feet, DetailedFloorBudget);
                     streamingRetry.Remove(item);

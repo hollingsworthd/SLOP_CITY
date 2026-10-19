@@ -221,15 +221,19 @@
     let navigationModule = null;
     const navigationDisposedModules = new WeakSet();
 
-    function disposeNavigationModule(module) {
+    function disposeSessionModule(module) {
       if (!module || navigationDisposedModules.has(module)) return;
       navigationDisposedModules.add(module);
+      try { if (module.slopCityAbortOwnedWebRequests) module.slopCityAbortOwnedWebRequests(); }
+      catch (error) { console.warn("Session request cleanup failed.", error); }
       // The bridge owns detached video elements that DOM queries cannot find.
       // Retire their callbacks, retries, sources and decode surfaces before
       // stopping frames; a queued Unity Quit needs a future engine frame.
       try {
         if (module.slopCityDisposeOwnedVideoDecoders) module.slopCityDisposeOwnedVideoDecoders();
       } catch (error) { console.warn("Navigation video cleanup failed.", error); }
+      try { if (module.slopCityDisposeOwnedAudio) module.slopCityDisposeOwnedAudio(); }
+      catch (error) { console.warn("Session audio cleanup failed.", error); }
       try { if (module.pauseMainLoop) module.pauseMainLoop(); }
       catch (error) { console.warn("Navigation frame cleanup failed.", error); }
       try {
@@ -256,7 +260,7 @@
       catch (error) { console.warn("Navigation download cleanup failed.", error); }
       try { if (window.slopCityStopStartup) window.slopCityStopStartup(reason); }
       catch (error) { console.warn("Navigation startup cleanup failed.", error); }
-      disposeNavigationModule(navigationModule || (unityInstance && unityInstance.Module));
+      disposeSessionModule(navigationModule || (unityInstance && unityInstance.Module));
     });
     window.addEventListener("pageshow", function (event) {
       if (!event.persisted || !navigationDisposed) return;
@@ -374,15 +378,10 @@
     }
 
     function stopAfterGraphicsLoss() {
-      if (!unityInstance) return;
-      // A lost context invalidates Unity's GPU resources. Stop this session and
-      // offer a fresh load instead of continuing through invalid video textures.
-      const module = unityInstance.Module;
-      if (!module) return;
-      try { if (module.slopCityPauseVideoForGraphicsLoss) module.slopCityPauseVideoForGraphicsLoss(); }
-      catch (error) { console.warn("Video cleanup could not complete.", error); }
-      try { if (module.pauseMainLoop) module.pauseMainLoop(); }
-      catch (error) { console.warn("The game loop could not be paused.", error); }
+      // Initialization publishes the owned Module before the instance promise
+      // resolves. Fatal startup and runtime errors need the same synchronous
+      // cleanup as navigation; a paused engine cannot complete a queued Quit.
+      disposeSessionModule(navigationModule || (unityInstance && unityInstance.Module));
     }
     canvas.addEventListener("webglcontextlost", function () {
       graphicsLost = true;
@@ -414,11 +413,11 @@
       productVersion: {{{ JSON.stringify(PRODUCT_VERSION) }}},
       onRuntimeInitialized: function () {
         navigationModule = this;
-        if (navigationDisposed) {
-          disposeNavigationModule(this);
+        if (navigationDisposed || sessionFailed || graphicsLost) {
+          disposeSessionModule(this);
           // Instantiation may finish after pagehide. Stop before C++ main opens
           // the scene, even when the browser has already frozen queued work.
-          throw new Error("City startup cancelled because this page was left.");
+          throw new Error(navigationDisposed ? "City startup cancelled because this page was left." : "City startup cancelled because this session stopped.");
         }
       },
       showBanner: showBanner,
@@ -496,13 +495,7 @@
           document.getElementById("loading-label").textContent = value < .9 ? "DOWNLOADING CITY" : "OPENING THE STREETS";
         }).then(function (instance) {
           unityInstance = instance;
-          if (navigationDisposed) { disposeNavigationModule(instance.Module); return; }
-          if (sessionFailed || graphicsLost) {
-            stopAfterGraphicsLoss();
-            try { if (instance.Quit) Promise.resolve(instance.Quit()).catch(error => console.warn("Late game cleanup failed.", error)); }
-            catch (error) { console.warn("Late game cleanup failed.", error); }
-            return;
-          }
+          if (navigationDisposed || sessionFailed || graphicsLost) { disposeSessionModule(instance.Module); return; }
           if (startupWatch !== null) { clearInterval(startupWatch); startupWatch = null; }
           resizeGame();
           gate.hidden = true;

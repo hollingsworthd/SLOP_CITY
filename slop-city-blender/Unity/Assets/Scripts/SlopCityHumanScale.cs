@@ -204,9 +204,21 @@ namespace SlopCity
             }
             catch
             {
-                for (int i = undo.Count - 1; i >= 0; i--) undo[i]();
+                bool incompleteRollback = false;
+                // One refused native restoration must not skip the remaining
+                // rollback actions or every newly allocated mesh.
+                for (int i = undo.Count - 1; i >= 0; i--)
+                {
+                    try { undo[i](); }
+                    catch (Exception) { incompleteRollback = true; }
+                }
                 for (int i = ownedMeshes.Count - 1; i >= originalMeshCount; i--)
-                { Dispose(ownedMeshes[i]); ownedMeshes.RemoveAt(i); }
+                {
+                    try { Dispose(ownedMeshes[i]); ownedMeshes.RemoveAt(i); }
+                    catch (Exception) { incompleteRollback = true; }
+                }
+                if (incompleteRollback)
+                    Debug.LogWarning("Metric geometry rollback was interrupted; unreleased meshes remain owned until scene teardown.", this);
                 throw;
             }
         }
@@ -315,8 +327,7 @@ namespace SlopCity
                 RequireReadable(filter);
                 Mesh original = filter.sharedMesh;
                 if (!original) continue;
-                Mesh mesh = Instantiate(original); mesh.name = original.name + "_MetricMounts";
-                ownedMeshes.Add(mesh);
+                Mesh mesh = OwnMesh(Instantiate(original)); mesh.name = original.name + "_MetricMounts";
                 Matrix4x4 toOwner = owner.worldToLocalMatrix * filter.transform.localToWorldMatrix;
                 Matrix4x4 toMesh = toOwner.inverse;
                 Vector3[] vertices = original.vertices;
@@ -470,7 +481,7 @@ namespace SlopCity
         private void PavementBox(Transform parent, string name, Vector3 point, Vector3 size, Material material, bool solid)
         {
             GameObject box = SlopCityInteriorGeometry.Box(parent, name, point, size, material, solid);
-            ownedMeshes.Add(SlopCityInteriorGeometry.ApplyMetricSurface(box));
+            OwnMesh(SlopCityInteriorGeometry.ApplyMetricSurface(box));
         }
 
         private static void AlignReflectionProbes(Transform city, List<Action> undo)
@@ -547,10 +558,9 @@ namespace SlopCity
                 RequireReadable(filter);
                 Mesh source = filter.sharedMesh;
                 if (!source) continue;
-                Mesh mesh = Instantiate(source);
-                // Vertex/triangle reads and uploads can fail under memory pressure.
-                // Register the native clone before that work so Apply's rollback owns it.
-                ownedMeshes.Add(mesh); mesh.name = source.name + "_MetricPlots";
+                // Own the native clone before any property/read/upload can fail.
+                Mesh mesh = OwnMesh(Instantiate(source));
+                mesh.name = source.name + "_MetricPlots";
                 Vector3[] vertices = mesh.vertices;
                 if (filter.name == "Street_RoadMarkings")
                 {
@@ -607,8 +617,8 @@ namespace SlopCity
                     bool standard = !scanned && factors == new Vector3(PlotFactor, 1, PlotFactor);
                     if (!standard || !cache.TryGetValue(original, out widened))
                     {
-                        widened = Instantiate(original);
-                        ownedMeshes.Add(widened); widened.name = original.name + "_MetricPlots";
+                        widened = OwnMesh(Instantiate(original));
+                        widened.name = original.name + "_MetricPlots";
                         Vector3[] vertices = widened.vertices;
                         for (int i = 0; i < vertices.Length; i++) vertices[i] = Vector3.Scale(vertices[i], factors);
                         widened.vertices = vertices;
@@ -630,6 +640,19 @@ namespace SlopCity
                     undo.Add(() => { if (box) { box.size = size; box.center = center; } });
                     box.size = Vector3.Scale(size, factors); box.center = Vector3.Scale(center, factors);
                 }
+            }
+        }
+
+        private Mesh OwnMesh(Mesh mesh)
+        {
+            try { ownedMeshes.Add(mesh); return mesh; }
+            catch
+            {
+                // List admission can fail while the native clone already exists.
+                // Apply's rollback cannot see an unregistered mesh.
+                ownedMeshes.Remove(mesh);
+                Dispose(mesh);
+                throw;
             }
         }
 
@@ -660,6 +683,15 @@ namespace SlopCity
         { groups[Find(groups, b)] = Find(groups, a); }
         private static void Dispose(UnityEngine.Object item)
         { if (!item) return; if (Application.isPlaying) Destroy(item); else DestroyImmediate(item); }
-        private void OnDestroy() { foreach (Mesh mesh in ownedMeshes) Dispose(mesh); ownedMeshes.Clear(); }
+        private void OnDestroy()
+        {
+            bool incomplete = false;
+            for (int i = ownedMeshes.Count - 1; i >= 0; i--)
+            {
+                try { Dispose(ownedMeshes[i]); ownedMeshes.RemoveAt(i); }
+                catch (Exception) { incomplete = true; }
+            }
+            if (incomplete) Debug.LogWarning("Some metric meshes could not be released during scene teardown.", this);
+        }
     }
 }

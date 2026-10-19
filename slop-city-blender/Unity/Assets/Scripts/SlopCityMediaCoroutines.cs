@@ -12,13 +12,22 @@ namespace SlopCity
     internal sealed class SlopCityMediaCoroutines
     {
         private readonly HashSet<Stack<IEnumerator>> active = new HashSet<Stack<IEnumerator>>();
+        private bool disposing;
 
         internal void Start(MonoBehaviour owner, IEnumerator operation)
         {
             var stack = new Stack<IEnumerator>();
             stack.Push(operation);
+            if (disposing || !owner || !owner.isActiveAndEnabled || !owner.gameObject.activeInHierarchy)
+            { DisposeStack(stack); return; }
             active.Add(stack);
-            try { owner.StartCoroutine(Drive(stack)); }
+            try
+            {
+                // Unity can refuse startup without throwing when the owner has
+                // become inactive. That iterator still needs its cleanup owner.
+                if (owner.StartCoroutine(Drive(stack)) == null)
+                { active.Remove(stack); DisposeStack(stack); }
+            }
             catch { active.Remove(stack); DisposeStack(stack); throw; }
         }
 
@@ -29,7 +38,11 @@ namespace SlopCity
                 while (stack.Count > 0)
                 {
                     IEnumerator current = stack.Peek();
-                    if (!current.MoveNext())
+                    bool advanced = current.MoveNext();
+                    // MoveNext may synchronously disable its owner. DisposeAll
+                    // then unwinds this exact stack; never pop or resume it again.
+                    if (stack.Count == 0 || !ReferenceEquals(stack.Peek(), current)) yield break;
+                    if (!advanced)
                     {
                         stack.Pop();
                         (current as IDisposable)?.Dispose();
@@ -49,9 +62,22 @@ namespace SlopCity
         // its request, native stream or uncommitted Unity object is being released.
         internal void DisposeAll()
         {
-            var pending = new List<Stack<IEnumerator>>(active);
-            active.Clear();
-            foreach (Stack<IEnumerator> stack in pending) DisposeStack(stack);
+            if (disposing) return;
+            disposing = true;
+            try
+            {
+                // Teardown can run under memory pressure. Drain with the
+                // HashSet's struct enumerator instead of allocating a copy after
+                // Unity has stopped all owners and their finally blocks.
+                while (active.Count > 0)
+                {
+                    Stack<IEnumerator> pending = null;
+                    foreach (Stack<IEnumerator> stack in active) { pending = stack; break; }
+                    active.Remove(pending);
+                    DisposeStack(pending);
+                }
+            }
+            finally { disposing = false; }
         }
 
         private static void DisposeStack(Stack<IEnumerator> stack)

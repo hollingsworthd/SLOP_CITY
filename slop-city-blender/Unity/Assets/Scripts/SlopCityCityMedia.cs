@@ -17,6 +17,7 @@ namespace SlopCity
     public sealed class SlopCityCityMedia : MonoBehaviour
     {
         private const int ChannelCount = 3;
+        private static readonly List<ScreenState> retiredScreenResources = new List<ScreenState>();
         private const int MaximumScreenLoop = 5;
         private const float PrepareTimeout = 25f;
         private const float ResolveTimeout = 120f;
@@ -133,10 +134,11 @@ namespace SlopCity
             bool releasedDecoder = false;
             desiredAudioOwner = null;
             foreach (Channel signal in channels)
-                if (signal != null && signal.owner != null)
+                if (signal != null && (signal.owner != null || signal.player || signal.session))
                 {
                     releasedDecoder |= signal.player || signal.session;
-                    ReleaseSlot(signal);
+                    if (signal.owner != null) ReleaseSlot(signal);
+                    else ReleasePlayback(signal);
                 }
             return releasedDecoder;
         }
@@ -245,6 +247,7 @@ namespace SlopCity
 
         public void RegisterScreen(SlopCityCityScreen screen)
         {
+            if (!RetryRetiredScreenResources()) return;
             if (!screen || !screen.isActiveAndEnabled || !isActiveAndEnabled || !screen.Display || !screenShader || !screenShader.isSupported || screens.Contains(screen)) return;
             int selected = Mathf.Clamp(screen.Channel, 0, ChannelCount - 1);
             if (channels[selected] == null) return;
@@ -267,12 +270,8 @@ namespace SlopCity
             catch (Exception error)
             {
                 screens.Remove(screen); displays.Remove(state); displayLookup.Remove(screen);
-                try { screen.Restore(); }
-                finally
-                {
-                    try { if (state.material) Destroy(state.material); }
-                    finally { DisposeScreenTexture(state.texture); }
-                }
+                CleanupMedia(screen.Restore);
+                ReleaseScreenResources(state);
                 Debug.LogWarning("City display unavailable: " + error.GetType().Name, this);
             }
         }
@@ -401,17 +400,8 @@ namespace SlopCity
                 screens.Remove(display.screen);
                 displays.Remove(display);
                 candidates.Remove(display);
-                try { if (display.screen) display.screen.Restore(); }
-                finally
-                {
-                    try { ReleaseScreenTexture(display); }
-                    finally
-                    {
-                        Material material = display.material;
-                        display.material = null;
-                        if (material) Destroy(material);
-                    }
-                }
+                CleanupMedia(() => { if (display.screen) display.screen.Restore(); });
+                ReleaseScreenResources(display);
             }
             // Retry entries are shared clip/catalog backoff, rather than screen
             // ownership. Removing them here would reset another display's retry.
@@ -419,6 +409,7 @@ namespace SlopCity
 
         private bool EnsureScreenTexture(ScreenState display)
         {
+            if (!RetryRetiredScreenResources()) return false;
             if (!display.screen || display.screen.AudioOnly) return false;
             if (display.texture && display.texture.IsCreated()) return true;
             try
@@ -463,10 +454,9 @@ namespace SlopCity
             if (keepPausedVideo) display.pausedVideoGeneration = display.generation;
             else ClearPausedVideo(display);
             RenderTexture texture = display.texture;
-            display.texture = null;
-            try { if (display.material) display.material.mainTexture = Texture2D.blackTexture; }
-            finally { DisposeScreenTexture(texture); }
-            display.needsThumbnail = !display.screen.AudioOnly && display.post != null;
+            CleanupMedia(() => { if (display.material) display.material.mainTexture = Texture2D.blackTexture; });
+            if (TryMediaCleanup(() => DisposeScreenTexture(texture)) || !texture) display.texture = null;
+            display.needsThumbnail = display.screen && !display.screen.AudioOnly && display.post != null;
         }
 
         private static void DisposeScreenTexture(RenderTexture texture)
@@ -475,6 +465,28 @@ namespace SlopCity
             try { texture.Release(); }
             catch (Exception error) { Debug.LogWarning("City texture release: " + error.GetType().Name); }
             finally { Destroy(texture); }
+        }
+
+        private static void ReleaseScreenResources(ScreenState display)
+        {
+            CleanupMedia(() => ReleaseScreenTexture(display));
+            Material material = display.material;
+            if (TryMediaCleanup(() => { if (material) Destroy(material); }) || !material) display.material = null;
+            if ((display.texture || display.material) && !retiredScreenResources.Contains(display))
+                retiredScreenResources.Add(display);
+        }
+
+        private static bool RetryRetiredScreenResources()
+        {
+            // Refused native destruction is bounded by already-owned screens.
+            // New screen/texture admissions wait instead of growing an orphan list.
+            for (int i = retiredScreenResources.Count - 1; i >= 0; i--)
+            {
+                ScreenState display = retiredScreenResources[i];
+                ReleaseScreenResources(display);
+                if (!display.texture && !display.material) retiredScreenResources.RemoveAt(i);
+            }
+            return retiredScreenResources.Count == 0;
         }
 
         private void RefreshMobileScreenTextures()
@@ -1345,7 +1357,18 @@ namespace SlopCity
         private void StartChannel(Channel signal)
         {
             if (signal.owner == null) return;
+            if (!signal.playbackConfigured && (signal.session || signal.player || signal.audio))
+            {
+                // A retained native owner may only now accept Destroy. Give that
+                // retirement its own frame before preparing any replacement.
+                ReleasePlayback(signal);
+                signal.advance = true;
+                signal.nextAttempt = Time.unscaledTime + .25f;
+                return;
+            }
             ReleasePhoto(signal);
+            if (signal.photoAudio)
+            { signal.advance = true; signal.nextAttempt = Time.unscaledTime + 1f; return; }
             signal.advance = false;
             signal.failed = false;
             signal.pendingVideo = signal.owner.post;
@@ -1413,8 +1436,15 @@ namespace SlopCity
 
         private void EnsurePlayer(Channel signal)
         {
-            if (signal.player) return;
-            if (signal.session) { Destroy(signal.session); signal.session = null; signal.audio = null; }
+            if (signal.player && signal.playbackConfigured) return;
+            if (signal.session || signal.player || signal.audio)
+            {
+                ReleasePlayback(signal);
+                if (signal.session || signal.player || signal.audio)
+                    throw new InvalidOperationException("The previous city decoder has not retired.");
+            }
+            try
+            {
             signal.session = new GameObject("CityDecoder_" + signal.fallback.id);
             signal.session.transform.SetParent(transform, false);
             signal.audio = signal.session.AddComponent<AudioSource>();
@@ -1447,6 +1477,13 @@ namespace SlopCity
 #if !UNITY_WEBGL || UNITY_EDITOR
             player.SetTargetAudioSource(0, signal.audio);
 #endif
+                signal.playbackConfigured = true;
+            }
+            catch
+            {
+                ReleasePlayback(signal);
+                throw;
+            }
         }
 
         private void PrepareChannel(Channel signal, string url)
@@ -1760,27 +1797,24 @@ namespace SlopCity
         {
             signal.photoGeneration++;
             AudioClip clip = signal.photoAudio;
-            signal.photoAudio = null;
-            try
+            if (signal.audio && clip)
             {
-                if (signal.audio && clip) { signal.audio.Stop(); signal.audio.clip = null; }
+                CleanupMedia(signal.audio.Stop);
+                CleanupMedia(() => signal.audio.clip = null);
             }
-            finally
-            {
-                if (clip) Destroy(clip);
-                signal.slideshow = false;
-                signal.resumeImage = false;
-                signal.audioLoading = signal.resumeAudio = false;
-                signal.audioStarted = false;
-                signal.imageIndex = -1;
-            }
+            if (TryMediaCleanup(() => { if (clip) Destroy(clip); }) || !clip) signal.photoAudio = null;
+            signal.slideshow = false;
+            signal.resumeImage = false;
+            signal.audioLoading = signal.resumeAudio = false;
+            signal.audioStarted = false;
+            signal.imageIndex = -1;
         }
 
         private void FailChannel(Channel signal, string error)
         {
             Debug.LogWarning("City media " + signal.fallback.id + ": " + error, this);
-            StopPlayback(signal);
-            ReleasePhoto(signal);
+            CleanupMedia(() => StopPlayback(signal));
+            CleanupMedia(() => ReleasePhoto(signal));
             signal.resolving = false;
             signal.operation++;
             if (signal.pendingVideo != null)
@@ -2055,24 +2089,28 @@ namespace SlopCity
 #if UNITY_WEBGL && !UNITY_EDITOR
             signal.webAwaitingFirstPicture = false;
 #endif
-            if (signal.player)
+            VideoPlayer player = signal.player;
+            if (player)
             {
-                signal.player.prepareCompleted -= signal.preparedHandler;
-                signal.player.errorReceived -= signal.errorHandler;
-                signal.player.loopPointReached -= signal.endedHandler;
+                CleanupMedia(() => player.prepareCompleted -= signal.preparedHandler);
+                CleanupMedia(() => player.errorReceived -= signal.errorHandler);
+                CleanupMedia(() => player.loopPointReached -= signal.endedHandler);
 #if UNITY_WEBGL && !UNITY_EDITOR
                 if (signal.webFrameReadyHandler != null)
-                {
-                    signal.player.frameReady -= signal.webFrameReadyHandler;
-                    signal.player.sendFrameReadyEvents = false;
-                }
+                    CleanupMedia(() => player.frameReady -= signal.webFrameReadyHandler);
+                CleanupMedia(() => player.sendFrameReadyEvents = false);
 #endif
-                // Detach before stopping so the shared display keeps its last decoded frame during preparation.
-                signal.player.targetTexture = null;
-                signal.player.Stop();
+                // Native failures must not strand audio or leave stale preparation
+                // state armed. Every cleanup has its own failure boundary.
+                CleanupMedia(() => player.targetTexture = null);
+                CleanupMedia(player.Stop);
             }
-            if (signal.audio) signal.audio.Stop();
-            if (signal.audio) signal.audio.volume = 0f;
+            AudioSource audio = signal.audio;
+            if (audio)
+            {
+                CleanupMedia(audio.Stop);
+                CleanupMedia(() => audio.volume = 0f);
+            }
             signal.ready = false;
             signal.loading = false;
 #if UNITY_WEBGL && !UNITY_EDITOR
@@ -2085,17 +2123,18 @@ namespace SlopCity
 
         private static void ReleasePlayback(Channel signal)
         {
-            try { StopPlayback(signal); }
-            finally
-            {
-                GameObject session = signal.session;
-                signal.player = null;
-                signal.audio = null;
-                signal.session = null;
-                signal.ready = false;
-                signal.loading = false;
-                if (session) Destroy(session);
-            }
+            signal.playbackConfigured = false;
+            CleanupMedia(() => StopPlayback(signal));
+            GameObject session = signal.session;
+            bool retired = TryMediaCleanup(() => { if (session) Destroy(session); });
+            // A refused Destroy still occupies its exact channel. Keep ownership
+            // until a later release succeeds instead of admitting another decoder.
+            if (!retired && session) return;
+            signal.player = null;
+            signal.audio = null;
+            signal.session = null;
+            signal.ready = false;
+            signal.loading = false;
         }
 
         private void OnApplicationFocus(bool focused)
@@ -2138,10 +2177,10 @@ namespace SlopCity
 #if UNITY_WEBGL && !UNITY_EDITOR
             RefreshMobilePreparationClocks();
 #endif
-            RefreshMobileLoungePriority(false, true);
-            ApplyPlayback();
-            UpdateAudio();
-            SlopCityMediaAudioFocus.Remove(this);
+            CleanupMedia(() => RefreshMobileLoungePriority(false, true));
+            CleanupMedia(ApplyPlayback);
+            CleanupMedia(UpdateAudio);
+            CleanupMedia(() => SlopCityMediaAudioFocus.Remove(this));
             foreach (Channel signal in channels)
                 if (signal != null && signal.slideshow && signal.audioLoading)
                 {
@@ -2149,14 +2188,14 @@ namespace SlopCity
                     signal.audioLoading = false;
                     signal.resumeAudio = true;
                 }
-            StopAllCoroutines();
-            mediaCoroutines.DisposeAll();
+            CleanupMedia(StopAllCoroutines);
+            CleanupMedia(mediaCoroutines.DisposeAll);
             refreshing = false;
             thumbnailRequests = 0;
             foreach (ScreenState display in displays)
             {
                 display.generation++;
-                display.needsThumbnail = !display.screen.AudioOnly && display.post != null && (display.slot == null || !display.slot.ready);
+                display.needsThumbnail = display.screen && !display.screen.AudioOnly && display.post != null && (display.slot == null || !display.slot.ready);
             }
             foreach (Channel signal in channels)
             {
@@ -2193,14 +2232,23 @@ namespace SlopCity
             }
             foreach (ScreenState display in displays)
             {
-                CleanupMedia(() => ReleaseScreenTexture(display));
-                if (display.material) Destroy(display.material);
-                display.material = null;
+                ReleaseScreenResources(display);
             }
+            RetryRetiredScreenResources();
             screens.Clear();
             displays.Clear();
             displayLookup.Clear();
             candidates.Clear();
+        }
+
+        private static bool TryMediaCleanup(Action cleanup)
+        {
+            try { cleanup(); return true; }
+            catch (Exception error)
+            {
+                Debug.LogWarning("City media cleanup failed: " + error.GetType().Name);
+                return false;
+            }
         }
 
         private static void CleanupMedia(Action cleanup)
@@ -2262,7 +2310,7 @@ namespace SlopCity
             public Material material;
             public VideoPlayer.EventHandler preparedHandler, endedHandler;
             public VideoPlayer.ErrorEventHandler errorHandler;
-            public bool remote, ready, loading, failed, hasScreen, pendingRemote, resolving, advance, slideshow, audioStarted, resumeImage;
+            public bool remote, ready, loading, failed, hasScreen, pendingRemote, resolving, advance, slideshow, audioStarted, resumeImage, playbackConfigured;
             public bool audioLoading, resumeAudio;
             public float startedAt, nextAttempt, imageElapsed;
 #if UNITY_WEBGL && !UNITY_EDITOR

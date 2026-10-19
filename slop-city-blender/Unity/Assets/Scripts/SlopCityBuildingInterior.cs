@@ -14,7 +14,11 @@ namespace SlopCity
         private float setbackHeight, height;
         private int serial, streamingFloor = -1;
         private int floorAdmissionAfterFrame;
-        private bool architectureReady;
+        private bool architectureReady, floorRetirementWarning;
+        // Failed construction must retain its root even when native cleanup is refused.
+        // Only one synchronous floor build can be pending for this building.
+        private Transform failedFloorRoot;
+        private int failedFloorIndex = -1;
         private readonly Dictionary<Renderer, bool> authoredRenderers = new Dictionary<Renderer, bool>();
         private readonly Dictionary<Collider, bool> authoredColliders = new Dictionary<Collider, bool>();
         private readonly Dictionary<Transform, Vector3> authoredRoofPositions = new Dictionary<Transform, Vector3>();
@@ -165,13 +169,24 @@ namespace SlopCity
             return transform.TransformPoint(new Vector3(ShaftLocalCenter.x, LocalFloorElevations[floor] + .015f, ShaftLocalCenter.z - 1.75f));
         }
 
-        public bool IsFloorLoaded(int floor) => PreservedInterior || loaded.ContainsKey(floor);
+        public bool IsFloorLoaded(int floor) => PreservedInterior
+            || (loaded.TryGetValue(floor, out Transform root) && root && root.gameObject.activeInHierarchy);
         public Transform EnsureFloor(int floor)
         {
             if (floor < 0 || floor >= FloorCount) throw new ArgumentOutOfRangeException(nameof(floor));
             if (PreservedInterior) return transform;
+            if (loaded.TryGetValue(floor, out Transform existing) && existing && existing.gameObject.activeInHierarchy) return existing;
+            if (!ReleaseFailedFloor() || !CanAdmitFloorDetail(Time.frameCount))
+                throw new InvalidOperationException("A retired floor is still releasing; new floor admission is deferred.");
             EnsureArchitecture();
-            if (loaded.TryGetValue(floor, out Transform existing) && existing) return existing;
+            if (loaded.TryGetValue(floor, out existing))
+            {
+                // A native disposal may have deactivated the old root before
+                // throwing. It remains owned, but is no longer usable support.
+                ReleaseFloor(floor);
+                if (loaded.ContainsKey(floor) || !CanAdmitFloorDetail(Time.frameCount))
+                    throw new InvalidOperationException("The previous floor is still retiring.");
+            }
             Transform root = SlopCityInteriorGeometry.Root(transform, "Runtime_Floor_" + floor.ToString("D2"), Vector3.up * LocalFloorElevations[floor]);
             try
             {
@@ -195,10 +210,11 @@ namespace SlopCity
             }
             catch
             {
-                SlopCityInteriorBroadcast.ReleaseFloor(root);
-                root.GetComponent<SlopCityInteriorFurnishing>()?.Release();
-                SlopCityInteriorGeometry.Dispose(root.gameObject);
-                DeferFloorAdmission();
+                // AdmitFloor can fail after publication. Remove that usable-floor
+                // identity, but transfer the exact root to another owner first.
+                failedFloorRoot = root; failedFloorIndex = floor;
+                if (loaded.TryGetValue(floor, out Transform published) && published == root) loaded.Remove(floor);
+                ReleaseFailedFloor();
                 throw;
             }
         }
@@ -206,19 +222,69 @@ namespace SlopCity
         public void ReleaseFloor(int floor)
         {
             if (!loaded.TryGetValue(floor, out Transform root)) return;
-            SlopCityInteriorPopulation.RetireFloor(this, floor);
-            loaded.Remove(floor);
-            if (root)
+            try
             {
-                foreach (SlopCityInteractable item in root.GetComponentsInChildren<SlopCityInteractable>())
-                    utilityState[floor + "/" + item.name] = item.CaptureSessionState();
-                root.name = "Retired_" + root.name + "_" + root.GetInstanceID();
-                SlopCityInteriorBroadcast.ReleaseFloor(root);
-                root.GetComponent<SlopCityInteriorFurnishing>()?.Release();
-                SlopCityInteriorGeometry.Dispose(root.gameObject);
-                DeferFloorAdmission();
+                // Capture/renderer work may throw. Keep the registry owner until
+                // retirement actually finishes so a retry cannot duplicate this room.
+                if (root)
+                    foreach (SlopCityInteractable item in root.GetComponentsInChildren<SlopCityInteractable>())
+                        utilityState[floor + "/" + item.name] = item.CaptureSessionState();
+                SlopCityInteriorPopulation.RetireFloor(this, floor);
+                if (root)
+                {
+                    SlopCityInteriorBroadcast.ReleaseFloor(root);
+                    root.GetComponent<SlopCityInteriorFurnishing>()?.Release();
+                    root.name = "Retired_Floor_" + floor + "_" + root.GetInstanceID();
+                    SlopCityInteriorGeometry.Dispose(root.gameObject);
+                    DeferFloorAdmission();
+                }
+                loaded.Remove(floor);
+                floorRetirementWarning = false;
+                world.GeometryChanged();
             }
-            world.GeometryChanged();
+            catch (Exception error) { WarnFloorRetirement(error); }
+        }
+
+        private bool ReleaseFailedFloor()
+        {
+            Transform root = failedFloorRoot;
+            if (!root) { failedFloorRoot = null; failedFloorIndex = -1; return true; }
+            bool disposedRoot = false;
+            try
+            {
+                // These independent owners must all get a teardown attempt. A
+                // callback failure cannot strand the failed construction hierarchy.
+                try { SlopCityInteriorPopulation.RetireFloor(this, failedFloorIndex); }
+                finally
+                {
+                    try { SlopCityInteriorBroadcast.ReleaseFloor(root); }
+                    finally
+                    {
+                        try { root.GetComponent<SlopCityInteriorFurnishing>()?.Release(); }
+                        finally
+                        {
+                            SlopCityInteriorGeometry.Dispose(root.gameObject);
+                            disposedRoot = true;
+                        }
+                    }
+                }
+            }
+            catch (Exception error) { WarnFloorRetirement(error); }
+            if (disposedRoot || !root)
+            {
+                failedFloorRoot = null; failedFloorIndex = -1;
+                DeferFloorAdmission();
+                if (world) world.GeometryChanged();
+                return true;
+            }
+            return false;
+        }
+
+        private void WarnFloorRetirement(Exception error)
+        {
+            if (floorRetirementWarning) return;
+            floorRetirementWarning = true;
+            Debug.LogWarning("Floor retirement interrupted; resources stay owned for retry: " + error.GetType().Name, this);
         }
 
         public SlopCityElevator EnsureElevator()
@@ -269,7 +335,7 @@ namespace SlopCity
                 if (loaded.Count < budget || loaded.ContainsKey(destination)) break;
                 ReleaseFloor(floor);
             }
-            if (!CanAdmitFloorDetail(Time.frameCount)) return false;
+            if (loaded.Count >= budget || !CanAdmitFloorDetail(Time.frameCount)) return false;
             EnsureFloor(destination);
             return true;
         }
@@ -293,7 +359,7 @@ namespace SlopCity
             foreach (int floor in loaded.Keys.ToArray()) if (!wanted.Contains(floor)) ReleaseFloor(floor);
             // Furnishing meshes use deferred Destroy in a player. Let those native
             // resources retire at frame end before admitting replacement rooms.
-            if (!CanAdmitFloorDetail(Time.frameCount)) return;
+            if (loaded.Keys.Any(floor => !wanted.Contains(floor)) || !CanAdmitFloorDetail(Time.frameCount)) return;
             foreach (int floor in wanted) EnsureFloor(floor);
         }
 
@@ -302,6 +368,7 @@ namespace SlopCity
             if (player && ContainsInterior(player.transform.position)) return false;
             if (Elevator && !Elevator.ReleaseEmpty()) return false;
             foreach (int floor in loaded.Keys.ToArray()) ReleaseFloor(floor);
+            if (loaded.Count != 0 || !ReleaseFailedFloor()) return false;
             streamingFloor = -1;
             if (Elevator)
             {

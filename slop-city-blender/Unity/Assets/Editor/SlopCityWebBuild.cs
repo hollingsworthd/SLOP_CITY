@@ -51,6 +51,7 @@ namespace SlopCity.Editor
                     receipt.initialMemoryMiB = PlayerSettings.WebGL.initialMemorySize;
                     receipt.maximumMemoryMiB = PlayerSettings.WebGL.maximumMemorySize;
                     receipt.memoryGrowthMode = PlayerSettings.WebGL.memoryGrowthMode.ToString();
+                    receipt.exceptionSupport = PlayerSettings.WebGL.exceptionSupport.ToString();
                     receipt.memoryLinearGrowthStepMiB = PlayerSettings.WebGL.linearMemoryGrowthStep;
                     receipt.worldTextureImports = textures.entries;
                     BuildReport report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
@@ -143,6 +144,7 @@ namespace SlopCity.Editor
             private readonly bool fallback = PlayerSettings.WebGL.decompressionFallback;
             private readonly bool caching = PlayerSettings.WebGL.dataCaching;
             private readonly bool threads = PlayerSettings.WebGL.threadsSupport;
+            private readonly WebGLExceptionSupport exceptions = PlayerSettings.WebGL.exceptionSupport;
             private readonly int initialMemory = PlayerSettings.WebGL.initialMemorySize;
             private readonly int maximumMemory = PlayerSettings.WebGL.maximumMemorySize;
             private readonly WebGLMemoryGrowthMode growth = PlayerSettings.WebGL.memoryGrowthMode;
@@ -178,6 +180,9 @@ namespace SlopCity.Editor
                     PlayerSettings.WebGL.dataCaching = true;
                     // A single-threaded build works on ordinary static hosts without COOP/COEP.
                     PlayerSettings.WebGL.threadsSupport = false;
+                    // Keep null and array-bounds checks in the shipped IL2CPP player.
+                    // Explicit-throw-only builds can turn those faults into Wasm traps.
+                    PlayerSettings.WebGL.exceptionSupport = WebGLExceptionSupport.FullWithoutStacktrace;
                     PlayerSettings.WebGL.initialMemorySize = 256;
                     PlayerSettings.WebGL.maximumMemorySize = 1024;
                     // Do not commit a 512 MiB heap before the city needs it, or allow
@@ -211,6 +216,7 @@ namespace SlopCity.Editor
                 PlayerSettings.WebGL.decompressionFallback = fallback;
                 PlayerSettings.WebGL.dataCaching = caching;
                 PlayerSettings.WebGL.threadsSupport = threads;
+                PlayerSettings.WebGL.exceptionSupport = exceptions;
                 PlayerSettings.WebGL.initialMemorySize = initialMemory;
                 PlayerSettings.WebGL.maximumMemorySize = maximumMemory;
                 PlayerSettings.WebGL.memoryGrowthMode = growth;
@@ -235,6 +241,7 @@ namespace SlopCity.Editor
             public int initialMemoryMiB;
             public int maximumMemoryMiB;
             public string memoryGrowthMode;
+            public string exceptionSupport;
             public int memoryLinearGrowthStepMiB;
             public List<SlopCityWebTextureBudgetScope.Entry> worldTextureImports = new List<SlopCityWebTextureBudgetScope.Entry>();
             public string startedAtUtc;

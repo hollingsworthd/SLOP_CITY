@@ -31,6 +31,7 @@ PAUSE_HARNESS = r'''
 using System; using System.Collections.Generic; using UnityEngine; using UnityEngine.Video;
 namespace UnityEngine {
  public static class Mathf {public static int Min(int left,int right)=>Math.Min(left,right);}
+ public static class Debug {public static void LogWarning(string message){}}
  public class Texture {
   public bool released,destroyed;
   public static implicit operator bool(Texture value)=>value!=null&&!value.destroyed;
@@ -193,6 +194,7 @@ def verify_pause_and_decode_budgets(city, catalog, mono, work):
     signatures = ['public void SetScreenPaused(', 'public void ResetScreenPlayback(',
                   'private static void ClearPausedVideo(', 'private static void CapturePausedVideo(',
                   'private static void RestorePausedVideo(', 'private static void ReleaseScreenTexture(',
+                  'private static void DisposeScreenTexture(',
                   'private void RefreshMobileScreenTextures(']
     methods = '\n'.join(extract_method(city, signature) for signature in signatures)
     expressions = {}
@@ -239,7 +241,9 @@ def main():
     if has_priority_reset:
         assert 'if (Suspended || manuallyPaused) RefreshMobileLoungePriority(false, true);' in extract_method(city, '        private void ApplyPlayback(')
         for signature in ('        private void OnDisable(', '        private void OnDestroy('):
-            assert 'RefreshMobileLoungePriority(false, true);' in extract_method(city, signature)
+            # OnDestroy contains the same reset in an independent cleanup lambda;
+            # the semicolon belongs to CleanupMedia's outer invocation.
+            assert 'RefreshMobileLoungePriority(false, true)' in extract_method(city, signature)
     cancel_priority = 'RefreshMobileLoungePriority(false, true);' if has_priority_reset else 'RefreshMobileLoungePriority(false);'
     stub = '''using UnityEngine; using UnityEngine.Video; namespace SlopCity {
 public class SlopCityCityMedia:MonoBehaviour {

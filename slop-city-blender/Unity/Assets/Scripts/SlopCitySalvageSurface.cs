@@ -412,15 +412,26 @@ namespace SlopCity
         }
         private void OnDestroy()
         {
-            ReleaseWorking();
-            if (display) display.forceRenderingOff = originalForceRenderingOff;
-            if (pendingSavedState && collision) collision.enabled = originalCollisionEnabled;
-            // Parent material owners may already have destroyed their authored
-            // replacement during scene teardown. Dictionary identity still exists.
-            if (materialBound && !ReferenceEquals(authoredMaterial, null) && Finishes.TryGetValue(authoredMaterial, out Finish finish))
+            // A failed native mesh/renderer/collider restore must not leave this
+            // destroyed surface counted as a user of a shared finish forever.
+            try { ReleaseWorking(); }
+            finally
             {
-                if (--finish.users == 0) { Finishes.Remove(authoredMaterial); if (finish.owned && finish.material) Dispose(finish.material); }
-                materialBound = false;
+                try { if (display) display.forceRenderingOff = originalForceRenderingOff; }
+                finally
+                {
+                    try { if (pendingSavedState && collision) collision.enabled = originalCollisionEnabled; }
+                    finally
+                    {
+                        // Parent material owners may already have destroyed their authored
+                        // replacement during scene teardown. Dictionary identity still exists.
+                        if (materialBound && !ReferenceEquals(authoredMaterial, null) && Finishes.TryGetValue(authoredMaterial, out Finish finish))
+                        {
+                            materialBound = false;
+                            if (--finish.users == 0) { Finishes.Remove(authoredMaterial); if (finish.owned && finish.material) Dispose(finish.material); }
+                        }
+                    }
+                }
             }
         }
         private void ValidatePart(int part) { if (part < 0 || part >= PartCount) throw new ArgumentOutOfRangeException(nameof(part)); }
