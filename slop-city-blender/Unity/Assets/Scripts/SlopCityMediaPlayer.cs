@@ -460,13 +460,18 @@ namespace SlopCity
             audioScore = score * (upholsteredObstruction ? .85f : 1f);
         }
 
+        private readonly RaycastHit[] mediaPathHits = new RaycastHit[64];
+
         private bool MediaPathOccluded(Transform listener, Vector3 direction, float distance, Transform emitter, bool televisionPicture, out bool upholsteredObstruction)
         {
             upholsteredObstruction = false;
             SlopCityFirstPerson controller = listener.GetComponentInParent<SlopCityFirstPerson>();
-            foreach (RaycastHit hit in Physics.RaycastAll(listener.position, direction, Mathf.Max(0f, distance - .15f),
-                Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore))
+            int count = Physics.RaycastNonAlloc(listener.position, direction, mediaPathHits, Mathf.Max(0f, distance - .15f),
+                Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore);
+            if (count == mediaPathHits.Length) return true;
+            for (int index = 0; index < count; index++)
             {
+                RaycastHit hit = mediaPathHits[index];
                 Transform obstacle = hit.transform;
                 if (!obstacle || (screen && (obstacle == screen.transform || obstacle.IsChildOf(screen.transform)))
                     || (emitter && (obstacle == emitter || obstacle.IsChildOf(emitter)))

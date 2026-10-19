@@ -34,7 +34,7 @@ namespace SlopCity
         private readonly Dictionary<SlopCityCityScreen, ScreenState> displayLookup = new Dictionary<SlopCityCityScreen, ScreenState>();
         private readonly SlopCityMediaCoroutines mediaCoroutines = new SlopCityMediaCoroutines();
         private readonly Plane[] frustum = new Plane[6];
-        private readonly RaycastHit[] audioHits = new RaycastHit[16];
+        private readonly RaycastHit[] audioHits = new RaycastHit[96];
         private Camera viewCamera;
         private SlopCityMediaPlayer loungeMedia;
         private int activeDecoderLimit = ChannelCount;
@@ -887,14 +887,11 @@ namespace SlopCity
             Vector3 direction = (centre - listener.position).normalized;
             int count = Physics.RaycastNonAlloc(listener.position, direction, audioHits, distance - .15f,
                 Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore);
-            // Crowded city geometry must not hide a wall behind a truncated result buffer.
-            RaycastHit[] hits = count == audioHits.Length
-                ? Physics.RaycastAll(listener.position, direction, distance - .15f, Physics.DefaultRaycastLayers, QueryTriggerInteraction.Ignore)
-                : audioHits;
-            if (hits != audioHits) count = hits.Length;
+            // Saturation cannot establish an unobstructed path.
+            if (count == audioHits.Length) return true;
             for (int i = 0; i < count; i++)
             {
-                Transform hit = hits[i].transform;
+                Transform hit = audioHits[i].transform;
                 if (!hit || hit == screen.transform || hit.IsChildOf(screen.transform)
                     || hit == listener || hit.IsChildOf(listener)
                     || (viewer && (hit == viewer || hit.IsChildOf(viewer)))) continue;

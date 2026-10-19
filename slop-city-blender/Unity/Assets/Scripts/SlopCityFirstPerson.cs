@@ -43,6 +43,7 @@ namespace SlopCity
         private float pitch;
         private float verticalSpeed;
         private float ignoreLookUntil;
+        private readonly RaycastHit[] lineOfSightHits = new RaycastHit[48];
         private string feedback;
         private float feedbackUntil;
         private SlopCityMediaChannel selectedChannel;
@@ -424,7 +425,13 @@ namespace SlopCity
             if (verticalSpeed < 0f) verticalSpeed = -2f;
         }
 
-        /// <summary>Called once after a group of streamed rooms changes, never per rendered frame.</summary>
+        /// <summary>Lightweight sync after streamed collision changes; runs whenever physics syncs.</summary>
+        public void NotifyStreamedGeometryChanged()
+        {
+            if (sandbox) sandbox.RefreshWorldGeometryLight();
+        }
+
+        /// <summary>Full interaction rescan after streamed rooms change; throttled by the building world.</summary>
         public void RefreshWorldInteractions()
         {
             doors = FindObjectsByType<SlopCityDoor>(FindObjectsSortMode.None);
@@ -531,9 +538,13 @@ namespace SlopCity
             Vector3 offset = point - viewCamera.transform.position;
             float distance = offset.magnitude;
             if (distance < 0.05f) return true;
-            foreach (RaycastHit hit in Physics.RaycastAll(viewCamera.transform.position, offset / distance,
-                distance, ~0, QueryTriggerInteraction.Ignore))
+            Vector3 direction = offset / distance;
+            int count = Physics.RaycastNonAlloc(viewCamera.transform.position, direction, lineOfSightHits, distance,
+                ~0, QueryTriggerInteraction.Ignore);
+            if (count == lineOfSightHits.Length) return false;
+            for (int index = 0; index < count; index++)
             {
+                RaycastHit hit = lineOfSightHits[index];
                 if (hit.transform == transform || hit.transform.IsChildOf(transform)) continue;
                 if (door && (hit.collider == door.Blocker || (door.Leaf && hit.transform.IsChildOf(door.Leaf)))) continue;
                 // Media anchors sit just inside their physical props. Doors require

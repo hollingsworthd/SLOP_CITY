@@ -64,6 +64,8 @@ namespace SlopCity
         private readonly Dictionary<long, DrawBatch> batchLookup = new Dictionary<long, DrawBatch>();
         private readonly Plane[] frustum = new Plane[6];
         private readonly RaycastHit[] sweepHits = new RaycastHit[12];
+        private static readonly RaycastHit[] layoutGroundHits = new RaycastHit[16];
+        private static readonly RaycastHit[] layoutCapsuleHits = new RaycastHit[12];
         private readonly int[] gridHeads = new int[70 * 70];
         private float simulationTime;
         private Transform player;
@@ -279,11 +281,16 @@ namespace SlopCity
         {
             feet = hint;
             if (!Finite(hint.sqrMagnitude)) return false;
-            RaycastHit[] hits = Physics.RaycastAll(hint + Vector3.up * .70f, Vector3.down, 1.35f, ~0, QueryTriggerInteraction.Ignore);
+            int count = Physics.RaycastNonAlloc(hint + Vector3.up * .70f, Vector3.down, layoutGroundHits, 1.35f,
+                ~0, QueryTriggerInteraction.Ignore);
+            if (count == layoutGroundHits.Length) return false;
             float nearest = float.PositiveInfinity;
-            foreach (RaycastHit hit in hits)
+            for (int index = 0; index < count; index++)
+            {
+                RaycastHit hit = layoutGroundHits[index];
                 if (LayoutCollider(hit.collider, controller) && hit.normal.y > .78f && hit.distance < nearest)
                 { nearest = hit.distance; feet = hit.point + Vector3.up * .025f; }
+            }
             if (!Finite(nearest) || Mathf.Abs(feet.y - hint.y) > .24f) return false;
             foreach (Collider collider in Physics.OverlapCapsule(feet + Vector3.up * .34f, feet + Vector3.up * 1.64f, .32f,
                 ~0, QueryTriggerInteraction.Ignore))
@@ -303,9 +310,11 @@ namespace SlopCity
                 Vector3 hint = Vector3.Lerp(from, to, step / 4f);
                 if (!TryLayoutFeet(hint, controller, out Vector3 feet) || Mathf.Abs(feet.y - hint.y) > .10f) return false;
             }
-            foreach (RaycastHit hit in Physics.CapsuleCastAll(from + Vector3.up * .34f, from + Vector3.up * 1.64f, .32f,
-                delta.normalized, delta.magnitude, ~0, QueryTriggerInteraction.Ignore))
-                if (LayoutCollider(hit.collider, controller)) return false;
+            int blockers = Physics.CapsuleCastNonAlloc(from + Vector3.up * .34f, from + Vector3.up * 1.64f, .32f,
+                delta.normalized, layoutCapsuleHits, delta.magnitude, ~0, QueryTriggerInteraction.Ignore);
+            if (blockers == layoutCapsuleHits.Length) return false;
+            for (int index = 0; index < blockers; index++)
+                if (LayoutCollider(layoutCapsuleHits[index].collider, controller)) return false;
             return true;
         }
         private void OnEnable()

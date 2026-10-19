@@ -21,6 +21,9 @@ namespace SlopCity
         private SlopCityFirstPerson player;
         private float nextRefresh;
         private bool geometryChanged;
+        private bool pendingInteractionRefresh;
+        private float nextInteractionRefresh;
+        private const float InteractionRefreshInterval = 2.5f;
         private bool installed;
         private bool installationAttempted;
         private bool constrainedBrowser;
@@ -132,6 +135,7 @@ namespace SlopCity
             GeometryChanged();
             RefreshStreaming();
             FlushChanges();
+            TryFlushInteractionRefresh();
         }
 
         public void GeometryChanged() { geometryChanged = true; }
@@ -145,6 +149,7 @@ namespace SlopCity
                 // tick. Retire any authored solid core around that destination first.
                 foreach (SlopCityBuildingInterior item in buildings)
                     if (item && item.IsTower && item.ContainsHorizontal(point, 1f)) item.EnsureArchitecture();
+                nextInteractionRefresh = 0f;
                 FlushChanges();
                 return true;
             }
@@ -176,6 +181,7 @@ namespace SlopCity
                 RefreshStreaming();
             }
             FlushChanges();
+            TryFlushInteractionRefresh();
         }
 
         public void RefreshStreaming()
@@ -359,6 +365,17 @@ namespace SlopCity
             if (!geometryChanged) return;
             geometryChanged = false;
             Physics.SyncTransforms();
+            if (!player) return;
+            player.NotifyStreamedGeometryChanged();
+            pendingInteractionRefresh = true;
+            TryFlushInteractionRefresh();
+        }
+
+        private void TryFlushInteractionRefresh()
+        {
+            if (!pendingInteractionRefresh || Time.unscaledTime < nextInteractionRefresh) return;
+            pendingInteractionRefresh = false;
+            nextInteractionRefresh = Time.unscaledTime + InteractionRefreshInterval;
             if (player) player.RefreshWorldInteractions();
         }
 

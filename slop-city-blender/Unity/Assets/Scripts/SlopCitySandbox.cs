@@ -54,6 +54,9 @@ namespace SlopCity
         private float nextRefreshAt;
         private Target aimed;
         private bool initialized;
+        private bool legacyStreetInteractionsPrepared;
+        private static readonly RaycastHit[] feetRayHits = new RaycastHit[24];
+        private static readonly RaycastHit[] driveSupportHits = new RaycastHit[16];
         private SlopCityInteractable vehicle;
         private SlopCityInteractable restingAt;
         private Transform transitDestination;
@@ -77,8 +80,9 @@ namespace SlopCity
         private int[] webScenerySeen = Array.Empty<int>();
         private int webSceneryQuery;
         private bool webSceneryReady, webSceneryWarning;
-        private const int WebTargetHitCapacity = 192;
+        private const int WebTargetHitCapacity = 384;
         private readonly RaycastHit[] webTargetHits = new RaycastHit[WebTargetHitCapacity];
+        private readonly RaycastHit[] targetRayHits = new RaycastHit[96];
         private Camera webTargetCamera;
         private Ray webTargetRay;
         private int webTargetFrame = -1;
@@ -1012,6 +1016,15 @@ namespace SlopCity
             nextTargetAt = 0f;
         }
 
+        /// <summary>Invalidate aim/scenery after streamed collision without rescanning the whole city.</summary>
+        internal void RefreshWorldGeometryLight()
+        {
+            if (!initialized) return;
+            RefreshSalvageLight();
+            aimed = default;
+            nextTargetAt = 0f;
+        }
+
         private void RefreshSites()
         {
 #if (UNITY_WEBGL && !UNITY_EDITOR) || SLOP_CITY_WEB_INTERACTION_TEST
@@ -1021,23 +1034,27 @@ namespace SlopCity
 #endif
             // Diegetic guidance is visual only, never an inspectable city object.
             scenery = Array.FindAll(FindObjectsByType<Renderer>(FindObjectsSortMode.None),
-                renderer => !renderer.GetComponentInParent<SlopCityRabbitTrail>());
+                renderer => renderer && !renderer.GetComponentInParent<SlopCityRabbitTrail>());
             // Older scene exports get sensible interactions without requiring a rebuild.
-            foreach (Transform candidate in FindObjectsByType<Transform>(FindObjectsSortMode.None))
+            if (!legacyStreetInteractionsPrepared)
             {
-                if (!candidate || (user && candidate.IsChildOf(user)) || candidate.GetComponentInParent<SlopCityInteractable>()) continue;
-                string label = candidate.name;
-                SlopCityInteractionKind kind;
-                if (label == "City_Bench") kind = SlopCityInteractionKind.Bench;
-                else if (label == "Street_Lamp") kind = SlopCityInteractionKind.Light;
-                else if (label == "Litter_Bin") kind = SlopCityInteractionKind.Bin;
-                else if (label == "Parked_CityCar") kind = SlopCityInteractionKind.Car;
-                else if (label == "Tree_Trunk") kind = SlopCityInteractionKind.Plant;
-                else continue;
-                var item = candidate.gameObject.AddComponent<SlopCityInteractable>();
-                item.Configure(kind, Readable(label), kind != SlopCityInteractionKind.Car);
-                Renderer renderer = candidate.GetComponent<Renderer>();
-                if (renderer) item.ConfigureInteractionPoint(renderer.bounds.center);
+                foreach (Transform candidate in FindObjectsByType<Transform>(FindObjectsSortMode.None))
+                {
+                    if (!candidate || (user && candidate.IsChildOf(user)) || candidate.GetComponentInParent<SlopCityInteractable>()) continue;
+                    string label = candidate.name;
+                    SlopCityInteractionKind kind;
+                    if (label == "City_Bench") kind = SlopCityInteractionKind.Bench;
+                    else if (label == "Street_Lamp") kind = SlopCityInteractionKind.Light;
+                    else if (label == "Litter_Bin") kind = SlopCityInteractionKind.Bin;
+                    else if (label == "Parked_CityCar") kind = SlopCityInteractionKind.Car;
+                    else if (label == "Tree_Trunk") kind = SlopCityInteractionKind.Plant;
+                    else continue;
+                    var item = candidate.gameObject.AddComponent<SlopCityInteractable>();
+                    item.Configure(kind, Readable(label), kind != SlopCityInteractionKind.Car);
+                    Renderer renderer = candidate.GetComponent<Renderer>();
+                    if (renderer) item.ConfigureInteractionPoint(renderer.bounds.center);
+                }
+                legacyStreetInteractionsPrepared = true;
             }
             sites.Clear(); jobVehicles.Clear();
             foreach (SlopCityInteractable item in FindObjectsByType<SlopCityInteractable>(FindObjectsSortMode.None))
@@ -1225,11 +1242,10 @@ namespace SlopCity
             float closest = Reach;
 
             int count = Physics.RaycastNonAlloc(ray, webTargetHits, Reach, ~0, QueryTriggerInteraction.Ignore);
-            // Saturation must never hide a nearer blocker behind the player's
-            // own colliders; fall back to the complete set for this rare case.
-            RaycastHit[] hits = count == webTargetHits.Length
-                ? Physics.RaycastAll(ray, Reach, ~0, QueryTriggerInteraction.Ignore) : webTargetHits;
-            if (hits != webTargetHits) count = hits.Length;
+            // A full unordered buffer may omit a nearer wall. Keep this query
+            // allocation-free and refuse interaction until the ray is unambiguous.
+            if (count == webTargetHits.Length) return default;
+            RaycastHit[] hits = webTargetHits;
             for (int index = 0; index < count; index++)
             {
                 RaycastHit hit = hits[index];
@@ -1323,8 +1339,11 @@ namespace SlopCity
             Ray ray = new Ray(camera.transform.position, camera.transform.forward);
             float closest = Reach;
             bool doorBlocks = false;
-            foreach (RaycastHit hit in Physics.RaycastAll(ray, Reach, ~0, QueryTriggerInteraction.Ignore))
+            int hitCount = Physics.RaycastNonAlloc(ray, targetRayHits, Reach, ~0, QueryTriggerInteraction.Ignore);
+            if (hitCount == targetRayHits.Length) return default;
+            for (int index = 0; index < hitCount; index++)
             {
+                RaycastHit hit = targetRayHits[index];
                 if (!hit.transform || hit.transform == user || hit.transform.IsChildOf(user) || hit.distance >= closest) continue;
                 closest = hit.distance;
                 doorBlocks = hit.transform.GetComponentInParent<SlopCityDoor>();
@@ -1464,8 +1483,14 @@ namespace SlopCity
             {
                 // Cars cannot leave the supported street surface or drive off the edge of the map.
                 bool supported = false;
-                foreach (RaycastHit hit in Physics.RaycastAll(candidate + Vector3.up * .5f, Vector3.down, 1.2f, ~0, QueryTriggerInteraction.Ignore))
-                    if (hit.normal.y > .8f && !hit.transform.IsChildOf(car) && hit.transform != user && !hit.transform.IsChildOf(user)) { supported = true; break; }
+                int supportCount = Physics.RaycastNonAlloc(candidate + Vector3.up * .5f, Vector3.down, driveSupportHits, 1.2f,
+                    ~0, QueryTriggerInteraction.Ignore);
+                for (int supportIndex = 0; supportIndex < supportCount; supportIndex++)
+                {
+                    RaycastHit hit = driveSupportHits[supportIndex];
+                    if (hit.normal.y > .8f && !hit.transform.IsChildOf(car) && hit.transform != user && !hit.transform.IsChildOf(user))
+                    { supported = true; break; }
+                }
                 if (supported) { car.SetPositionAndRotation(candidate, rotation); TickVehicleFuel(car, move.magnitude); Physics.SyncTransforms(); }
                 else vehicleSpeed = 0f;
             }
@@ -1509,12 +1534,24 @@ namespace SlopCity
         private bool TrySafeFeet(Vector3 location, out Vector3 feet)
         {
             feet = location;
-            RaycastHit[] hits = Physics.RaycastAll(location + Vector3.up * 1.6f, Vector3.down, 3f, ~0, QueryTriggerInteraction.Ignore);
-            Array.Sort(hits, (a, b) => a.distance.CompareTo(b.distance));
-            foreach (RaycastHit hit in hits)
+            Vector3 origin = location + Vector3.up * 1.6f;
+            int count = Physics.RaycastNonAlloc(origin, Vector3.down, feetRayHits, 3f, ~0, QueryTriggerInteraction.Ignore);
+            if (count == feetRayHits.Length) return false;
+            while (count > 0)
             {
-                if (hit.normal.y < .75f || hit.transform == user || hit.transform.IsChildOf(user)) continue;
-                Vector3 candidate = hit.point + Vector3.up * .04f;
+                int nearest = -1;
+                float nearestDistance = float.PositiveInfinity;
+                for (int index = 0; index < count; index++)
+                {
+                    RaycastHit hit = feetRayHits[index];
+                    if (hit.distance >= nearestDistance || hit.normal.y < .75f || hit.transform == user || hit.transform.IsChildOf(user)) continue;
+                    nearest = index; nearestDistance = hit.distance;
+                }
+                if (nearest < 0) break;
+                RaycastHit chosen = feetRayHits[nearest];
+                feetRayHits[nearest] = feetRayHits[count - 1];
+                count--;
+                Vector3 candidate = chosen.point + Vector3.up * .04f;
                 bool blocked = false;
                 foreach (Collider collider in Physics.OverlapCapsule(candidate + Vector3.up * .27f,
                     candidate + Vector3.up * 1.5f, .23f, ~0, QueryTriggerInteraction.Ignore))

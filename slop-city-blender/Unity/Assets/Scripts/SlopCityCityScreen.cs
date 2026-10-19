@@ -122,13 +122,19 @@ namespace SlopCity
                 SlopCityCityMedia.Instance.RegisterScreen(this);
         }
 
+        internal static void PruneActiveScreens()
+        {
+            ActiveScreens.RemoveWhere(screen => !screen);
+        }
+
         internal static void RegisterActiveScreens(SlopCityCityMedia media)
         {
+            PruneActiveScreens();
             foreach (SlopCityCityScreen screen in ActiveScreens)
                 if (screen) media.RegisterScreen(screen);
         }
 
-        private void OnEnable() { ActiveScreens.Add(this); TryRegister(); }
+        private void OnEnable() { PruneActiveScreens(); ActiveScreens.Add(this); TryRegister(); }
         private void Start() { TryRegister(); }
         private void OnDisable()
         {

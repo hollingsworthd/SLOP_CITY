@@ -99,15 +99,27 @@ namespace SlopCity
             progress.pawnStock = pawnStock.ToArray();
             progress.objects = new SalvageRecord[objectRecords.Count]; objectRecords.Values.CopyTo(progress.objects, 0);
         }
-        private void RefreshSalvage()
+        private void RefreshSalvage() => RefreshSalvage(true);
+
+        /// <summary>Streamed floors admit salvage through Prepare and item events; avoid full scans every flush.</summary>
+        internal void RefreshSalvageLight()
+        {
+            RefreshSalvage(false);
+        }
+
+        private void RefreshSalvage(bool fullScan)
         {
             Transform city = GameObject.Find("SlopCity_NineBlocks")?.transform;
             if (city) SlopCitySalvagePreparation.Prepare(city);
-            Transform lounge = GameObject.Find("SlopCity_Lounge")?.transform;
-            if (lounge) SlopCitySalvagePreparation.PrepareHome(lounge);
+            if (fullScan)
+            {
+                Transform lounge = GameObject.Find("SlopCity_Lounge")?.transform;
+                if (lounge) SlopCitySalvagePreparation.PrepareHome(lounge);
+            }
             deadSalvageIds.Clear();
             foreach (var pair in salvageObjects) if (!pair.Value) deadSalvageIds.Add(pair.Key);
             foreach (string id in deadSalvageIds) salvageObjects.Remove(id);
+            if (!fullScan) return;
             foreach (SlopCitySalvageItem item in FindObjectsByType<SlopCitySalvageItem>(FindObjectsInactive.Include, FindObjectsSortMode.None)) AdmitSalvage(item);
         }
         private void AdmitSalvage(SlopCitySalvageItem item)
