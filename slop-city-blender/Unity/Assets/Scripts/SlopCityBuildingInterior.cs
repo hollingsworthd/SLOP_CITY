@@ -14,11 +14,15 @@ namespace SlopCity
         private float setbackHeight, height;
         private int serial, streamingFloor = -1;
         private int floorAdmissionAfterFrame;
-        private bool architectureReady, floorRetirementWarning;
+        private bool architectureReady, architectureShellReady, floorRetirementWarning;
         // Failed construction must retain its root even when native cleanup is refused.
         // Only one synchronous floor build can be pending for this building.
         private Transform failedFloorRoot;
         private int failedFloorIndex = -1;
+        private MeshFilter[] architectureRollbackFilters;
+        private HashSet<MeshFilter> architecturePreviousFilters;
+        private int architecturePreviousMeshCount, architectureAdmissionAfterFrame;
+        private Transform architectureNewShell, architectureNewEntrance;
         private readonly Dictionary<Renderer, bool> authoredRenderers = new Dictionary<Renderer, bool>();
         private readonly Dictionary<Collider, bool> authoredColliders = new Dictionary<Collider, bool>();
         private readonly Dictionary<Transform, Vector3> authoredRoofPositions = new Dictionary<Transform, Vector3>();
@@ -93,50 +97,36 @@ namespace SlopCity
         internal void EnsureArchitecture()
         {
             if (architectureReady || PreservedInterior) return;
+            if (architectureRollbackFilters != null && !RollbackArchitecture())
+                throw new InvalidOperationException("Failed building architecture is still retiring.");
+            if (Application.isPlaying && Time.frameCount < architectureAdmissionAfterFrame)
+                throw new InvalidOperationException("Building architecture retirement is completing this frame.");
             Transform core = transform.Find("Structural_Core");
             Transform upper = transform.Find("Setback_UpperShaft");
-            int previousMeshCount = ownedFacadeMeshes.Count;
-            var previousFilters = new HashSet<MeshFilter>(originalFacadeMeshes.Keys);
-            bool hadEntrance = transform.Find("Runtime_Persistent_Building_Entrance");
-            try
+            if (!architectureShellReady)
             {
-                TrimGroundFacade();
-                if (world && world.DeferTowerArchitecture) TrimEntranceCore(core);
-                BuildShell();
-            }
-            catch
-            {
-                foreach (MeshFilter filter in originalFacadeMeshes.Keys.Where(item => !previousFilters.Contains(item)).ToArray())
+                // Every trim changes an existing authored filter. Snapshot those owners
+                // before mutation so rollback needs no LINQ/array allocation under pressure.
+                MeshFilter[] rollbackFilters = transform.GetComponentsInChildren<MeshFilter>(true);
+                var previousFilters = new HashSet<MeshFilter>(originalFacadeMeshes.Keys);
+                architectureRollbackFilters = rollbackFilters;
+                architecturePreviousFilters = previousFilters;
+                architecturePreviousMeshCount = ownedFacadeMeshes.Count;
+                try
                 {
-                    if (filter) filter.sharedMesh = originalFacadeMeshes[filter];
-                    originalFacadeMeshes.Remove(filter);
+                    TrimGroundFacade();
+                    if (world && world.DeferTowerArchitecture) TrimEntranceCore(core);
+                    BuildShell();
                 }
-                // Streaming retries keep this component alive. Retire failed trim
-                // meshes here instead of retaining one more set on every attempt.
-                for (int index = ownedFacadeMeshes.Count - 1; index >= previousMeshCount; index--)
+                catch
                 {
-                    Mesh failed = ownedFacadeMeshes[index];
-                    if (failed) { if (Application.isPlaying) Destroy(failed); else DestroyImmediate(failed); }
-                    ownedFacadeMeshes.RemoveAt(index);
+                    RollbackArchitecture();
+                    throw;
                 }
-                Transform shell = transform.Find("Runtime_Hollow_Building_Shell");
-                if (shell)
-                {
-                    // Destroy is deferred in a player. A same-frame arrival must not
-                    // find this inactive old root instead of the replacement shell.
-                    shell.name = "Retired_Hollow_Building_Shell";
-                    SlopCityInteriorGeometry.Dispose(shell.gameObject);
-                }
-                if (!hadEntrance)
-                {
-                    Transform entrance = transform.Find("Runtime_Persistent_Building_Entrance");
-                    if (entrance)
-                    {
-                        entrance.name = "Retired_Persistent_Building_Entrance";
-                        SlopCityInteriorGeometry.Dispose(entrance.gameObject);
-                    }
-                }
-                throw;
+                architectureRollbackFilters = null; architecturePreviousFilters = null;
+                // Later authored-geometry cleanup can fail too. Its retry must finish
+                // this completed shell instead of admitting another native hierarchy.
+                architectureShellReady = true;
             }
             // Existing collision is retired only after its replacement shell is complete.
             if (upper) DisableAuthoredSolid(upper);
@@ -147,7 +137,69 @@ namespace SlopCity
                     || item.name == "Lobby_Glazing" || item.name == "Lobby_DoorRail") DisableAuthoredSolid(item);
             ClearRoofEquipment();
             architectureReady = true;
+            architectureNewShell = architectureNewEntrance = null;
             world.GeometryChanged();
+        }
+
+        private bool RollbackArchitecture()
+        {
+            bool pending = false;
+            // Removing dictionary entries is safe while walking the earlier array.
+            // Preserve all bindings and meshes that predate this exact attempt.
+            foreach (MeshFilter filter in architectureRollbackFilters)
+            {
+                if (ReferenceEquals(filter, null) || architecturePreviousFilters.Contains(filter)
+                    || !originalFacadeMeshes.TryGetValue(filter, out Mesh original)) continue;
+                try
+                {
+                    if (filter) filter.sharedMesh = original;
+                    originalFacadeMeshes.Remove(filter);
+                }
+                catch (Exception error) { pending = true; WarnFloorRetirement(error); }
+            }
+            for (int index = ownedFacadeMeshes.Count - 1; index >= architecturePreviousMeshCount; index--)
+            {
+                Mesh mesh = ownedFacadeMeshes[index];
+                bool stillBound = false;
+                foreach (MeshFilter filter in architectureRollbackFilters)
+                {
+                    if (ReferenceEquals(filter, null) || architecturePreviousFilters.Contains(filter)
+                        || !originalFacadeMeshes.ContainsKey(filter)) continue;
+                    try { if (filter && filter.sharedMesh == mesh) { stillBound = true; break; } }
+                    catch (Exception error) { stillBound = true; WarnFloorRetirement(error); break; }
+                }
+                if (stillBound) { pending = true; continue; }
+                try
+                {
+                    if (mesh) { if (Application.isPlaying) Destroy(mesh); else DestroyImmediate(mesh); }
+                    ownedFacadeMeshes.RemoveAt(index);
+                }
+                catch (Exception error) { pending = true; WarnFloorRetirement(error); }
+            }
+            if (!RetireArchitectureRoot(ref architectureNewShell, "Retired_Hollow_Building_Shell")) pending = true;
+            if (!RetireArchitectureRoot(ref architectureNewEntrance, "Retired_Persistent_Building_Entrance")) pending = true;
+            if (pending) return false;
+            architectureRollbackFilters = null; architecturePreviousFilters = null;
+            if (Application.isPlaying) architectureAdmissionAfterFrame = Time.frameCount + 1;
+            return true;
+        }
+
+        private bool RetireArchitectureRoot(ref Transform owner, string retiredName)
+        {
+            if (!owner) { owner = null; return true; }
+            try
+            {
+                try { owner.name = retiredName; }
+                finally { SlopCityInteriorGeometry.Dispose(owner.gameObject); }
+                owner = null;
+                return true;
+            }
+            catch (Exception error)
+            {
+                WarnFloorRetirement(error);
+                if (!owner) { owner = null; return true; }
+                return false;
+            }
         }
 
         private static void ValidateDimensions(Vector3 dimensions)
@@ -234,7 +286,7 @@ namespace SlopCity
                 {
                     SlopCityInteriorBroadcast.ReleaseFloor(root);
                     root.GetComponent<SlopCityInteriorFurnishing>()?.Release();
-                    root.name = "Retired_Floor_" + floor + "_" + root.GetInstanceID();
+                    root.name = "Retired_Runtime_Floor_" + floor + "_" + root.GetInstanceID();
                     SlopCityInteriorGeometry.Dispose(root.gameObject);
                     DeferFloorAdmission();
                 }
@@ -263,8 +315,12 @@ namespace SlopCity
                         try { root.GetComponent<SlopCityInteriorFurnishing>()?.Release(); }
                         finally
                         {
-                            SlopCityInteriorGeometry.Dispose(root.gameObject);
-                            disposedRoot = true;
+                            try { root.name = "Retired_Runtime_Floor_" + failedFloorIndex + "_" + root.GetInstanceID(); }
+                            finally
+                            {
+                                SlopCityInteriorGeometry.Dispose(root.gameObject);
+                                disposedRoot = true;
+                            }
                         }
                     }
                 }
@@ -410,17 +466,14 @@ namespace SlopCity
             foreach (var entry in authoredColliders) if (entry.Key) entry.Key.enabled = entry.Value;
             foreach (var entry in authoredRoofPositions) if (entry.Key) entry.Key.localPosition = entry.Value;
             authoredRenderers.Clear(); authoredColliders.Clear(); authoredRoofPositions.Clear();
-            Transform shell = transform.Find("Runtime_Hollow_Building_Shell");
-            if (shell)
-                {
-                    // Destroy is deferred in a player. A same-frame arrival must not
-                    // find this inactive old root instead of the replacement shell.
-                    shell.name = "Retired_Hollow_Building_Shell";
-                    SlopCityInteriorGeometry.Dispose(shell.gameObject);
-                }
+            // A refused native retirement must keep the exact renamed shell reachable;
+            // looking up only its former name on retry would lose its ownership.
+            if (!architectureNewShell) architectureNewShell = transform.Find("Runtime_Hollow_Building_Shell");
+            if (!RetireArchitectureRoot(ref architectureNewShell, "Retired_Hollow_Building_Shell")) return false;
             // The small persistent entrance owns the original hinge/door component;
             // its rotation, obstruction state and target are never recreated or reset.
-            architectureReady = false;
+            architectureReady = false; architectureShellReady = false;
+            if (Application.isPlaying) architectureAdmissionAfterFrame = Time.frameCount + 1;
             world.GeometryChanged();
             return true;
         }
@@ -447,6 +500,7 @@ namespace SlopCity
         private void BuildShell()
         {
             Transform shell = SlopCityInteriorGeometry.Root(transform, "Runtime_Hollow_Building_Shell");
+            architectureNewShell = shell;
             ShellTier(shell, lowerSize, .08f, setbackHeight, true);
             if (height > setbackHeight + .01f)
             {
@@ -473,6 +527,7 @@ namespace SlopCity
                     return;
                 }
                 entrance = SlopCityInteriorGeometry.Root(transform, "Runtime_Persistent_Building_Entrance");
+                architectureNewEntrance = entrance;
             }
             SlopCityInteriorGeometry.Sign(entrance, "SLOP CITY™\n" + Purpose.ToUpperInvariant(), new Vector3(0, 2.75f, -lowerSize.y / 2 - .12f), .15f);
             SlopCityInteriorGeometry.Root(entrance, "Entrance_Circulation_Point", new Vector3(0, .095f, -lowerSize.y / 2 + .6f));
@@ -704,12 +759,46 @@ namespace SlopCity
 
         private void OnDestroy()
         {
+            // Initialization failure can remove this component while its authored
+            // tower survives. Restore authored state independently, then retire only
+            // the new roots still owned by incomplete architecture initialization.
+            foreach (var entry in authoredRenderers)
+            {
+                try { if (entry.Key) entry.Key.enabled = entry.Value; }
+                catch (Exception error) { WarnFloorRetirement(error); }
+            }
+            foreach (var entry in authoredColliders)
+            {
+                try { if (entry.Key) entry.Key.enabled = entry.Value; }
+                catch (Exception error) { WarnFloorRetirement(error); }
+            }
+            foreach (var entry in authoredRoofPositions)
+            {
+                try { if (entry.Key) entry.Key.localPosition = entry.Value; }
+                catch (Exception error) { WarnFloorRetirement(error); }
+            }
+            RetireArchitectureRoot(ref architectureNewShell, "Retired_Hollow_Building_Shell");
+            RetireArchitectureRoot(ref architectureNewEntrance, "Retired_Persistent_Building_Entrance");
+            ReleaseFailedFloor();
             foreach (var entry in originalFacadeMeshes)
-                if (entry.Key && ownedFacadeMeshes.Contains(entry.Key.sharedMesh)) entry.Key.sharedMesh = entry.Value;
+            {
+                try
+                {
+                    if (entry.Key && ownedFacadeMeshes.Contains(entry.Key.sharedMesh)) entry.Key.sharedMesh = entry.Value;
+                }
+                catch (Exception error) { WarnFloorRetirement(error); }
+            }
             originalFacadeMeshes.Clear();
-            foreach (Mesh mesh in ownedFacadeMeshes)
-                if (mesh) { if (Application.isPlaying) Destroy(mesh); else DestroyImmediate(mesh); }
-            ownedFacadeMeshes.Clear();
+            for (int index = ownedFacadeMeshes.Count - 1; index >= 0; index--)
+            {
+                try
+                {
+                    Mesh mesh = ownedFacadeMeshes[index];
+                    if (mesh) { if (Application.isPlaying) Destroy(mesh); else DestroyImmediate(mesh); }
+                    ownedFacadeMeshes.RemoveAt(index);
+                }
+                catch (Exception error) { WarnFloorRetirement(error); }
+            }
         }
 
         private void ShellTier(Transform shell, Vector2 size, float bottom, float top, bool entrance)

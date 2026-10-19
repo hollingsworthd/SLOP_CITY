@@ -184,14 +184,27 @@ namespace SlopCity
             }
             catch
             {
-                foreach (Transform child in originals) if (child) child.SetParent(transform, false);
-                foreach (AuthoredUiState state in authored) state.Restore();
-                var discarded = new System.Collections.Generic.List<GameObject>();
-                foreach (Transform child in transform) if (!originals.Contains(child)) discarded.Add(child.gameObject);
-                foreach (GameObject child in discarded) { child.SetActive(false); Destroy(child); }
-                if (rabbitTrail) { rabbitTrail.gameObject.SetActive(false); Destroy(rabbitTrail.gameObject); rabbitTrail = null; }
-                if (sourceBrowser) { sourceBrowser.enabled = false; Destroy(sourceBrowser); sourceBrowser = null; }
-                if (createdEvents) { createdEvents.SetActive(false); Destroy(createdEvents); }
+                initialized = false;
+                foreach (Transform child in originals)
+                    try { if (child) child.SetParent(transform, false); }
+                    catch (System.Exception error) { Debug.LogWarning("HUD parent restoration failed: " + error.GetType().Name, this); }
+                foreach (AuthoredUiState state in authored)
+                    try { state.Restore(); }
+                    catch (System.Exception error) { Debug.LogWarning("HUD restoration failed: " + error.GetType().Name, this); }
+                // Cleanup follows allocation failure: do not allocate another
+                // list just to find the newly created children.
+                for (int i = transform.childCount - 1; i >= 0; i--)
+                {
+                    Transform child = transform.GetChild(i);
+                    if (!originals.Contains(child)) RetireUi(child.gameObject);
+                }
+                if (rabbitTrail) { RetireUi(rabbitTrail.gameObject); rabbitTrail = null; }
+                if (sourceBrowser)
+                {
+                    try { sourceBrowser.enabled = false; }
+                    finally { Destroy(sourceBrowser); sourceBrowser = null; }
+                }
+                RetireUi(createdEvents);
                 if (promptLabel && !originalShadow)
                 {
                     Shadow shadow = promptLabel.GetComponent<Shadow>();
@@ -260,7 +273,7 @@ namespace SlopCity
         private void StyleGameplayLayer()
         {
             gameplayLayer = new GameObject("VisorTelemetry", typeof(RectTransform));
-            gameplayLayer.transform.SetParent(transform, false);
+            ParentUi(gameplayLayer, transform);
             Stretch(gameplayLayer.GetComponent<RectTransform>());
             var original = new System.Collections.Generic.List<Transform>();
             foreach (Transform child in transform) if (child != gameplayLayer.transform) original.Add(child);
@@ -825,10 +838,25 @@ namespace SlopCity
 
 
 
+        private static void ParentUi(GameObject item, Transform parent)
+        {
+            try { item.transform.SetParent(parent, false); }
+            catch { RetireUi(item); throw; }
+        }
+
+        private static void RetireUi(GameObject item)
+        {
+            if (!item) return;
+            try { item.SetActive(false); }
+            catch (System.Exception error) { Debug.LogWarning("HUD deactivation failed: " + error.GetType().Name); }
+            try { Destroy(item); }
+            catch (System.Exception error) { Debug.LogWarning("HUD cleanup failed: " + error.GetType().Name); }
+        }
+
         private GameObject FullScreenPanel(string name, Color color)
         {
             GameObject obj = new GameObject(name, typeof(RectTransform), typeof(Image));
-            obj.transform.SetParent(transform, false);
+            ParentUi(obj, transform);
             Stretch(obj.GetComponent<RectTransform>());
             obj.GetComponent<Image>().color = color;
             return obj;
@@ -843,7 +871,7 @@ namespace SlopCity
         private RectTransform Panel(Transform parent, string name, Vector2 size, Color color)
         {
             GameObject obj = new GameObject(name, typeof(RectTransform), typeof(Image));
-            obj.transform.SetParent(parent, false);
+            ParentUi(obj, parent);
             RectTransform rect = obj.GetComponent<RectTransform>();
             rect.anchorMin = rect.anchorMax = rect.pivot = new Vector2(.5f,.5f); rect.sizeDelta = size;
             obj.GetComponent<Image>().color = color;
@@ -875,7 +903,7 @@ namespace SlopCity
             Vector2 anchor, Vector2 pivot, Vector2 position, Vector2 dimensions, Color color)
         {
             GameObject obj = new GameObject(name, typeof(RectTransform), typeof(Text));
-            obj.transform.SetParent(parent, false);
+            ParentUi(obj, parent);
             RectTransform rect = obj.GetComponent<RectTransform>();
             rect.anchorMin = rect.anchorMax = anchor; rect.pivot = pivot;
             rect.anchoredPosition = position; rect.sizeDelta = dimensions;

@@ -21,10 +21,22 @@ namespace SlopCity
         public static GameObject Create(Transform parent, SlopCityPlayerInput source, Font font)
         {
             var root = new GameObject("MobileControls", typeof(RectTransform), typeof(SlopCityMobileControls));
-            root.transform.SetParent(parent, false);
-            Fill(root.GetComponent<RectTransform>(), Vector2.zero, Vector2.one);
-            root.GetComponent<SlopCityMobileControls>().Build(source, font);
-            return root;
+            try
+            {
+                SlopCityMobileControls controls = root.GetComponent<SlopCityMobileControls>();
+                controls.enabled = false;
+                root.transform.SetParent(parent, false);
+                Fill(root.GetComponent<RectTransform>(), Vector2.zero, Vector2.one);
+                controls.Build(source, font);
+                controls.enabled = true;
+                return root;
+            }
+            catch
+            {
+                try { root.SetActive(false); }
+                finally { Destroy(root); }
+                throw;
+            }
         }
 
         private void Build(SlopCityPlayerInput source, Font font)
@@ -137,7 +149,11 @@ namespace SlopCity
         private static void Position(RectTransform rect,Vector2 anchor,Vector2 position,float size)
         { rect.anchorMin=rect.anchorMax=anchor;rect.anchoredPosition=position;rect.sizeDelta=Vector2.one*size; }
         private static RectTransform Rect(string name,Transform parent)
-        { var go=new GameObject(name,typeof(RectTransform));go.transform.SetParent(parent,false);return go.GetComponent<RectTransform>(); }
+        {
+            var go=new GameObject(name,typeof(RectTransform));
+            try { go.transform.SetParent(parent,false); return go.GetComponent<RectTransform>(); }
+            catch { Destroy(go); throw; }
+        }
         private static void Fill(RectTransform rect,Vector2 min,Vector2 max)
         { rect.anchorMin=min;rect.anchorMax=max;rect.offsetMin=rect.offsetMax=Vector2.zero; }
         private static Sprite MakeDisc()

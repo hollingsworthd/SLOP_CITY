@@ -24,7 +24,7 @@ namespace SlopCity
         private readonly GameObject[] portions = new GameObject[BitesPerMeal];
         private int bitesRemaining;
         private float readyAt;
-        private bool initialized, served;
+        private bool initialized, served, ownsGeometry;
         private bool ownsTarget;
         private SlopCityInteractionKind priorKind;
         private string priorLabel;
@@ -74,7 +74,17 @@ namespace SlopCity
             // Static batching can replace renderer bounds with a combined city's
             // bounds. The authored physical table collider retains its exact extent.
             if (!surface || !surface.enabled) return;
-            furniture.gameObject.AddComponent<SlopCitySteakTable>().Initialize(player, venue, label, sign, surface.bounds);
+            var service = furniture.gameObject.AddComponent<SlopCitySteakTable>();
+            try { service.Initialize(player, venue, label, sign, surface.bounds); }
+            catch (System.Exception error)
+            {
+                // A partial place setting must never become a usable dining
+                // target, nor keep its shared geometry user alive indefinitely.
+                service.enabled = false;
+                try { service.ReleaseInstallation(); }
+                finally { Release(service); }
+                Debug.LogWarning("Steak service could not initialize: " + error.Message, furniture);
+            }
         }
 
         private void Initialize(SlopCityFirstPerson player, Transform venue, string label, string sign, Bounds tableBounds)
@@ -83,13 +93,14 @@ namespace SlopCity
             VenueName = label;
             if (geometry == null) geometry = new Geometry();
             resourceUsers++;
-            initialized = true;
-            tables.Add(this);
+            ownsGeometry = true;
             setting = new GameObject(TableName).transform;
             setting.SetParent(transform, false);
             setting.position = new Vector3(tableBounds.center.x, tableBounds.max.y - .83f + .005f, tableBounds.center.z);
             setting.rotation = venue.rotation;
             Vector3 inherited = transform.lossyScale;
+            if (!FiniteScale(inherited.x) || !FiniteScale(inherited.y) || !FiniteScale(inherited.z))
+                throw new System.InvalidOperationException("Dining furniture requires finite nonzero scale.");
             setting.localScale = new Vector3(1f / inherited.x, 1f / inherited.y, 1f / inherited.z);
             target = GetComponent<SlopCityInteractable>();
             ownsTarget = !target;
@@ -114,6 +125,8 @@ namespace SlopCity
                 Shape(portion, "Sear_And_Grill_Marks", geometry.marks[index], geometry.charcoal);
                 portions[index].SetActive(false);
             }
+            tables.Add(this);
+            initialized = true;
         }
 
         private void AddMenu(Transform venue, string sign)
@@ -197,22 +210,34 @@ namespace SlopCity
             return shape;
         }
 
-        private void OnDestroy()
+        private static bool FiniteScale(float value)
+            => !float.IsNaN(value) && !float.IsInfinity(value) && Mathf.Abs(value) > .0001f;
+
+        private void OnDestroy() { ReleaseInstallation(); }
+
+        private void ReleaseInstallation()
         {
             tables.Remove(this);
-            if (!initialized) return;
+            if (!ownsGeometry) return;
+            ownsGeometry = false;
             initialized = false;
-            if (setting) Release(setting.gameObject);
-            if (target)
+            try
             {
-                if (ownsTarget) Release(target);
-                else
+                if (setting) Release(setting.gameObject);
+                if (target)
                 {
-                    target.Configure(priorKind, priorLabel, priorEligibility);
-                    target.ConfigureInteractionPoint(priorPoint);
+                    if (ownsTarget) Release(target);
+                    else
+                    {
+                        target.Configure(priorKind, priorLabel, priorEligibility);
+                        target.ConfigureInteractionPoint(priorPoint);
+                    }
                 }
             }
-            if (--resourceUsers == 0 && geometry != null) { geometry.Dispose(); geometry = null; }
+            finally
+            {
+                if (--resourceUsers == 0 && geometry != null) { geometry.Dispose(); geometry = null; }
+            }
         }
 
         private static void Release(Object asset)

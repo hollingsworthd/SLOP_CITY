@@ -72,9 +72,10 @@ namespace SlopCity
         private bool configured;
         private MatrixWardrobe wardrobe;
         private bool wardrobeAllocationFailed;
+        private bool renderingAllocationFailed;
         private Material failedWardrobeSource;
         private int redContactCount;
-        private readonly SlopCityLocalAgent localAgents = new SlopCityLocalAgent();
+        private SlopCityLocalAgent localAgents = new SlopCityLocalAgent();
         public event Action<string, string> LocalAgentReportRequested;
 #if UNITY_WEBGL && !UNITY_EDITOR
         private const float BrowserSimulationStep = .05f;
@@ -197,9 +198,7 @@ namespace SlopCity
             }
             SlopCityCrowdRoute[] priorRoutes = routes;
             SlopCityNpcSeed[] priorPopulation = population;
-            Agent[] priorAgents = agents;
             bool priorConfigured = configured;
-            float priorTime = simulationTime;
             try
             {
                 routes = replacements; population = people; configured = false;
@@ -207,8 +206,9 @@ namespace SlopCity
             }
             catch
             {
-                routes = priorRoutes; population = priorPopulation; agents = priorAgents;
-                configured = priorConfigured; simulationTime = priorTime;
+                // Registry construction commits atomically; only these inputs changed.
+                routes = priorRoutes; population = priorPopulation;
+                configured = priorConfigured;
                 throw;
             }
             LayoutRevalidated = true;
@@ -610,7 +610,7 @@ namespace SlopCity
         public bool IsResidentPresented(int index)=>IsPresented(index);
         private void RenderCrowd(Camera camera)
         {
-            if (!isActiveAndEnabled || !camera || camera.cameraType == CameraType.Preview || !SystemInfo.supportsInstancing) return;
+            if (renderingAllocationFailed || !isActiveAndEnabled || !camera || camera.cameraType == CameraType.Preview || !SystemInfo.supportsInstancing) return;
             if(Application.isPlaying && camera != (playerController?playerController.ViewCamera:Camera.main))return;
             EnsureAgents();
             if (visuals == null || visuals.parts == null || visuals.parts.Length < 20 || visuals.clothing == null || visuals.clothing.Length == 0
@@ -716,6 +716,7 @@ namespace SlopCity
         }
         private void DrawBatches(Camera camera)
         {
+            if (renderingAllocationFailed) return;
             foreach (DrawBatch batch in batches)
                 if (batch.count > 0 && batch.mesh && batch.material && batch.material.enableInstancing)
                 {
@@ -738,9 +739,21 @@ namespace SlopCity
         }
         private bool ReservePerson(Agent person, bool details)
         {
+            if (renderingAllocationFailed) return false;
             foreach(DrawBatch batch in batches)batch.reserved=0;
             pendingPartCount=reservedVertices=0;reserveOnly=true;reservationFailed=false;
-            try{RenderPerson(person,details);}finally{reserveOnly=false;}
+            try { RenderPerson(person, details); }
+            catch (OutOfMemoryException)
+            {
+                // Matrix/batch growth is attempted from a recurring camera
+                // callback. A failed admission must not retry every frame.
+                renderingAllocationFailed = true;
+                Array.Clear(pendingParts, 0, pendingParts.Length); pendingPartCount = 0;
+                lastPresentationFrame = -1; PresentedCount = WholePeopleDeferred = 0;
+                Debug.LogWarning("Crowd draw buffers could not grow; retry requires reconfiguration or re-enabling.", this);
+                return false;
+            }
+            finally { reserveOnly = false; }
             return !reservationFailed;
         }
         private void CommitReservedPerson()
@@ -868,6 +881,7 @@ namespace SlopCity
         private void ReleaseWardrobe()
         {
             wardrobeAllocationFailed = false; failedWardrobeSource = null;
+            renderingAllocationFailed = false;
             Array.Clear(pendingParts,0,pendingParts.Length);pendingPartCount=0;
             batches.Clear(); batchLookup.Clear();
             if (wardrobe == null) return;
@@ -1333,7 +1347,9 @@ namespace SlopCity
                     matrices = new Matrix4x4[16],
                     hipPoses=(wardrobe != null && wardrobe.animatedTrousers && (mesh==wardrobe.trouserYokeMesh||mesh==wardrobe.coarseTrouserMesh||mesh==wardrobe.dressMesh||mesh==wardrobe.coarseDressMesh))?new Vector4[1023]:null,
                     properties=(wardrobe != null && wardrobe.animatedTrousers && (mesh==wardrobe.trouserYokeMesh||mesh==wardrobe.coarseTrouserMesh||mesh==wardrobe.dressMesh||mesh==wardrobe.coarseDressMesh))?new MaterialPropertyBlock():null };
-                batchLookup.Add(key, batch); batches.Add(batch);
+                batchLookup.Add(key, batch);
+                try { batches.Add(batch); }
+                catch { batchLookup.Remove(key); throw; }
             }
             if(reserveOnly)
             {

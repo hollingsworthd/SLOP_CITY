@@ -11,6 +11,7 @@ namespace SlopCity
         public const float SunElevation = 38f;
         [SerializeField] private Material originalSky;
         [SerializeField] private Material eveningSky;
+        private bool ownsEveningSky;
         public Material OriginalSky => originalSky;
         public Material EveningSky => eveningSky;
 
@@ -65,7 +66,10 @@ namespace SlopCity
 
             if (!originalSky && RenderSettings.skybox != eveningSky) originalSky = RenderSettings.skybox;
             if (!eveningSky && originalSky)
+            {
                 eveningSky = new Material(originalSky);
+                ownsEveningSky = true;
+            }
             if (eveningSky && originalSky)
             {
                 // The retained HDR photograph contains blue sky and real white cumulus.
@@ -85,6 +89,9 @@ namespace SlopCity
         {
             if (!eveningSky) return;
             if (RenderSettings.skybox == eveningSky) RenderSettings.skybox = originalSky;
+            // Prepared scenes borrow their serialized sky material. Only a
+            // clone allocated by this live component belongs to its teardown.
+            if (!ownsEveningSky) return;
             if (Application.isPlaying) Destroy(eveningSky); else DestroyImmediate(eveningSky);
         }
     }

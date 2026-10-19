@@ -23,32 +23,70 @@ namespace SlopCity
             public Transform dustyTarget;
             public SlopCityJobDevice remoteControl;
             public Transform remotePane,arrivalRoot,installedRoot;
+            internal Transform failedAssemblyRoot;
+            internal bool assemblyRetirementQueued;
         }
         private readonly Site[] sites = new Site[40];
         private readonly Collider[] overlaps = new Collider[64];
         private readonly RaycastHit[] groundHits = new RaycastHit[32];
         private MaterialPropertyBlock properties;
         private SlopCitySandbox owner;
+        private bool initialized, constructionFailed, hostRetirementQueued;
         private Vector3 candidateCarStaging;
-        public Site Get(int mechanic) => mechanic >= 0 && mechanic < sites.Length ? sites[mechanic] : null;
+        public Site Get(int mechanic) => initialized && mechanic >= 0 && mechanic < sites.Length ? sites[mechanic] : null;
         public static SlopCityJobWorld Ensure(SlopCitySandbox sandbox)
         {
-            foreach (var candidate in UnityEngine.Object.FindObjectsByType<SlopCityJobWorld>(FindObjectsSortMode.None))
-                if (candidate.owner == sandbox) return candidate;
+            foreach (var candidate in UnityEngine.Object.FindObjectsByType<SlopCityJobWorld>(FindObjectsInactive.Include,FindObjectsSortMode.None))
+            {
+                if(candidate.owner!=sandbox)continue;
+                if(candidate.initialized)return candidate;
+                if(!candidate.constructionFailed)throw new InvalidOperationException("Physical worksites are already being constructed.");
+                candidate.Release(sandbox);
+                // Destroy is deferred while playing. Keep this owner until the
+                // failed host is actually gone; never return it as a ready world.
+                if(candidate)throw new InvalidOperationException("Failed physical worksites are still retiring.");
+            }
             var host = new GameObject("SlopCity_Physical_Worksites");
-            var city = GameObject.Find("SlopCity_NineBlocks"); if (city) host.transform.SetParent(city.transform, false);
-            var world = host.AddComponent<SlopCityJobWorld>(); world.owner = sandbox;
-            SlopCityInteriorGeometry.Initialize();
-            for (int i = 0; i < sitesLength; i++) world.Build(i);
-            return world;
+            SlopCityJobWorld world = null;
+            try
+            {
+                world = host.AddComponent<SlopCityJobWorld>(); world.owner = sandbox;
+                var city = GameObject.Find("SlopCity_NineBlocks"); if (city) host.transform.SetParent(city.transform, false);
+                SlopCityInteriorGeometry.Initialize();
+                for (int i = 0; i < sitesLength; i++) world.Build(i);
+                world.initialized = true;
+                return world;
+            }
+            catch
+            {
+                if(world){world.constructionFailed=true;world.RetireFailedHost();}
+                else Retire(host);
+                throw;
+            }
+        }
+        private void RetireFailedHost()
+        {
+            if(hostRetirementQueued)return;
+            initialized=false;
+            Retire(gameObject);
+            hostRetirementQueued=true;
         }
         public void Release(SlopCitySandbox expectedOwner)
         {
             if(!ReferenceEquals(owner,expectedOwner))return;
-            foreach(var device in UnityEngine.Object.FindObjectsByType<SlopCityJobDevice>(FindObjectsInactive.Include,FindObjectsSortMode.None))
-                if(device.World==this&&device.External){if(Application.isPlaying)Destroy(device);else DestroyImmediate(device);}
-            gameObject.SetActive(false);owner=null;
-            if(Application.isPlaying)Destroy(gameObject);else DestroyImmediate(gameObject);
+            initialized=false;constructionFailed=true;
+            try
+            {
+                Exception failure=null;
+                foreach(var device in UnityEngine.Object.FindObjectsByType<SlopCityJobDevice>(FindObjectsInactive.Include,FindObjectsSortMode.None))
+                    if(device&&device.World==this&&device.External)
+                    {
+                        try {if(Application.isPlaying)Destroy(device);else DestroyImmediate(device);}
+                        catch(Exception error){if(failure==null)failure=error;}
+                    }
+                if(failure!=null)throw failure;
+            }
+            finally {RetireFailedHost();}
         }
         private const int sitesLength = 40;
         private void Build(int mechanic)
@@ -56,100 +94,109 @@ namespace SlopCity
             Vector3 position;
             if (!FindPlace(mechanic, out position))
             { Debug.LogWarning("No clear physical work site for " + SlopCityJobCatalog.All[mechanic].id); return; }
-            var site = new Site(); sites[mechanic] = site;
-            site.root = Root(transform, "CityWork_" + SlopCityJobCatalog.All[mechanic].id, position);
-            site.root.position = position;
-            if(mechanic==13||mechanic==18)
+            var site = new Site();
+            try
             {
-                site.vehicleStaging=candidateCarStaging;
-                Box(site.root,"Roadside_Loading_Mark",candidateCarStaging-position+Vector3.up*.012f,new Vector3(4.1f,.008f,1.9f),SlopCityInteriorGeometry.Accent,false);
-            }
-            Box(site.root, "Service_Plinth", new Vector3(0,.045f,0), new Vector3(2.8f,.09f,1.45f), SlopCityInteriorGeometry.Floor, true);
-            site.status = Label(site.root, SlopCityJobCatalog.All[mechanic].title, new Vector3(-1.3f,1.7f,.53f), .065f);
-            // Eight separate reachable controls. Their bodies/positions change below by mechanism.
-            for (int slot = 0; slot < ControlCount; slot++)
-            {
-                Vector3 point = new Vector3(-1.16f + (slot % 4) * .76f, .42f + (slot / 4) * .47f, -.43f);
-                GameObject control = Box(site.root, "Work_Control_" + slot, point, new Vector3(.43f,.26f,.18f), SlopCityInteriorGeometry.Metal, true);
-                site.controls[slot] = control.AddComponent<SlopCityJobDevice>();
-                site.controls[slot].Configure(this, mechanic, slot, "Work control " + slot);
-            }
-            int form = Form(mechanic);
-            if (form == 0) // letter supply tray; actual district mailboxes are used as destinations
-                for (int i = 0; i < 3; i++)
+                site.root = Root(transform, "CityWork_" + SlopCityJobCatalog.All[mechanic].id, position);
+                site.root.position = position;
+                if(mechanic==13||mechanic==18)
                 {
-                    site.pieces[i] = Box(site.root, "Addressed_Letter_" + (i+1), new Vector3(-.86f+i*.86f,1.1f,.25f), new Vector3(.45f,.05f,.3f), SlopCityInteriorGeometry.Wall,false).transform;
-                    Label(site.pieces[i], "TO " + (i+1), new Vector3(-.2f,.08f,-.1f), .046f);
+                    site.vehicleStaging=candidateCarStaging;
+                    Box(site.root,"Roadside_Loading_Mark",candidateCarStaging-position+Vector3.up*.012f,new Vector3(4.1f,.008f,1.9f),SlopCityInteriorGeometry.Accent,false);
                 }
-            else if (form == 1) // complete removable window and its frame
-            {
-                for (int side = -1; side <= 1; side+=2)
+                Box(site.root, "Service_Plinth", new Vector3(0,.045f,0), new Vector3(2.8f,.09f,1.45f), SlopCityInteriorGeometry.Floor, true);
+                site.status = Label(site.root, SlopCityJobCatalog.All[mechanic].title, new Vector3(-1.3f,1.7f,.53f), .065f);
+                // Eight separate reachable controls. Their bodies/positions change below by mechanism.
+                for (int slot = 0; slot < ControlCount; slot++)
                 {
-                    Box(site.root,"Window_Frame",new Vector3(side*.66f,1.05f,.3f),new Vector3(.08f,1.35f,.12f),SlopCityInteriorGeometry.Metal,true);
-                    Box(site.root,"Window_Frame",new Vector3(0,1.05f+side*.65f,.3f),new Vector3(1.4f,.08f,.12f),SlopCityInteriorGeometry.Metal,true);
+                    Vector3 point = new Vector3(-1.16f + (slot % 4) * .76f, .42f + (slot / 4) * .47f, -.43f);
+                    GameObject control = Box(site.root, "Work_Control_" + slot, point, new Vector3(.43f,.26f,.18f), SlopCityInteriorGeometry.Metal, true);
+                    site.controls[slot] = control.AddComponent<SlopCityJobDevice>();
+                    site.controls[slot].Configure(this, mechanic, slot, "Work control " + slot);
                 }
-                site.movingPart=Box(site.root,"Removable_Window",new Vector3(0,1.05f,.31f),new Vector3(1.2f,1.2f,.035f),SlopCityInteriorGeometry.Glass,true).transform;
-                Dusty(site,mechanic,site.movingPart.gameObject,mechanic==6||mechanic==37?"panel":"window",mechanic==6||mechanic==37?"Removable wall panel":"Work window");
-            }
-            else if (form == 2) // live lamp circuit, actual lights plus emission
-                for (int i = 0; i < 3; i++)
+                int form = Form(mechanic);
+                if (form == 0) // letter supply tray; actual district mailboxes are used as destinations
+                    for (int i = 0; i < 3; i++)
+                    {
+                        site.pieces[i] = Box(site.root, "Addressed_Letter_" + (i+1), new Vector3(-.86f+i*.86f,1.1f,.25f), new Vector3(.45f,.05f,.3f), SlopCityInteriorGeometry.Wall,false).transform;
+                        Label(site.pieces[i], "TO " + (i+1), new Vector3(-.2f,.08f,-.1f), .046f);
+                    }
+                else if (form == 1) // complete removable window and its frame
                 {
-                    Shape(site.root,"Lamp_Stem",new Vector3(-.82f+i*.82f,.95f,.25f),new Vector3(.055f,.8f,.055f),SlopCityInteriorGeometry.Metal,SlopCityInteriorGeometry.UnitCylinder,false);
-                    GameObject lens=Shape(site.root,"Lamp_Lens",new Vector3(-.82f+i*.82f,1.8f,.25f),Vector3.one*.24f,SlopCityInteriorGeometry.Accent,SlopCityInteriorGeometry.UnitSphere,false);
-                    site.indicators[i]=lens.GetComponent<Renderer>();
-                    var lamp=lens.AddComponent<Light>(); lamp.type=LightType.Point;lamp.shadows=LightShadows.None;lamp.range=2.7f;lamp.intensity=.8f;site.lamps[i]=lamp;
-                    if(i==0) Dusty(site,mechanic,lens,"lamp","Lamp lens");
+                    for (int side = -1; side <= 1; side+=2)
+                    {
+                        Box(site.root,"Window_Frame",new Vector3(side*.66f,1.05f,.3f),new Vector3(.08f,1.35f,.12f),SlopCityInteriorGeometry.Metal,true);
+                        Box(site.root,"Window_Frame",new Vector3(0,1.05f+side*.65f,.3f),new Vector3(1.4f,.08f,.12f),SlopCityInteriorGeometry.Metal,true);
+                    }
+                    site.movingPart=Box(site.root,"Removable_Window",new Vector3(0,1.05f,.31f),new Vector3(1.2f,1.2f,.035f),SlopCityInteriorGeometry.Glass,true).transform;
+                    Dusty(site,mechanic,site.movingPart.gameObject,mechanic==6||mechanic==37?"panel":"window",mechanic==6||mechanic==37?"Removable wall panel":"Work window");
                 }
-            else if (form == 3) // fuses/terminal with three actual removable contacts
-            {
-                Box(site.root,"Terminal_Case",new Vector3(0,1.05f,.36f),new Vector3(2.25f,.9f,.24f),SlopCityInteriorGeometry.Wall,true);
-                for(int i=0;i<3;i++) site.pieces[i]=Box(site.root,"Fuse_"+i,new Vector3(-.65f+i*.65f,1.15f,.18f),new Vector3(.27f,.47f,.15f),SlopCityInteriorGeometry.Accent,false).transform;
-            }
-            else if (form == 4) // functional valve, measured container and visible flow column
-            {
-                Shape(site.root,"Water_Pipe",new Vector3(-.6f,.9f,.3f),new Vector3(.18f,.85f,.18f),SlopCityInteriorGeometry.Metal,SlopCityInteriorGeometry.UnitCylinder,true);
-                site.movingPart=Shape(site.root,"Valve_Wheel",new Vector3(-.6f,1.35f,.15f),new Vector3(.45f,.04f,.45f),SlopCityInteriorGeometry.Accent,SlopCityInteriorGeometry.UnitCylinder,false).transform;
-                site.movingPart.localRotation=Quaternion.Euler(90,0,0);
-                Box(site.root,"Graduated_Container",new Vector3(.6f,.56f,.3f),new Vector3(.55f,.8f,.52f),SlopCityInteriorGeometry.Glass,false);
-                site.gauge=Box(site.root,"Actual_Water_Level",new Vector3(.6f,.19f,.3f),new Vector3(.43f,.02f,.43f),SlopCityInteriorGeometry.Accent,false).transform;
-                for(int i=0;i<5;i++) Label(site.root,(i*25).ToString(),new Vector3(.94f,.2f+i*.18f,.21f),.035f);
-            }
-            else if (form == 5) // real portable bench, including its seat and hidden lost-item tray
-            {
-                site.bench=Root(site.root,"Portable_Bench",new Vector3(0,.6f,.25f));
-                for(int i=0;i<4;i++) Box(site.bench,"Timber_SeatSlat",new Vector3(0,0,-.2f+i*.13f),new Vector3(1.8f,.09f,.105f),SlopCityInteriorGeometry.Wood,true);
-                Box(site.bench,"Timber_BackSlat",new Vector3(0,.34f,.33f),new Vector3(1.8f,.48f,.09f),SlopCityInteriorGeometry.Wood,true);
-                Dusty(site,mechanic,site.bench.gameObject,"bench","Portable bench");
-                site.movingPart=Box(site.root,"Lost_Item_Under_Bench",new Vector3(.47f,.17f,.3f),new Vector3(.15f,.12f,.12f),SlopCityInteriorGeometry.Accent,true).transform;
-            }
-            else if (form == 6) // material bays: item count visibly changes each separate stack
-                for(int i=0;i<3;i++)
+                else if (form == 2) // live lamp circuit, actual lights plus emission
+                    for (int i = 0; i < 3; i++)
+                    {
+                        Shape(site.root,"Lamp_Stem",new Vector3(-.82f+i*.82f,.95f,.25f),new Vector3(.055f,.8f,.055f),SlopCityInteriorGeometry.Metal,SlopCityInteriorGeometry.UnitCylinder,false);
+                        GameObject lens=Shape(site.root,"Lamp_Lens",new Vector3(-.82f+i*.82f,1.8f,.25f),Vector3.one*.24f,SlopCityInteriorGeometry.Accent,SlopCityInteriorGeometry.UnitSphere,false);
+                        site.indicators[i]=lens.GetComponent<Renderer>();
+                        var lamp=lens.AddComponent<Light>(); lamp.type=LightType.Point;lamp.shadows=LightShadows.None;lamp.range=2.7f;lamp.intensity=.8f;site.lamps[i]=lamp;
+                        if(i==0) Dusty(site,mechanic,lens,"lamp","Lamp lens");
+                    }
+                else if (form == 3) // fuses/terminal with three actual removable contacts
                 {
-                    Box(site.root,"Material_Intake_"+i,new Vector3(-.88f+i*.88f,.36f,.3f),new Vector3(.65f,.55f,.55f),SlopCityInteriorGeometry.Metal,true);
-                    site.pieces[i]=Box(site.root,"Material_Load_"+i,new Vector3(-.88f+i*.88f,.73f,.3f),new Vector3(.45f,.2f,.4f),i==0?SlopCityInteriorGeometry.Metal:i==1?SlopCityInteriorGeometry.Glass:SlopCityInteriorGeometry.Wood,false).transform;
+                    Box(site.root,"Terminal_Case",new Vector3(0,1.05f,.36f),new Vector3(2.25f,.9f,.24f),SlopCityInteriorGeometry.Wall,true);
+                    for(int i=0;i<3;i++) site.pieces[i]=Box(site.root,"Fuse_"+i,new Vector3(-.65f+i*.65f,1.15f,.18f),new Vector3(.27f,.47f,.15f),SlopCityInteriorGeometry.Accent,false).transform;
                 }
-            else if (form == 7) // planting, real hose and removable guard slats
-                for(int i=0;i<3;i++)
+                else if (form == 4) // functional valve, measured container and visible flow column
                 {
-                    Box(site.root,"Planting_Bed_"+i,new Vector3(-.86f+i*.86f,.26f,.3f),new Vector3(.65f,.45f,.6f),SlopCityInteriorGeometry.Wood,true);
-                    site.pieces[i]=Shape(site.root,"Living_Foliage_"+i,new Vector3(-.86f+i*.86f,.9f,.3f),new Vector3(.4f,.6f,.4f),SlopCityInteriorGeometry.Accent,SlopCityInteriorGeometry.UnitSphere,false).transform;
+                    Shape(site.root,"Water_Pipe",new Vector3(-.6f,.9f,.3f),new Vector3(.18f,.85f,.18f),SlopCityInteriorGeometry.Metal,SlopCityInteriorGeometry.UnitCylinder,true);
+                    site.movingPart=Shape(site.root,"Valve_Wheel",new Vector3(-.6f,1.35f,.15f),new Vector3(.45f,.04f,.45f),SlopCityInteriorGeometry.Accent,SlopCityInteriorGeometry.UnitCylinder,false).transform;
+                    site.movingPart.localRotation=Quaternion.Euler(90,0,0);
+                    Box(site.root,"Graduated_Container",new Vector3(.6f,.56f,.3f),new Vector3(.55f,.8f,.52f),SlopCityInteriorGeometry.Glass,false);
+                    site.gauge=Box(site.root,"Actual_Water_Level",new Vector3(.6f,.19f,.3f),new Vector3(.43f,.02f,.43f),SlopCityInteriorGeometry.Accent,false).transform;
+                    for(int i=0;i<5;i++) Label(site.root,(i*25).ToString(),new Vector3(.94f,.2f+i*.18f,.21f),.035f);
                 }
-            else if (form == 8) // protected notice / new poster in a real frame
-            {
-                Box(site.root,"Poster_Frame",new Vector3(0,1.05f,.38f),new Vector3(1.75f,1.2f,.1f),SlopCityInteriorGeometry.Wood,true);
-                site.poster=Box(site.root,"Protected_Poster_Face",new Vector3(0,1.05f,.31f),new Vector3(1.59f,1.06f,.025f),SlopCityInteriorGeometry.Wall,false).transform;
-                Label(site.poster,"NEIGHBOURS MAKE\nTHIS CITY\n\nTURN THE AMBER VALVE",new Vector3(-.71f,.4f,-.021f),.08f);
-                site.movingPart=Box(site.root,"Dusty_Notice_Cover",new Vector3(0,1.05f,.275f),new Vector3(1.59f,1.06f,.015f),SlopCityInteriorGeometry.Glass,false).transform;
-                Dusty(site,mechanic,site.movingPart.gameObject,"notice_cover","Dusty notice cover");
+                else if (form == 5) // real portable bench, including its seat and hidden lost-item tray
+                {
+                    site.bench=Root(site.root,"Portable_Bench",new Vector3(0,.6f,.25f));
+                    for(int i=0;i<4;i++) Box(site.bench,"Timber_SeatSlat",new Vector3(0,0,-.2f+i*.13f),new Vector3(1.8f,.09f,.105f),SlopCityInteriorGeometry.Wood,true);
+                    Box(site.bench,"Timber_BackSlat",new Vector3(0,.34f,.33f),new Vector3(1.8f,.48f,.09f),SlopCityInteriorGeometry.Wood,true);
+                    Dusty(site,mechanic,site.bench.gameObject,"bench","Portable bench");
+                    site.movingPart=Box(site.root,"Lost_Item_Under_Bench",new Vector3(.47f,.17f,.3f),new Vector3(.15f,.12f,.12f),SlopCityInteriorGeometry.Accent,true).transform;
+                }
+                else if (form == 6) // material bays: item count visibly changes each separate stack
+                    for(int i=0;i<3;i++)
+                    {
+                        Box(site.root,"Material_Intake_"+i,new Vector3(-.88f+i*.88f,.36f,.3f),new Vector3(.65f,.55f,.55f),SlopCityInteriorGeometry.Metal,true);
+                        site.pieces[i]=Box(site.root,"Material_Load_"+i,new Vector3(-.88f+i*.88f,.73f,.3f),new Vector3(.45f,.2f,.4f),i==0?SlopCityInteriorGeometry.Metal:i==1?SlopCityInteriorGeometry.Glass:SlopCityInteriorGeometry.Wood,false).transform;
+                    }
+                else if (form == 7) // planting, real hose and removable guard slats
+                    for(int i=0;i<3;i++)
+                    {
+                        Box(site.root,"Planting_Bed_"+i,new Vector3(-.86f+i*.86f,.26f,.3f),new Vector3(.65f,.45f,.6f),SlopCityInteriorGeometry.Wood,true);
+                        site.pieces[i]=Shape(site.root,"Living_Foliage_"+i,new Vector3(-.86f+i*.86f,.9f,.3f),new Vector3(.4f,.6f,.4f),SlopCityInteriorGeometry.Accent,SlopCityInteriorGeometry.UnitSphere,false).transform;
+                    }
+                else if (form == 8) // protected notice / new poster in a real frame
+                {
+                    Box(site.root,"Poster_Frame",new Vector3(0,1.05f,.38f),new Vector3(1.75f,1.2f,.1f),SlopCityInteriorGeometry.Wood,true);
+                    site.poster=Box(site.root,"Protected_Poster_Face",new Vector3(0,1.05f,.31f),new Vector3(1.59f,1.06f,.025f),SlopCityInteriorGeometry.Wall,false).transform;
+                    Label(site.poster,"NEIGHBOURS MAKE\nTHIS CITY\n\nTURN THE AMBER VALVE",new Vector3(-.71f,.4f,-.021f),.08f);
+                    site.movingPart=Box(site.root,"Dusty_Notice_Cover",new Vector3(0,1.05f,.275f),new Vector3(1.59f,1.06f,.015f),SlopCityInteriorGeometry.Glass,false).transform;
+                    Dusty(site,mechanic,site.movingPart.gameObject,"notice_cover","Dusty notice cover");
+                }
+                else // antenna / alignment pointer; no new decoder or screen
+                {
+                    site.movingPart=Root(site.root,"Receiver_Antenna",new Vector3(0,.9f,.3f));
+                    Box(site.movingPart,"Antenna_Mast",new Vector3(0,.35f,0),new Vector3(.08f,.7f,.08f),SlopCityInteriorGeometry.Metal,true);
+                    Box(site.movingPart,"Directional_Receiver",new Vector3(0,.65f,.25f),new Vector3(.5f,.15f,.7f),SlopCityInteriorGeometry.Accent,false);
+                    site.treatment=Box(site.root,"Receiver_Source_Marker",new Vector3(1.05f,1.45f,.4f),Vector3.one*.18f,SlopCityInteriorGeometry.Accent,false).transform;
+                }
+                BuildExtras(mechanic,site);
+                sites[mechanic] = site;
             }
-            else // antenna / alignment pointer; no new decoder or screen
+            catch
             {
-                site.movingPart=Root(site.root,"Receiver_Antenna",new Vector3(0,.9f,.3f));
-                Box(site.movingPart,"Antenna_Mast",new Vector3(0,.35f,0),new Vector3(.08f,.7f,.08f),SlopCityInteriorGeometry.Metal,true);
-                Box(site.movingPart,"Directional_Receiver",new Vector3(0,.65f,.25f),new Vector3(.5f,.15f,.7f),SlopCityInteriorGeometry.Accent,false);
-                site.treatment=Box(site.root,"Receiver_Source_Marker",new Vector3(1.05f,1.45f,.4f),Vector3.one*.18f,SlopCityInteriorGeometry.Accent,false).transform;
+                if(site.root)Retire(site.root.gameObject);
+                throw;
             }
-            BuildExtras(mechanic,site);
         }
         private void BuildExtras(int mechanic,Site site)
         {
@@ -200,29 +247,79 @@ namespace SlopCity
                 site.remoteControl.transform.parent.SetPositionAndRotation(position+rotation*(roof?Vector3.right*3f:-Vector3.forward*1.15f)+Vector3.up*1.05f,rotation);
                 return;
             }
-            var root=Root(transform,"Arrival_"+SlopCityJobCatalog.All[mechanic].id,Vector3.zero);site.arrivalRoot=root;
-            root.position=position+rotation*(roof?Vector3.right*3f:-Vector3.forward*1.15f)+Vector3.up*1.05f;
-            root.rotation=rotation;
-            for(int side=-1;side<=1;side+=2)
+            if(site.arrivalRoot)
             {
-                Box(root,"Replacement_Frame",new Vector3(side*.66f,0,0),new Vector3(.08f,1.35f,.12f),SlopCityInteriorGeometry.Metal,true);
-                Box(root,"Replacement_Frame",new Vector3(0,side*.65f,0),new Vector3(1.4f,.08f,.12f),SlopCityInteriorGeometry.Metal,true);
+                site.failedAssemblyRoot=site.arrivalRoot;site.assemblyRetirementQueued=false;
+                site.arrivalRoot=null;
+                if(!RetireFailedAssembly(site))throw new InvalidOperationException("The previous arrival socket is still retiring.");
             }
-            var control=Box(root,roof?"Roof_Replacement_Socket":"Platform_Window_Socket",new Vector3(-.82f,0,-.04f),new Vector3(.2f,.25f,.12f),SlopCityInteriorGeometry.Metal,true);
-            site.remoteControl=control.AddComponent<SlopCityJobDevice>();site.remoteControl.Configure(this,mechanic,1,roof?"Install carried roof panel":"Install train-carried pane");
-            Label(root,roof?"PANEL SOCKET":"WINDOW SOCKET",new Vector3(-.6f,.8f,-.05f),.065f);
+            Transform root=null;
+            try
+            {
+                root=new GameObject("Arrival_"+SlopCityJobCatalog.All[mechanic].id).transform;
+                site.failedAssemblyRoot=root;site.assemblyRetirementQueued=false;
+                root.SetParent(transform,false);
+                root.localPosition=Vector3.zero;
+                root.position=position+rotation*(roof?Vector3.right*3f:-Vector3.forward*1.15f)+Vector3.up*1.05f;
+                root.rotation=rotation;
+                for(int side=-1;side<=1;side+=2)
+                {
+                    Box(root,"Replacement_Frame",new Vector3(side*.66f,0,0),new Vector3(.08f,1.35f,.12f),SlopCityInteriorGeometry.Metal,true);
+                    Box(root,"Replacement_Frame",new Vector3(0,side*.65f,0),new Vector3(1.4f,.08f,.12f),SlopCityInteriorGeometry.Metal,true);
+                }
+                var control=Box(root,roof?"Roof_Replacement_Socket":"Platform_Window_Socket",new Vector3(-.82f,0,-.04f),new Vector3(.2f,.25f,.12f),SlopCityInteriorGeometry.Metal,true);
+                var remoteControl=control.AddComponent<SlopCityJobDevice>();remoteControl.Configure(this,mechanic,1,roof?"Install carried roof panel":"Install train-carried pane");
+                Label(root,roof?"PANEL SOCKET":"WINDOW SOCKET",new Vector3(-.6f,.8f,-.05f),.065f);
+                site.arrivalRoot=root;site.remoteControl=remoteControl;
+                site.failedAssemblyRoot=null;
+            }
+            catch
+            {
+                RetireFailedAssembly(site);
+                throw;
+            }
         }
         private void EnsureInstalledAssembly(Site site,int mechanic)
         {
+            if(!RetireFailedAssembly(site))throw new InvalidOperationException("A failed worksite assembly is still retiring.");
             if(site.installedRoot)return;bool roof=mechanic==37;
-            site.installedRoot=Root(transform,"Completed_Installation_"+SlopCityJobCatalog.All[mechanic].id,Vector3.zero);
-            for(int side=-1;side<=1;side+=2)
+            Transform root=null;
+            try
             {
-                Box(site.installedRoot,"Installed_Frame",new Vector3(side*.66f,0,0),new Vector3(.08f,1.35f,.12f),SlopCityInteriorGeometry.Metal,true);
-                Box(site.installedRoot,"Installed_Frame",new Vector3(0,side*.65f,0),new Vector3(1.4f,.08f,.12f),SlopCityInteriorGeometry.Metal,true);
+                root=new GameObject("Completed_Installation_"+SlopCityJobCatalog.All[mechanic].id).transform;
+                site.failedAssemblyRoot=root;site.assemblyRetirementQueued=false;
+                root.SetParent(transform,false);
+                root.localPosition=Vector3.zero;
+                for(int side=-1;side<=1;side+=2)
+                {
+                    Box(root,"Installed_Frame",new Vector3(side*.66f,0,0),new Vector3(.08f,1.35f,.12f),SlopCityInteriorGeometry.Metal,true);
+                    Box(root,"Installed_Frame",new Vector3(0,side*.65f,0),new Vector3(1.4f,.08f,.12f),SlopCityInteriorGeometry.Metal,true);
+                }
+                var pane=Box(root,roof?"Installed_Roof_Panel":"Installed_Window_Pane",Vector3.zero,new Vector3(1.2f,1.2f,.04f),roof?SlopCityInteriorGeometry.Metal:SlopCityInteriorGeometry.Glass,true).transform;
+                pane.gameObject.SetActive(false);root.gameObject.SetActive(false);
+                site.remotePane=pane;site.installedRoot=root;
+                site.failedAssemblyRoot=null;
             }
-            site.remotePane=Box(site.installedRoot,roof?"Installed_Roof_Panel":"Installed_Window_Pane",Vector3.zero,new Vector3(1.2f,1.2f,.04f),roof?SlopCityInteriorGeometry.Metal:SlopCityInteriorGeometry.Glass,true).transform;
-            site.remotePane.gameObject.SetActive(false);site.installedRoot.gameObject.SetActive(false);
+            catch
+            {
+                RetireFailedAssembly(site);
+                throw;
+            }
+        }
+        private static bool RetireFailedAssembly(Site site)
+        {
+            Transform root=site.failedAssemblyRoot;
+            if(!root){site.failedAssemblyRoot=null;site.assemblyRetirementQueued=false;return true;}
+            if(!site.assemblyRetirementQueued)
+            {
+                Retire(root.gameObject);
+                site.assemblyRetirementQueued=true;
+            }
+            // A refused retirement retains its exact owner for another attempt;
+            // an accepted deferred retirement blocks admission until destruction.
+            if(root)return false;
+            site.failedAssemblyRoot=null;site.assemblyRetirementQueued=false;
+            return true;
         }
         private void Dusty(Site site,int mechanic,GameObject target,string category,string label)
         {
@@ -397,20 +494,40 @@ namespace SlopCity
             return true;
         }
         private static Transform Root(Transform parent,string name,Vector3 position)
-        {var item=new GameObject(name).transform;item.SetParent(parent,false);item.localPosition=position;return item;}
+        {
+            var item=new GameObject(name);
+            try {item.transform.SetParent(parent,false);item.transform.localPosition=position;return item.transform;}
+            catch {Retire(item);throw;}
+        }
+        private static void Retire(GameObject item)
+        {
+            if(!item)return;
+            try {item.SetActive(false);}
+            finally {if(Application.isPlaying)Destroy(item);else DestroyImmediate(item);}
+        }
         private static GameObject Box(Transform parent,string name,Vector3 position,Vector3 size,Material material,bool collision)
             =>Shape(parent,name,position,size,material,SlopCityInteriorGeometry.UnitCube,collision);
         private static GameObject Shape(Transform parent,string name,Vector3 position,Vector3 size,Material material,Mesh mesh,bool collision)
         {
-            Transform item=Root(parent,name,position);item.localScale=size;item.gameObject.isStatic=false;
-            item.gameObject.AddComponent<MeshFilter>().sharedMesh=mesh;item.gameObject.AddComponent<MeshRenderer>().sharedMaterial=material;
-            if(collision)item.gameObject.AddComponent<BoxCollider>();return item.gameObject;
+            Transform item=Root(parent,name,position);
+            try
+            {
+                item.localScale=size;item.gameObject.isStatic=false;
+                item.gameObject.AddComponent<MeshFilter>().sharedMesh=mesh;item.gameObject.AddComponent<MeshRenderer>().sharedMaterial=material;
+                if(collision)item.gameObject.AddComponent<BoxCollider>();return item.gameObject;
+            }
+            catch {Retire(item.gameObject);throw;}
         }
         private static TextMesh Label(Transform parent,string text,Vector3 position,float size)
         {
-            var root=Root(parent,"Protected_Work_Label",position);root.localRotation=Quaternion.Euler(0,180,0);
-            var label=root.gameObject.AddComponent<TextMesh>();label.font=Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");label.text=text;label.characterSize=size;label.fontSize=32;label.color=Color.white;
-            root.GetComponent<MeshRenderer>().sharedMaterial=label.font.material;return label;
+            var root=Root(parent,"Protected_Work_Label",position);
+            try
+            {
+                root.localRotation=Quaternion.Euler(0,180,0);
+                var label=root.gameObject.AddComponent<TextMesh>();label.font=Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");label.text=text;label.characterSize=size;label.fontSize=32;label.color=Color.white;
+                root.GetComponent<MeshRenderer>().sharedMaterial=label.font.material;return label;
+            }
+            catch {Retire(root.gameObject);throw;}
         }
     }
 }

@@ -3,7 +3,8 @@
 // long background session can retain retired PCM buffers until context resume.
 if (typeof LibraryManager.library.JS_Sound_Stop !== 'function'
   || typeof LibraryManager.library.JS_Sound_ReleaseInstance !== 'function'
-  || typeof LibraryManager.library.JS_Sound_Init !== 'function') {
+  || typeof LibraryManager.library.JS_Sound_Init !== 'function'
+  || typeof LibraryManager.library.$jsAudioCreateChannel !== 'function') {
   throw new Error('Slop City audio lifecycle requires Unity Audio.js first.');
 }
 mergeInto(LibraryManager.library, {
@@ -13,9 +14,69 @@ mergeInto(LibraryManager.library, {
   $slopCityNativeSoundStop__deps: LibraryManager.library.JS_Sound_Stop__deps.slice(),
   $slopCityNativeSoundRelease: LibraryManager.library.JS_Sound_ReleaseInstance,
   $slopCityNativeSoundRelease__deps: LibraryManager.library.JS_Sound_ReleaseInstance__deps.slice(),
+  $slopCityNativeAudioCreateChannel: LibraryManager.library.$jsAudioCreateChannel,
+  $slopCityNativeAudioCreateChannel__deps: LibraryManager.library.$jsAudioCreateChannel__deps.slice(),
   $slopCityAudioDisposed: false,
   $slopCityAudioIntervals: [],
   $slopCityAudioDeinitializers: [],
+
+  $slopCityRetireCompressedAudioSource: function (source) {
+    if (!source || !source.mediaElement) return;
+    // Unity's disconnectSource pauses and disconnects the node, but never calls
+    // its release() or cancels its scheduled start. That start can otherwise
+    // play a detached element after its AudioSource has been stopped/destroyed.
+    source.slopCityRetired = true;
+    if (source.playTimeout != null) clearTimeout(source.playTimeout);
+    source.playTimeout = null;
+    source._startPlayback = function () {};
+    source.start = function () {};
+    source.pauseRequested = true;
+    source.isStopped = true;
+    var firstError;
+    function retire(action) { try { action(); } catch (error) { if (!firstError) firstError = error; } }
+    retire(function () { source.onended = null; });
+    retire(function () { source.mediaElement.pause(); });
+    retire(function () { source.mediaElement.removeAttribute('src'); });
+    retire(function () { source.mediaElement.load(); });
+    if (firstError) throw firstError;
+  },
+
+  $jsAudioCreateChannel__deps: ['$slopCityNativeAudioCreateChannel', '$slopCityRetireCompressedAudioSource'],
+  $jsAudioCreateChannel: function (callback, userData) {
+    var channel = slopCityNativeAudioCreateChannel(callback, userData);
+    var disconnect = channel.disconnectSource, release = channel.release, play = channel.playSoundClip;
+    channel.disconnectSource = function () {
+      var source = this.source, firstError;
+      try { disconnect.call(this); } catch (error) { firstError = error; }
+      try { slopCityRetireCompressedAudioSource(source); }
+      catch (error) {
+        // Keep a failed retirement reachable for the next stop/release. Do not
+        // admit a new source over it in playSoundClip below.
+        if (!this.source) this.source = source;
+        if (!firstError) firstError = error;
+      }
+      if (firstError) throw firstError;
+    };
+    channel.playSoundClip = function (clip, startTime, startOffset) {
+      if (this.source && this.source.slopCityRetired) {
+        try { this.disconnectSource(); }
+        catch (error) { console.warn('Retired audio source cleanup failed.', error); return; }
+      }
+      return play.call(this, clip, startTime, startOffset);
+    };
+    channel.release = function () {
+      var firstError;
+      try { release.call(this); } catch (error) { firstError = error; }
+      // Pinned Unity releases gain/panner but leaves both spatial blend nodes
+      // connected. All four nodes belong to this channel, including 3D sounds.
+      try { this.gain.disconnect(); } catch (error) { if (!firstError) firstError = error; }
+      try { this.panner.disconnect(); } catch (error) { if (!firstError) firstError = error; }
+      try { this.spatialBlendDryGain.disconnect(); } catch (error) { if (!firstError) firstError = error; }
+      try { this.spatialBlendWetGain.disconnect(); } catch (error) { if (!firstError) firstError = error; }
+      if (firstError) throw firstError;
+    };
+    return channel;
+  },
 
   JS_Sound_Init__proxy: 'sync',
   JS_Sound_Init__sig: 'v',
@@ -118,7 +179,8 @@ mergeInto(LibraryManager.library, {
   JS_Sound_ReleaseInstance__deps: ['$WEBAudio', '$slopCityNativeSoundRelease', '$slopCityRemovePendingSound'],
   JS_Sound_ReleaseInstance: function (instance) {
     slopCityRemovePendingSound(WEBAudio.audioInstances[instance]);
-    // Keep native channel/node and compressed-object-URL cleanup unchanged.
+    // Preserve native instance removal and compressed-clip URL revocation;
+    // channel.release additionally retires its owned source and all four nodes.
     slopCityNativeSoundRelease(instance);
   }
 });

@@ -33,6 +33,10 @@ namespace SlopCity
         private int page, generation;
         private Coroutine pending;
         private UnityWebRequest activeRequest;
+        private DownloadHandler activeHandler;
+        private UnityWebRequest retiringRequest;
+        private DownloadHandler retiringHandler;
+        private bool cleaningRequest;
 
         [Serializable] private sealed class Entry
         {
@@ -79,8 +83,7 @@ namespace SlopCity
                 scroll = viewport.gameObject.AddComponent<ScrollRect>();
                 scroll.viewport = viewport; scroll.horizontal = false;
                 scroll.movementType = ScrollRect.MovementType.Clamped;
-                content = new GameObject("Content", typeof(RectTransform)).GetComponent<RectTransform>();
-                content.SetParent(viewport, false);
+                content = CreateUiObject("Content", viewport, typeof(RectTransform)).GetComponent<RectTransform>();
                 content.anchorMin = new Vector2(0, 1); content.anchorMax = Vector2.one; content.pivot = new Vector2(.5f, 1);
                 content.anchoredPosition = Vector2.zero; content.sizeDelta = Vector2.zero;
                 var layout = content.gameObject.AddComponent<VerticalLayoutGroup>();
@@ -102,9 +105,8 @@ namespace SlopCity
             {
                 if (!complete && overlay)
                 {
-                    overlay.SetActive(false);
-                    Destroy(overlay);
-                    overlay = null;
+                    try { overlay.SetActive(false); }
+                    finally { Destroy(overlay); overlay = null; }
                 }
             }
         }
@@ -213,7 +215,13 @@ namespace SlopCity
         private void Navigate(string path, bool isFile)
         {
             if (!overlay || !overlay.activeInHierarchy || !IsSafePath(path)) return;
-            CancelPending(); sourceMode = true; currentPath = path; fileView = isFile;
+            CancelPending();
+            if (cleaningRequest || retiringRequest != null || retiringHandler != null)
+            {
+                statusLabel.text = "The previous source download is still closing. Retry or open GitHub.";
+                return;
+            }
+            sourceMode = true; currentPath = path; fileView = isFile;
             title.text = "SOURCE + LICENSE";
             up.interactable = path.Length > 0; retry.interactable = true;
             pathLabel.text = "main / " + path;
@@ -241,24 +249,43 @@ namespace SlopCity
         {
             generation++;
             UnityWebRequest request = activeRequest;
+            DownloadHandler handler = activeHandler;
             Coroutine routine = pending;
             activeRequest = null;
+            activeHandler = null;
             pending = null;
             try { if (request != null) request.Abort(); }
             catch (Exception error) { Debug.LogWarning("Source download cancellation failed: " + error.Message, this); }
             try { if (routine != null) StopCoroutine(routine); }
             catch (Exception error) { Debug.LogWarning("Source reader cancellation failed: " + error.Message, this); }
-            finally { DisposeRequest(request); }
+            finally { DisposeRequest(request, handler); }
         }
 
-        private static void DisposeRequest(UnityWebRequest request, DownloadHandler handler = null)
+        private void DisposeRequest(UnityWebRequest request, DownloadHandler handler)
         {
+            // One reader admits only one request. A refused Dispose retains that
+            // exact pair and blocks Navigate, rather than growing a cleanup list
+            // or overwriting the last native owner on the next download.
+            if (request != null) retiringRequest = request;
+            if (handler != null) retiringHandler = handler;
+            if (cleaningRequest) return;
+            cleaningRequest = true;
             try
             {
-                if (request != null) request.Dispose();
-                else if (handler != null) handler.Dispose();
+                if (retiringRequest != null)
+                {
+                    try { retiringRequest.Dispose(); retiringRequest = null; }
+                    catch (Exception error) { Debug.LogWarning("Source download cleanup failed: " + error.Message); }
+                }
+                // The handler has independent ownership. A request Dispose
+                // failure must not skip its bounded native receive buffer.
+                if (retiringHandler != null)
+                {
+                    try { retiringHandler.Dispose(); retiringHandler = null; }
+                    catch (Exception error) { Debug.LogWarning("Source response cleanup failed: " + error.Message); }
+                }
             }
-            catch (Exception error) { Debug.LogWarning("Source download cleanup failed: " + error.Message); }
+            finally { cleaningRequest = false; }
         }
 
         private IEnumerator Fetch(string path, bool isFile, int ticket)
@@ -271,9 +298,16 @@ namespace SlopCity
                 string openingError = null;
                 try
                 {
-                    handler = new BoundedDownload(ResponseLimit);
-                    request = new UnityWebRequest(ApiRoot + EncodePath(path) + "?ref=main", "GET", handler, null);
+                    // Allocate managed storage before the constructor creates
+                    // its native handler, so allocation failure has no orphan.
+                    byte[] body = new byte[ResponseLimit];
+                    byte[] receiveBuffer = new byte[16384];
+                    handler = new BoundedDownload(body, receiveBuffer);
+                    request = new UnityWebRequest(ApiRoot + EncodePath(path) + "?ref=main", "GET");
                     activeRequest = request;
+                    activeHandler = handler;
+                    request.disposeDownloadHandlerOnDispose = false;
+                    request.downloadHandler = handler;
                     request.timeout = 15; request.redirectLimit = 0;
                     request.SetRequestHeader("Accept", "application/vnd.github+json");
 #if !UNITY_WEBGL || UNITY_EDITOR
@@ -312,6 +346,7 @@ namespace SlopCity
                 if (ReferenceEquals(activeRequest, request))
                 {
                     activeRequest = null;
+                    activeHandler = null;
                     DisposeRequest(request, handler);
                 }
                 if (ticket == generation) pending = null;
@@ -447,8 +482,7 @@ namespace SlopCity
 
         private Text Label(Transform parent, string name, string value, int size)
         {
-            var label = new GameObject(name, typeof(RectTransform), typeof(Text)).GetComponent<Text>();
-            label.transform.SetParent(parent, false);
+            var label = CreateUiObject(name, parent, typeof(RectTransform), typeof(Text)).GetComponent<Text>();
             label.font = value.Contains("™") ? SlopCityBrandTypography.Font : font;
             label.fontSize = desktopTypography ? Mathf.Max(16, size) : size;
             label.color = Paper; label.text = value; label.supportRichText = false;
@@ -468,8 +502,20 @@ namespace SlopCity
         }
         private static RectTransform Panel(Transform parent, string name, Color color)
         {
-            RectTransform rect = new GameObject(name, typeof(RectTransform), typeof(Image)).GetComponent<RectTransform>();
-            rect.SetParent(parent, false); rect.GetComponent<Image>().color = color; return rect;
+            RectTransform rect = CreateUiObject(name, parent, typeof(RectTransform), typeof(Image)).GetComponent<RectTransform>();
+            rect.GetComponent<Image>().color = color; return rect;
+        }
+        private static GameObject CreateUiObject(string name, Transform parent, params Type[] components)
+        {
+            var item = new GameObject(name, components);
+            try { item.transform.SetParent(parent, false); return item; }
+            catch
+            {
+                // Until parenting succeeds, the overlay cannot find this owner.
+                try { item.SetActive(false); }
+                finally { if (Application.isPlaying) Destroy(item); else DestroyImmediate(item); }
+                throw;
+            }
         }
         private static void Stretch(RectTransform rect) { rect.anchorMin = Vector2.zero; rect.anchorMax = Vector2.one; rect.offsetMin = rect.offsetMax = Vector2.zero; }
         private static void Place(RectTransform rect, Vector2 min, Vector2 max, Vector2 lower, Vector2 upper)
@@ -481,7 +527,7 @@ namespace SlopCity
             private int count;
             public bool Overflow { get; private set; }
             public string Text { get { return new UTF8Encoding(false, true).GetString(body, 0, count); } }
-            public BoundedDownload(int limit) : base(new byte[16384]) { body = new byte[limit]; }
+            public BoundedDownload(byte[] body, byte[] receiveBuffer) : base(receiveBuffer) { this.body = body; }
             protected override void ReceiveContentLengthHeader(ulong length) { if (length > (ulong)body.Length) Overflow = true; }
             protected override bool ReceiveData(byte[] data, int length)
             {

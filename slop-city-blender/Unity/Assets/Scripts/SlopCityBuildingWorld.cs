@@ -549,7 +549,8 @@ namespace SlopCity
         }
         internal static GameObject Box(Transform parent, string name, Vector3 point, Vector3 size, Material material, bool solid = false)
         {
-            GameObject box = new GameObject(name); box.transform.SetParent(parent, false); box.transform.localPosition = point; box.transform.localScale = size;
+            GameObject box = Root(parent, name, point).gameObject;
+            box.transform.localScale = size;
             box.AddComponent<MeshFilter>().sharedMesh = cube;
             Renderer renderer = box.AddComponent<MeshRenderer>(); renderer.sharedMaterial = material;
             renderer.shadowCastingMode = ShadowCastingMode.Off; renderer.receiveShadows = false;
@@ -630,8 +631,9 @@ namespace SlopCity
         }
         internal static void Dispose(GameObject item)
         {
-            item.SetActive(false);
-            if (Application.isPlaying) UnityEngine.Object.Destroy(item); else UnityEngine.Object.DestroyImmediate(item);
+            if (!item) return;
+            try { item.SetActive(false); }
+            finally { if (Application.isPlaying) UnityEngine.Object.Destroy(item); else UnityEngine.Object.DestroyImmediate(item); }
         }
     }
 }

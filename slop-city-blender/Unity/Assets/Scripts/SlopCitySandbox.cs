@@ -76,6 +76,7 @@ namespace SlopCity
         private bool[] webSceneryMoves = Array.Empty<bool>();
         private int[] webScenerySeen = Array.Empty<int>();
         private int webSceneryQuery;
+        private bool webSceneryReady, webSceneryWarning;
         private readonly RaycastHit[] webTargetHits = new RaycastHit[64];
         private Camera webTargetCamera;
         private Ray webTargetRay;
@@ -1012,6 +1013,11 @@ namespace SlopCity
 
         private void RefreshSites()
         {
+#if (UNITY_WEBGL && !UNITY_EDITOR) || SLOP_CITY_WEB_INTERACTION_TEST
+            // A refresh can replace scenery before allocation or native reads fail.
+            // Never query the previous index against a different renderer array.
+            webSceneryReady = false;
+#endif
             // Diegetic guidance is visual only, never an inspectable city object.
             scenery = Array.FindAll(FindObjectsByType<Renderer>(FindObjectsSortMode.None),
                 renderer => !renderer.GetComponentInParent<SlopCityRabbitTrail>());
@@ -1065,64 +1071,97 @@ namespace SlopCity
 #if (UNITY_WEBGL && !UNITY_EDITOR) || SLOP_CITY_WEB_INTERACTION_TEST
         private void RebuildWebScenery()
         {
-            // Serialized bounds are copied again below. Drop references to rooms
-            // destroyed by streaming before adding the currently loaded renderers.
-            webAuthoredBounds.Clear();
-            webSceneryGrid.Clear();
-            webSceneryFallback.Clear();
-            webSceneryBounds = new Bounds[scenery.Length];
-            webSceneryLocalBounds = new Bounds[scenery.Length];
-            webSceneryHasLocalBounds = new bool[scenery.Length];
-            webSceneryMoves = new bool[scenery.Length];
-            webScenerySeen = new int[scenery.Length];
-            webSceneryQuery = 0;
-            webTargetFrame = -1;
-            // Build-scene metadata retains authored bounds before Unity rewrites
-            // static-batched vertices and replaces localBounds with batch AABBs.
-            foreach (SlopCityBrowserGeometry geometry in FindObjectsByType<SlopCityBrowserGeometry>(FindObjectsSortMode.None))
-                geometry.CopyTo(webAuthoredBounds);
-            for (int index = 0; index < scenery.Length; index++)
+            webSceneryReady = false;
+            try
             {
-                Renderer renderer = scenery[index];
-                if (!renderer) continue;
-                if (!renderer.isPartOfStaticBatch)
+                // Serialized bounds are copied again below. Drop references to rooms
+                // destroyed by streaming before adding the currently loaded renderers.
+                webAuthoredBounds.Clear();
+                webSceneryGrid.Clear();
+                webSceneryFallback.Clear();
+                webSceneryBounds = new Bounds[scenery.Length];
+                webSceneryLocalBounds = new Bounds[scenery.Length];
+                webSceneryHasLocalBounds = new bool[scenery.Length];
+                webSceneryMoves = new bool[scenery.Length];
+                webScenerySeen = new int[scenery.Length];
+                webSceneryQuery = 0;
+                webTargetFrame = -1;
+                // Build-scene metadata retains authored bounds before Unity rewrites
+                // static-batched vertices and replaces localBounds with batch AABBs.
+                foreach (SlopCityBrowserGeometry geometry in FindObjectsByType<SlopCityBrowserGeometry>(FindObjectsSortMode.None))
+                    geometry.CopyTo(webAuthoredBounds);
+                for (int index = 0; index < scenery.Length; index++)
                 {
-                    Bounds localBounds = renderer.localBounds;
-                    if (renderer.TryGetComponent<MeshFilter>(out MeshFilter filter) && filter.sharedMesh)
-                        localBounds = filter.sharedMesh.bounds;
-                    webAuthoredBounds[renderer] = localBounds;
+                    Renderer renderer = scenery[index];
+                    if (!renderer) continue;
+                    if (!renderer.isPartOfStaticBatch)
+                    {
+                        Bounds localBounds = renderer.localBounds;
+                        if (renderer.TryGetComponent<MeshFilter>(out MeshFilter filter) && filter.sharedMesh)
+                            localBounds = filter.sharedMesh.bounds;
+                        webAuthoredBounds[renderer] = localBounds;
+                    }
+                    webSceneryHasLocalBounds[index] = webAuthoredBounds.TryGetValue(renderer, out webSceneryLocalBounds[index]);
+                    Bounds bounds = webSceneryBounds[index] = renderer.bounds;
+                    bool moves = !renderer.gameObject.isStatic || renderer is not MeshRenderer;
+                    // A static-marked child can still belong to a movable car or hinge.
+                    for (Transform parent = renderer.transform; !moves && parent; parent = parent.parent)
+                    {
+                        SlopCityInteractable item = parent.GetComponent<SlopCityInteractable>();
+                        moves = parent == user || (item && item.Kind == SlopCityInteractionKind.Car)
+                            || parent.GetComponent<SlopCityDoor>() || parent.GetComponent<Rigidbody>()
+                            || parent.GetComponent<Animator>() || parent.GetComponent<Animation>()
+                            || parent.GetComponent<SlopCityMetroTrain>();
+                    }
+                    webSceneryMoves[index] = moves;
+                    if (!TryWebSceneryCells(bounds, out Vector3Int min, out Vector3Int max)) continue;
+                    long xCells = (long)max.x - min.x + 1, yCells = (long)max.y - min.y + 1, zCells = (long)max.z - min.z + 1;
+                    // Ground planes and large facades must not fill thousands of cells.
+                    if (moves || xCells > 64 || yCells > 64 || zCells > 64 || xCells * yCells * zCells > 64)
+                    {
+                        webSceneryFallback.Add(index);
+                        continue;
+                    }
+                    for (int x = min.x; x <= max.x; x++)
+                        for (int y = min.y; y <= max.y; y++)
+                            for (int z = min.z; z <= max.z; z++)
+                            {
+                                var cell = new Vector3Int(x, y, z);
+                                if (!webSceneryGrid.TryGetValue(cell, out List<int> entries))
+                                    webSceneryGrid[cell] = entries = new List<int>();
+                                entries.Add(index);
+                            }
                 }
-                webSceneryHasLocalBounds[index] = webAuthoredBounds.TryGetValue(renderer, out webSceneryLocalBounds[index]);
-                Bounds bounds = webSceneryBounds[index] = renderer.bounds;
-                bool moves = !renderer.gameObject.isStatic || renderer is not MeshRenderer;
-                // A static-marked child can still belong to a movable car or hinge.
-                for (Transform parent = renderer.transform; !moves && parent; parent = parent.parent)
-                {
-                    SlopCityInteractable item = parent.GetComponent<SlopCityInteractable>();
-                    moves = parent == user || (item && item.Kind == SlopCityInteractionKind.Car)
-                        || parent.GetComponent<SlopCityDoor>() || parent.GetComponent<Rigidbody>()
-                        || parent.GetComponent<Animator>() || parent.GetComponent<Animation>()
-                        || parent.GetComponent<SlopCityMetroTrain>();
-                }
-                webSceneryMoves[index] = moves;
-                Vector3Int min = WebSceneryCell(bounds.min), max = WebSceneryCell(bounds.max);
-                long xCells = (long)max.x - min.x + 1, yCells = (long)max.y - min.y + 1, zCells = (long)max.z - min.z + 1;
-                // Ground planes and large facades must not fill thousands of cells.
-                if (moves || xCells > 64 || yCells > 64 || zCells > 64 || xCells * yCells * zCells > 64)
-                {
-                    webSceneryFallback.Add(index);
-                    continue;
-                }
-                for (int x = min.x; x <= max.x; x++)
-                    for (int y = min.y; y <= max.y; y++)
-                        for (int z = min.z; z <= max.z; z++)
-                        {
-                            var cell = new Vector3Int(x, y, z);
-                            if (!webSceneryGrid.TryGetValue(cell, out List<int> entries))
-                                webSceneryGrid[cell] = entries = new List<int>();
-                            entries.Add(index);
-                        }
+                webSceneryReady = true;
+                webSceneryWarning = false;
             }
+            catch (Exception error)
+            {
+                // Physics targeting remains usable when this optional renderer
+                // index cannot be rebuilt. Drop every partial index together.
+                webAuthoredBounds.Clear(); webSceneryGrid.Clear(); webSceneryFallback.Clear(); webSceneryCandidates.Clear();
+                webSceneryBounds = webSceneryLocalBounds = Array.Empty<Bounds>();
+                webSceneryHasLocalBounds = webSceneryMoves = Array.Empty<bool>();
+                webScenerySeen = Array.Empty<int>();
+                if (!webSceneryWarning)
+                {
+                    webSceneryWarning = true;
+                    Debug.LogWarning("City scenery targeting is unavailable until the next geometry refresh: " + error.GetType().Name, this);
+                }
+            }
+        }
+
+        private static bool TryWebSceneryCells(Bounds bounds, out Vector3Int min, out Vector3Int max)
+        {
+            min = max = default;
+            Vector3 lower = bounds.min / WebSceneryCellSize, upper = bounds.max / WebSceneryCellSize;
+            if (!Finite(lower) || !Finite(upper) || lower.x > upper.x || lower.y > upper.y || lower.z > upper.z) return false;
+            // Exclude integer endpoints: x++ at int.MaxValue would wrap and
+            // turn a corrupt/extreme bound into an effectively endless loop.
+            if ((double)lower.x <= int.MinValue || (double)lower.y <= int.MinValue || (double)lower.z <= int.MinValue
+                || (double)upper.x >= int.MaxValue || (double)upper.y >= int.MaxValue || (double)upper.z >= int.MaxValue) return false;
+            min = WebSceneryCell(bounds.min); max = WebSceneryCell(bounds.max);
+            return true;
         }
 
         private static Vector3Int WebSceneryCell(Vector3 point) => new Vector3Int(
@@ -1132,6 +1171,7 @@ namespace SlopCity
         private void GatherWebScenery(Ray ray, float reach)
         {
             webSceneryCandidates.Clear();
+            if (!webSceneryReady) return;
             if (++webSceneryQuery == int.MaxValue)
             {
                 Array.Clear(webScenerySeen, 0, webScenerySeen.Length);
@@ -1140,7 +1180,8 @@ namespace SlopCity
             var query = new Bounds(ray.origin, Vector3.zero);
             query.Encapsulate(ray.GetPoint(reach));
             query.Expand(.002f);
-            Vector3Int min = WebSceneryCell(query.min), max = WebSceneryCell(query.max);
+            if (!TryWebSceneryCells(query, out Vector3Int min, out Vector3Int max)) return;
+            if ((long)max.x - min.x > 64 || (long)max.y - min.y > 64 || (long)max.z - min.z > 64) return;
             for (int x = min.x; x <= max.x; x++)
                 for (int y = min.y; y <= max.y; y++)
                     for (int z = min.z; z <= max.z; z++)

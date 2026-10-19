@@ -28,7 +28,7 @@ namespace SlopCity
         private Resident[] residents=Array.Empty<Resident>();
         private int[] residentSlots=Array.Empty<int>(),presentationStamp=Array.Empty<int>();
         private Dictionary<int,int> residentIds=new Dictionary<int,int>();
-        private readonly Dictionary<int,float> rememberedCooldowns=new Dictionary<int,float>();
+        private Dictionary<int,float> rememberedCooldowns=new Dictionary<int,float>();
         private List<InteriorHome> interiorHomes=new List<InteriorHome>();
         private Dictionary<long,int> homeLookup=new Dictionary<long,int>();
         private readonly Collider[] populationOverlaps=new Collider[24];
@@ -78,30 +78,45 @@ namespace SlopCity
         }
         private void InitializePopulationRegistry()
         {
-            if(population==null)population=Array.Empty<SlopCityNpcSeed>();if(routes==null)routes=Array.Empty<SlopCityCrowdRoute>();
-            Resident[] prior=residents;rememberedCooldowns.Clear();
-            for(int i=0;i<prior.Length;i++){Agent live=ActiveResident(i);rememberedCooldowns[prior[i].seed.residentId]=live!=null?live.talkReady:prior[i].talkReady;}
-            residents=new Resident[population.Length];residentSlots=new int[population.Length];presentationStamp=new int[population.Length];Array.Fill(residentSlots,-1);residentIds.Clear();
-            agents=new Agent[Mathf.Min(MaximumDetailedResidents,population.Length)];activeCount=0;redContactCount=0;
+            if(routes==null)routes=Array.Empty<SlopCityCrowdRoute>();
+            // Keep the current registry usable until every allocation and immutable-ID
+            // validation succeeds, including the initial detailed bodies.
+            var nextPopulation=population==null?Array.Empty<SlopCityNpcSeed>():(SlopCityNpcSeed[])population.Clone();
+            var nextCooldowns=new Dictionary<int,float>();
+            for(int i=0;i<residents.Length;i++){Agent live=ActiveResident(i);nextCooldowns[residents[i].seed.residentId]=live!=null?live.talkReady:residents[i].talkReady;}
+            var nextResidents=new Resident[nextPopulation.Length];
+            var nextSlots=new int[nextPopulation.Length];Array.Fill(nextSlots,-1);
+            var nextStamps=new int[nextPopulation.Length];
+            var nextIds=new Dictionary<int,int>();
+            var nextAgents=new Agent[Mathf.Min(MaximumDetailedResidents,nextPopulation.Length)];
+            int nextActive=0,nextReds=0;
             var fallback=new Dictionary<int,int>();
-            for(int i=0;i<population.Length;i++)
+            for(int i=0;i<nextPopulation.Length;i++)
             {
-                SlopCityNpcSeed seed=population[i];seed.residentId=SlopCityResidentIdentity.Resolve(seed);population[i]=seed;
+                SlopCityNpcSeed seed=nextPopulation[i];seed.residentId=SlopCityResidentIdentity.Resolve(seed);nextPopulation[i]=seed;
                 if(!SlopCityResidentIdentity.IsAuthored(seed.residentId)&&ValidNode(seed.route,seed.node))
-                {int district=routes[seed.route].districtIndex;if(!fallback.TryGetValue(district,out int old)||ContactOrder(seed,i)<ContactOrder(population[old],old))fallback[district]=i;}
+                {int district=routes[seed.route].districtIndex;if(!fallback.TryGetValue(district,out int old)||ContactOrder(seed,i)<ContactOrder(nextPopulation[old],old))fallback[district]=i;}
             }
             var fallbackReds=new HashSet<int>(fallback.Values);
-            for(int i=0;i<population.Length;i++)
+            for(int i=0;i<nextPopulation.Length;i++)
             {
-                SlopCityNpcSeed seed=population[i];bool red=SlopCityResidentIdentity.IsAuthored(seed.residentId)?SlopCityResidentIdentity.IsRed(seed.residentId):fallbackReds.Contains(i);
-                seed=NormalizedSeed(seed,red);if(!residentIds.TryAdd(seed.residentId,i))throw new InvalidOperationException("Duplicate immutable resident ID: "+seed.residentId);
+                SlopCityNpcSeed seed=nextPopulation[i];bool red=SlopCityResidentIdentity.IsAuthored(seed.residentId)?SlopCityResidentIdentity.IsRed(seed.residentId):fallbackReds.Contains(i);
+                seed=NormalizedSeed(seed,red);if(!nextIds.TryAdd(seed.residentId,i))throw new InvalidOperationException("Duplicate immutable resident ID: "+seed.residentId);
                 var record=new Resident{seed=seed,node=seed.node,next=seed.next,heading=seed.heading,phase=seed.phase,pause=seed.pause,randomState=173+seed.residentId*139,redContact=red,home=-1,lastUpdate=simulationTime};
-                if(rememberedCooldowns.TryGetValue(seed.residentId,out float cooldown))record.talkReady=cooldown;
+                if(nextCooldowns.TryGetValue(seed.residentId,out float cooldown))record.talkReady=cooldown;
                 if(ValidNode(seed.route,seed.node))record.position=routes[seed.route].nodes[seed.node].position;
-                residents[i]=record;if(red)redContactCount++;
-                if(activeCount<agents.Length&&ValidNode(seed.route,seed.node))AdmitResident(i,false);
+                nextResidents[i]=record;if(red)nextReds++;
+                if(nextActive<nextAgents.Length&&ValidNode(seed.route,seed.node)&&ValidNode(seed.route,seed.next))
+                {
+                    var person=new Agent();InitializeResidentAgent(person,record,i);
+                    nextAgents[nextActive]=person;nextSlots[i]=nextActive++;
+                }
             }
-            if(!localAgentsInitialized){localAgents.Select(population,routes);localAgentsInitialized=true;}
+            var nextLocalAgents=localAgents;
+            if(!localAgentsInitialized){nextLocalAgents=new SlopCityLocalAgent();nextLocalAgents.Select(nextPopulation,routes);}
+            population=nextPopulation;residents=nextResidents;residentSlots=nextSlots;presentationStamp=nextStamps;
+            residentIds=nextIds;rememberedCooldowns=nextCooldowns;agents=nextAgents;activeCount=nextActive;redContactCount=nextReds;
+            localAgents=nextLocalAgents;localAgentsInitialized=true;
             interiorHomes.Clear();homeLookup.Clear();AdmittedInteriorRouteCount=InteriorResidentCount=0;
             configured=true;expandedPopulation=false;Array.Clear(pendingParts,0,pendingParts.Length);pendingPartCount=0;batches.Clear();batchLookup.Clear();
         }
@@ -292,12 +307,16 @@ namespace SlopCity
                 if(!TryPopulationFeet(r.position,out Vector3 feet))return;r.position=feet;
                 for(int i=0;i<activeCount;i++)if((agents[i].position-r.position).sqrMagnitude<.75f*.75f)return;
             }
-            Agent person=agents[activeCount]??new Agent();agents[activeCount]=person;person.seed=r.seed;person.residentIndex=resident;person.position=r.position;
+            Agent person=agents[activeCount]??new Agent();agents[activeCount]=person;InitializeResidentAgent(person,r,resident);
+            residentSlots[resident]=activeCount++;
+        }
+        private static void InitializeResidentAgent(Agent person,Resident r,int resident)
+        {
+            person.seed=r.seed;person.residentIndex=resident;person.position=r.position;
             person.node=r.node;person.next=r.next;person.previous=-1;person.heading=r.heading;person.phase=r.phase;person.pause=r.pause;person.talkReady=r.talkReady;person.randomState=r.randomState;person.redContact=r.redContact;person.moving=false;person.blocked=person.obstacleCheck=0;
 #if UNITY_WEBGL && !UNITY_EDITOR
             person.previousPosition=person.position;person.previousHeading=person.heading;
 #endif
-            residentSlots[resident]=activeCount++;
         }
         private void RetireResident(int slot)
         {

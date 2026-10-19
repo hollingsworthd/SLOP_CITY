@@ -55,7 +55,9 @@ namespace SlopCity
         private Action visualGeometryChanged;
         internal const int MaximumVisualLandings = 3;
         public int VisualLandingCount => streamLandingVisuals ? landingVisuals.Count : FloorCount;
-        private bool retiring;
+        private bool retiring, visualAllocationWarning;
+        private float visualRetryAfter;
+        private int failedVisualFloor = -1;
         private float blockedSeconds, obstructionRetry;
         private bool returningFromObstruction, obstructed;
 
@@ -96,11 +98,11 @@ namespace SlopCity
                     throw new ArgumentException("Elevator floors must increase with at least 2.6 metres of headroom.");
             EnsureAssets();
             var root = new GameObject("Physical_Elevator");
-            root.transform.SetParent(parent, false);
-            root.transform.localPosition = new Vector3(shaftLocalCenter.x, 0, shaftLocalCenter.z);
-            var elevator = root.AddComponent<SlopCityElevator>();
             try
             {
+                root.transform.SetParent(parent, false);
+                root.transform.localPosition = new Vector3(shaftLocalCenter.x, 0, shaftLocalCenter.z);
+                var elevator = root.AddComponent<SlopCityElevator>();
                 elevator.elevations = (float[])floorElevations.Clone();
                 elevator.labels = new string[floorElevations.Length];
                 for (int i = 0; i < elevator.labels.Length; i++)
@@ -125,8 +127,8 @@ namespace SlopCity
             }
             catch
             {
-                root.SetActive(false);
-                if (Application.isPlaying) Destroy(root); else DestroyImmediate(root);
+                try { root.SetActive(false); }
+                finally { if (Application.isPlaying) Destroy(root); else DestroyImmediate(root); }
                 throw;
             }
         }
@@ -181,7 +183,20 @@ namespace SlopCity
 
         internal void RefreshLandingVisuals()
         {
-            if (!streamLandingVisuals || landingRoots == null) return;
+            if (!streamLandingVisuals || landingRoots == null || Time.unscaledTime < visualRetryAfter) return;
+            if (failedVisualFloor >= 0)
+            {
+                // A wanted landing can still contain a half-built list. Retry its
+                // retirement before treating that dictionary entry as a ready display.
+                if (landingVisuals.TryGetValue(failedVisualFloor, out List<GameObject> failed)
+                    && !RetireLandingVisuals(failed))
+                {
+                    visualRetryAfter = Time.unscaledTime + 5f;
+                    return;
+                }
+                landingVisuals.Remove(failedVisualFloor);
+                failedVisualFloor = -1;
+            }
             wantedLandingVisuals.Clear();
             wantedLandingVisuals.Add(currentFloor);
             wantedLandingVisuals.Add(moving ? targetFloor : currentFloor);
@@ -199,19 +214,27 @@ namespace SlopCity
             bool changed = retireLandingVisuals.Count != 0;
             foreach (int floor in retireLandingVisuals)
             {
-                foreach (GameObject visual in landingVisuals[floor]) SlopCityInteriorGeometry.Dispose(visual);
+                if (!RetireLandingVisuals(landingVisuals[floor]))
+                {
+                    visualRetryAfter = Time.unscaledTime + 5f;
+                    return; // Retained native objects still occupy the visual budget.
+                }
                 landingVisuals.Remove(floor);
             }
             foreach (int floor in wantedLandingVisuals)
             {
                 if (landingVisuals.ContainsKey(floor)) continue;
-                var visuals = new List<GameObject>();
-                // Register ownership before fallible renderer/font construction.
-                landingVisuals.Add(floor, visuals);
+                List<GameObject> visuals = null;
                 Transform landing = landingRoots[floor];
                 try
                 {
-                    foreach (BoxCollider body in landing.GetComponentsInChildren<BoxCollider>())
+                    visuals = new List<GameObject>();
+                    // Reserve every ownership slot before creating native surfaces.
+                    // An Add growing under memory pressure must not lose a just-built object.
+                    landingVisuals.Add(floor, visuals);
+                    BoxCollider[] bodies = landing.GetComponentsInChildren<BoxCollider>();
+                    visuals.Capacity = bodies.Length + 2;
+                    foreach (BoxCollider body in bodies)
                     {
                         Material finish = body.name == "Shaft_Front_Interfloor_Barrier" ? dark
                             : body.name == "Call_Button" ? buttonMaterial : steel;
@@ -223,14 +246,42 @@ namespace SlopCity
                     visuals.Add(Text(landing, FloorLabel(floor), new Vector3(-.85f, 1.70f, -1.235f), .055f).gameObject);
                     changed = true;
                 }
-                catch
+                catch (Exception error)
                 {
-                    foreach (GameObject visual in visuals) if (visual) SlopCityInteriorGeometry.Dispose(visual);
-                    landingVisuals.Remove(floor);
-                    throw;
+                    if (visuals == null || RetireLandingVisuals(visuals)) landingVisuals.Remove(floor);
+                    else failedVisualFloor = floor;
+                    visualRetryAfter = Time.unscaledTime + 5f;
+                    if (!initialized) throw;
+                    if (!visualAllocationWarning)
+                    {
+                        visualAllocationWarning = true;
+                        Debug.LogWarning("Elevator landing display is unavailable; visual allocation will retry: " + error.GetType().Name, this);
+                    }
+                    return;
                 }
             }
             if (changed) visualGeometryChanged?.Invoke();
+        }
+
+        private bool RetireLandingVisuals(List<GameObject> visuals)
+        {
+            for (int index = visuals.Count - 1; index >= 0; index--)
+            {
+                try
+                {
+                    if (visuals[index]) SlopCityInteriorGeometry.Dispose(visuals[index]);
+                    visuals.RemoveAt(index);
+                }
+                catch (Exception error)
+                {
+                    if (!visualAllocationWarning)
+                    {
+                        visualAllocationWarning = true;
+                        Debug.LogWarning("Elevator landing cleanup is pending: " + error.GetType().Name, this);
+                    }
+                }
+            }
+            return visuals.Count == 0;
         }
 
         public void ChangePage(int direction)
@@ -294,7 +345,10 @@ namespace SlopCity
         /// </summary>
         public bool ReleaseEmpty()
         {
-            if (!initialized || retiring || PlayerInside || DoorTouchesPassenger(cabinDoors, 0f)
+            // The streaming owner may need another attempt to retire its floors
+            // after this car has already accepted an empty handoff.
+            if (retiring) return true;
+            if (!initialized || PlayerInside || DoorTouchesPassenger(cabinDoors, 0f)
                 || DoorTouchesPassenger(landingDoors[currentFloor], 0f)) return false;
             requests.Clear(); Array.Clear(requested, 0, requested.Length);
             openWhenPrepared = waitingForFloor = false;
@@ -506,13 +560,12 @@ namespace SlopCity
 
         private static Transform Root(Transform parent, string name, Vector3 point)
         {
-            var value = new GameObject(name); value.transform.SetParent(parent, false); value.transform.localPosition = point;
-            return value.transform;
+            return SlopCityInteriorGeometry.Root(parent, name, point);
         }
 
         private static GameObject Box(Transform parent, string name, Vector3 center, Vector3 size, Material material, bool visual = true)
         {
-            var value = new GameObject(name); value.transform.SetParent(parent, false); value.transform.localPosition = center;
+            GameObject value = SlopCityInteriorGeometry.Root(parent, name, center).gameObject;
             // Colliders and moving door transforms exist at every floor. A distant
             // landing needs no renderer, mesh binding, font geometry or property block.
             if (visual) VisualSurface(value.transform, size, material);

@@ -11,7 +11,8 @@ namespace SlopCity
         private SlopCitySandbox sandbox;
         private SlopCityPlayerInput input;
         private Camera view;
-        private GameObject panel, desktop;
+        private GameObject panel, desktop, canvasObject;
+        private bool initialized;
         private Text heading, summary, hint, pageLabel;
         private readonly Text[] labels = new Text[8];
         private readonly Button[] rows = new Button[8];
@@ -30,12 +31,22 @@ namespace SlopCity
             var hud = player.GetComponent<SlopCitySalvageHud>();
             if (hud) return;
             hud = player.gameObject.AddComponent<SlopCitySalvageHud>();
-            hud.player = player; hud.sandbox = sandbox; hud.input = input; hud.view = camera; hud.Build();
+            hud.player = player; hud.sandbox = sandbox; hud.input = input; hud.view = camera;
+            try { hud.Build(); hud.initialized = true; }
+            catch
+            {
+                // The component exists before Build. Keep a partial panel out of
+                // Update/event callbacks, and retire even an unparented canvas.
+                hud.enabled = false;
+                try { hud.ReleaseUi(); }
+                finally { Destroy(hud); }
+                throw;
+            }
         }
         private void Build()
         {
             font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-            var canvas = new GameObject("SalvageInventoryHUD", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+            var canvas = canvasObject = new GameObject("SalvageInventoryHUD", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
             canvas.transform.SetParent(transform, false);
             canvas.GetComponent<Canvas>().renderMode = RenderMode.ScreenSpaceOverlay;
             canvas.GetComponent<Canvas>().sortingOrder = 200;
@@ -65,7 +76,7 @@ namespace SlopCity
             panel.SetActive(false);
         }
         private void Open(SlopCityPawnCounter counter)
-        { pawn = counter; showStock = false; page = 0; player.SetInventoryOpen(true); panel.SetActive(true); Refresh(); }
+        { if (!initialized) return; pawn = counter; showStock = false; page = 0; player.SetInventoryOpen(true); panel.SetActive(true); Refresh(); }
         private void Select(int row)
         {
             int index = page * visibleRows + row;
@@ -75,7 +86,7 @@ namespace SlopCity
         }
         private void Refresh()
         {
-            if (!panel) return;
+            if (!initialized || !panel) return;
             bool shop = sandbox.CanSellAt(pawn);
             if (!shop) showStock = false;
             var list = showStock ? sandbox.PawnStock : sandbox.Inventory;
@@ -97,7 +108,7 @@ namespace SlopCity
         }
         private void Update()
         {
-            if (!player || !input || !panel) return;
+            if (!initialized || !player || !input || !panel) return;
             if (lastSafe != Screen.safeArea || lastSize != new Vector2(Screen.width,Screen.height)) { Layout(); Refresh(); }
             if (panel.activeSelf != player.InventoryOpen) panel.SetActive(player.InventoryOpen);
             desktop.SetActive(input.GameplayEnabled && !input.UseTouchControls);
@@ -138,7 +149,10 @@ namespace SlopCity
         { rect.anchorMin=new Vector2(left,0);rect.anchorMax=new Vector2(right,0);rect.offsetMin=new Vector2(0,offset);rect.offsetMax=new Vector2(0,offset+height); }
         private RectTransform Rect(string name, Transform parent, Vector2 min, Vector2 max)
         {
-            var rect = new GameObject(name,typeof(RectTransform)).GetComponent<RectTransform>(); rect.SetParent(parent,false);
+            var item = new GameObject(name,typeof(RectTransform));
+            RectTransform rect;
+            try { rect = item.GetComponent<RectTransform>(); rect.SetParent(parent,false); }
+            catch { Destroy(item); throw; }
             rect.anchorMin=min; rect.anchorMax=max; rect.offsetMin=rect.offsetMax=Vector2.zero; return rect;
         }
         private Text Label(Transform parent,string text,Vector2 min,Vector2 max,int size)
@@ -153,7 +167,17 @@ namespace SlopCity
             var button=rect.gameObject.AddComponent<Button>();button.navigation=new Navigation {mode=Navigation.Mode.None}; button.onClick.AddListener(click);
             var text=Label(rect,label,new Vector2(.02f,0),new Vector2(.98f,1),20);text.alignment=TextAnchor.MiddleCenter;return button;
         }
-        private void OnDestroy()
-        { if (sandbox) { sandbox.InventoryRequested -= Open; sandbox.InventoryChanged -= Refresh; } }
+        private void ReleaseUi()
+        {
+            initialized = false;
+            if (sandbox) { sandbox.InventoryRequested -= Open; sandbox.InventoryChanged -= Refresh; }
+            if (canvasObject)
+            {
+                try { canvasObject.SetActive(false); }
+                finally { Destroy(canvasObject); }
+                canvasObject = null;
+            }
+        }
+        private void OnDestroy() { ReleaseUi(); }
     }
 }

@@ -14,6 +14,7 @@ namespace SlopCity
         private readonly List<GameObject> cleanProps = new List<GameObject>();
         private Transform cleanProp;
         private string roomId, cleanLabel;
+        private bool cleanupWarning;
         public int DetailPieces { get; private set; }
         public int BatchCount => meshes.Count;
         public int CleanablePropCount => cleanProps.Count;
@@ -27,15 +28,19 @@ namespace SlopCity
                 // The owner is identity-local to the floor, so this is exactly the
                 // original CombineInstance TRS. Only ownership/presentation changes.
                 var part = new GameObject(name, typeof(MeshFilter), typeof(MeshRenderer));
-                part.transform.SetParent(cleanProp, false);
-                part.transform.localPosition = point;
-                part.transform.localRotation = Quaternion.Euler(0, yaw, 0);
-                part.transform.localScale = size;
-                part.GetComponent<MeshFilter>().sharedMesh = shape ? shape : SlopCityInteriorGeometry.UnitCube;
-                Renderer renderer = part.GetComponent<Renderer>();
-                renderer.sharedMaterial = finish;
-                renderer.shadowCastingMode = ShadowCastingMode.Off;
-                renderer.receiveShadows = true;
+                try
+                {
+                    part.transform.SetParent(cleanProp, false);
+                    part.transform.localPosition = point;
+                    part.transform.localRotation = Quaternion.Euler(0, yaw, 0);
+                    part.transform.localScale = size;
+                    part.GetComponent<MeshFilter>().sharedMesh = shape ? shape : SlopCityInteriorGeometry.UnitCube;
+                    Renderer renderer = part.GetComponent<Renderer>();
+                    renderer.sharedMaterial = finish;
+                    renderer.shadowCastingMode = ShadowCastingMode.Off;
+                    renderer.receiveShadows = true;
+                }
+                catch { SlopCityInteriorGeometry.Dispose(part); throw; }
                 DetailPieces++;
                 if (standalone) EndCleanProp();
                 return;
@@ -66,10 +71,19 @@ namespace SlopCity
             propOrdinals.TryGetValue(label, out int ordinal);
             propOrdinals[label] = ordinal + 1;
             var owner = new GameObject("Room_Detail_" + roomId + "_" + label.Replace(' ', '_').Replace('/', '_') + "_" + ordinal);
-            owner.transform.SetParent(transform, false);
-            cleanProps.Add(owner);
-            cleanProp = owner.transform;
-            cleanLabel = label;
+            try
+            {
+                owner.transform.SetParent(transform, false);
+                cleanProps.Add(owner);
+                cleanProp = owner.transform;
+                cleanLabel = label;
+            }
+            catch
+            {
+                cleanProps.Remove(owner);
+                SlopCityInteriorGeometry.Dispose(owner);
+                throw;
+            }
         }
 
         private void EndCleanProp()
@@ -243,12 +257,39 @@ namespace SlopCity
         // Release native batch ownership explicitly at that same disposal boundary.
         internal void Release()
         {
-            foreach (Mesh mesh in meshes)
-                if (mesh) { if (Application.isPlaying) Destroy(mesh); else DestroyImmediate(mesh); }
-            meshes.Clear(); groups.Clear();
-            foreach (GameObject prop in cleanProps)
-                if (prop) { if (Application.isPlaying) Destroy(prop); else DestroyImmediate(prop); }
-            cleanProps.Clear(); propOrdinals.Clear(); cleanProp = null; cleanLabel = null;
+            // Native cleanup of one batch must not skip every remaining room owner.
+            for (int index = meshes.Count - 1; index >= 0; index--)
+            {
+                try
+                {
+                    Mesh mesh = meshes[index];
+                    if (mesh) { if (Application.isPlaying) Destroy(mesh); else DestroyImmediate(mesh); }
+                    meshes.RemoveAt(index);
+                }
+                catch (Exception error) { WarnCleanup(error); }
+            }
+            groups.Clear();
+            for (int index = cleanProps.Count - 1; index >= 0; index--)
+            {
+                try
+                {
+                    if (cleanProps[index]) SlopCityInteriorGeometry.Dispose(cleanProps[index]);
+                    cleanProps.RemoveAt(index);
+                }
+                catch (Exception error) { WarnCleanup(error); }
+            }
+            propOrdinals.Clear(); cleanProp = null; cleanLabel = null;
+            // Floor retirement retains this component/root when native disposal
+            // is refused, instead of destroying its last handle and admitting more.
+            if (meshes.Count != 0 || cleanProps.Count != 0)
+                throw new InvalidOperationException("Room content cleanup is still pending.");
+        }
+
+        private void WarnCleanup(Exception error)
+        {
+            if (cleanupWarning) return;
+            cleanupWarning = true;
+            Debug.LogWarning("Room content cleanup is pending: " + error.GetType().Name, this);
         }
 
         private void OnDestroy() { Release(); }

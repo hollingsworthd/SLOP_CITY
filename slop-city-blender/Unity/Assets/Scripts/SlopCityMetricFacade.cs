@@ -98,8 +98,8 @@ namespace SlopCity
                         // Static batching replaces the filter with a combined
                         // mesh. Retire our now-unused source rather than upload
                         // a second GPU copy solely to discard its CPU data.
-                        ownedMeshes.RemoveAt(index);
                         Destroy(mesh);
+                        ownedMeshes.RemoveAt(index);
                     }
                     else if (!physicsMeshes.Contains(mesh) && mesh.isReadable)
                         mesh.UploadMeshData(true);
@@ -279,9 +279,8 @@ namespace SlopCity
             }
             catch
             {
-                SlopCityInteriorGeometry.Dispose(stage.gameObject);
-                for (int i = ownedMeshes.Count - 1; i >= initialMeshes; i--)
-                { DisposeMesh(ownedMeshes[i]); ownedMeshes.RemoveAt(i); }
+                try { SlopCityInteriorGeometry.Dispose(stage.gameObject); }
+                finally { ReleaseOwnedMeshes(initialMeshes); }
                 throw;
             }
         }
@@ -476,8 +475,18 @@ namespace SlopCity
 
         private void OnDestroy()
         {
-            foreach (Mesh mesh in ownedMeshes) DisposeMesh(mesh);
-            ownedMeshes.Clear();
+            ReleaseOwnedMeshes(0);
+        }
+
+        private void ReleaseOwnedMeshes(int first)
+        {
+            bool pending = false;
+            for (int index = ownedMeshes.Count - 1; index >= first; index--)
+            {
+                try { DisposeMesh(ownedMeshes[index]); ownedMeshes.RemoveAt(index); }
+                catch (Exception) { pending = true; }
+            }
+            if (pending) Debug.LogWarning("Facade cleanup was interrupted; refused meshes remain owned.", this);
         }
 
         private static void DisposeMesh(Mesh mesh)
