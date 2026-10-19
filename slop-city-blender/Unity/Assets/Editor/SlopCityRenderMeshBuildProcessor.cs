@@ -9,7 +9,7 @@ using UnityEngine.SceneManagement;
 namespace SlopCity.Editor
 {
     /// <summary>Discard immutable facade CPU data in player scenes before it inflates runtime memory.</summary>
-    [BuildCallbackVersion(2)]
+    [BuildCallbackVersion(3)]
     public sealed class SlopCityRenderMeshBuildProcessor : IProcessSceneWithReport
     {
         // The existing callback prepares geometry and captures browser bounds.
@@ -19,6 +19,7 @@ namespace SlopCity.Editor
         public void OnProcessScene(Scene scene, BuildReport report)
         {
             if (report == null || !BuildPipeline.isBuildingPlayer) return;
+            bool staticBatchingEnabled = PlayerSettings.GetStaticBatchingForPlatform(report.summary.platform);
             var batching = new HashSet<Mesh>();
             var unbatched = new HashSet<Mesh>();
             var requiredReadable = new HashSet<Mesh>();
@@ -31,7 +32,7 @@ namespace SlopCity.Editor
                     Mesh mesh = filter.sharedMesh;
                     if (!mesh) continue;
                     Renderer renderer = filter.GetComponent<Renderer>();
-                    bool willBatch = renderer && renderer.enabled
+                    bool willBatch = staticBatchingEnabled && renderer && renderer.enabled
                         && (GameObjectUtility.GetStaticEditorFlags(filter.gameObject) & StaticEditorFlags.BatchingStatic) != 0;
                     if (willBatch) batching.Add(mesh); else unbatched.Add(mesh);
                 }

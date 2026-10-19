@@ -251,7 +251,7 @@ mergeInto(LibraryManager.library, {
     // receives the same frame once the native decoder has current-frame data.
     if (!(decoder.videoWidth > 0 && decoder.videoHeight > 0) || decoder.seeking
       || (!destinationChanged && decoder.lastUpdateTextureTime === decoder.currentTime)) return false;
-    if (decoder.videoWidth > 4096 || decoder.videoHeight > 4096 || decoder.videoWidth * decoder.videoHeight > 8388608) {
+    if (decoder.videoWidth > (slopCityUsesMobileVideo(decoder) ? 480 : 4096) || decoder.videoHeight > (slopCityUsesMobileVideo(decoder) ? 480 : 4096) || decoder.videoWidth * decoder.videoHeight > 8388608) {
       _JS_Video_Pause(video);
       decoder.slopCityTextureRetryAfter = Date.now() + 30000;
       return false;
@@ -293,7 +293,7 @@ mergeInto(LibraryManager.library, {
         for (var j = 0; j < graphicsState.capabilities.length; ++j)
           GLctx.disable(graphicsState.capabilities[j]);
       }
-      var uploaded = jsIsWebkit()
+      var uploaded = (jsIsWebkit() || slopCityUsesMobileVideo(decoder))
         ? slopCityWebkitVideoUpload(video, texture, adjustToLinearspace)
         : slopCityNativeVideoUpdateToTexture(video, texture, adjustToLinearspace);
       if (uploaded) {

@@ -123,6 +123,7 @@ namespace SlopCity
             public int count, reserved;
             public Vector4[] hipPoses;
             public MaterialPropertyBlock properties;
+            public bool poseCapacityChanged;
         }
 
         public void Configure(SlopCityCrowdVisuals meshLibrary, SlopCityCrowdRoute[] bakedRoutes, SlopCityNpcSeed[] people)
@@ -749,7 +750,13 @@ namespace SlopCity
                     Debug.LogWarning("Crowd instance count exceeded its reserved matrix buffer; retry requires reconfiguration or re-enabling.", this);
                     return;
                 }
-                if(batch.properties!=null)batch.properties.SetVectorArray("_HipPose",batch.hipPoses);
+                if (batch.properties != null)
+                {
+                    // Unity fixes vector-array capacity on its first assignment.
+                    // Reset only after growth so a larger visible batch is not truncated.
+                    if (batch.poseCapacityChanged) { batch.properties.Clear(); batch.poseCapacityChanged = false; }
+                    batch.properties.SetVectorArray("_HipPose", batch.hipPoses);
+                }
                 Graphics.DrawMeshInstanced(batch.mesh, 0, batch.material, batch.matrices, batch.count,
 #if UNITY_WEBGL && !UNITY_EDITOR
                         batch.properties, ShadowCastingMode.Off, false, gameObject.layer, camera, LightProbeUsage.Off);
@@ -1376,7 +1383,7 @@ namespace SlopCity
                 // its observed visible count, retaining the API's hard 1023 cap.
                 batch = new DrawBatch { mesh = mesh, material = material,
                     matrices = new Matrix4x4[16],
-                    hipPoses=(wardrobe != null && wardrobe.animatedTrousers && (mesh==wardrobe.trouserYokeMesh||mesh==wardrobe.coarseTrouserMesh||mesh==wardrobe.dressMesh||mesh==wardrobe.coarseDressMesh))?new Vector4[1023]:null,
+                    hipPoses=(wardrobe != null && wardrobe.animatedTrousers && (mesh==wardrobe.trouserYokeMesh||mesh==wardrobe.coarseTrouserMesh||mesh==wardrobe.dressMesh||mesh==wardrobe.coarseDressMesh))?new Vector4[16]:null,
                     properties=(wardrobe != null && wardrobe.animatedTrousers && (mesh==wardrobe.trouserYokeMesh||mesh==wardrobe.coarseTrouserMesh||mesh==wardrobe.dressMesh||mesh==wardrobe.coarseDressMesh))?new MaterialPropertyBlock():null };
                 batchLookup.Add(key, batch);
                 try { batches.Add(batch); }
@@ -1387,7 +1394,16 @@ namespace SlopCity
                 int needed=batch.count+(++batch.reserved);
                 if(needed>1023||pendingPartCount>=pendingParts.Length){reservationFailed=true;return;}
                 pendingParts[pendingPartCount++]=new PendingPart{batch=batch,matrix=matrix,hipPose=hipPose};
-                if(needed>batch.matrices.Length)Array.Resize(ref batch.matrices,Mathf.Min(1023,Mathf.Max(needed,batch.matrices.Length*2)));
+                if (needed > batch.matrices.Length)
+                {
+                    int capacity = Mathf.Min(1023, Mathf.Max(needed, batch.matrices.Length * 2));
+                    Array.Resize(ref batch.matrices, capacity);
+                    if (batch.hipPoses != null)
+                    {
+                        Array.Resize(ref batch.hipPoses, capacity);
+                        batch.poseCapacityChanged = true;
+                    }
+                }
                 return;
             }
             // Every key/repetition was reserved atomically before any part was emitted.

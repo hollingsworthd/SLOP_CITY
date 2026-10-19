@@ -408,10 +408,21 @@ namespace SlopCity
                 && Mathf.Abs(LocalFloorElevations[streamingFloor] - local.y)
                     <= Mathf.Abs(LocalFloorElevations[nearest] - local.y) + .35f) nearest = streamingFloor;
             streamingFloor = nearest;
-            var wanted = new HashSet<int> { nearest };
+            var wanted = new HashSet<int>();
+            bool supportedByMovingCar = world && world.DeferTowerArchitecture
+                && Elevator && Elevator.IsMoving && Elevator.PlayerInside;
+            // A rider already has the car's solid support. Passing a floor in
+            // its closed shaft does not require constructing that floor's rooms.
+            if (!supportedByMovingCar) wanted.Add(nearest);
             if (Elevator) wanted.Add(Elevator.IsMoving ? Elevator.TargetFloor : Elevator.CurrentFloor);
-            if (wanted.Count < count && nearest > 0) wanted.Add(nearest - 1);
-            if (wanted.Count < count && nearest + 1 < FloorCount) wanted.Add(nearest + 1);
+            // The floor budget is a ceiling. Touch walking needs its supported
+            // room and the lift's destination, not a speculative furnished neighbour
+            // (including upstairs while merely approaching the outdoor doorway).
+            if (!world || !world.DeferTowerArchitecture)
+            {
+                if (wanted.Count < count && nearest > 0) wanted.Add(nearest - 1);
+                if (wanted.Count < count && nearest + 1 < FloorCount) wanted.Add(nearest + 1);
+            }
             foreach (int floor in loaded.Keys.ToArray()) if (!wanted.Contains(floor)) ReleaseFloor(floor);
             // Furnishing meshes use deferred Destroy in a player. Let those native
             // resources retire at frame end before admitting replacement rooms.

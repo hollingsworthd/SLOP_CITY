@@ -53,6 +53,8 @@ namespace SlopCity.Editor
                     receipt.memoryGrowthMode = PlayerSettings.WebGL.memoryGrowthMode.ToString();
                     receipt.exceptionSupport = PlayerSettings.WebGL.exceptionSupport.ToString();
                     receipt.memoryLinearGrowthStepMiB = PlayerSettings.WebGL.linearMemoryGrowthStep;
+                    receipt.staticBatching = PlayerSettings.GetStaticBatchingForPlatform(BuildTarget.WebGL);
+                    receipt.powerPreference = PlayerSettings.WebGL.powerPreference.ToString();
                     receipt.worldTextureImports = textures.entries;
                     BuildReport report = BuildPipeline.BuildPlayer(new BuildPlayerOptions
                     {
@@ -169,10 +171,11 @@ namespace SlopCity.Editor
                     // DXT expands to RGBA on mobile GPUs without S3TC. ETC2 keeps
                     // imported textures compressed on the WebGL 2 mobile target.
                     EditorUserBuildSettings.webGLBuildSubtarget = WebGLTextureSubtarget.ETC2;
-                    // The Web scene budget admits unique immutable meshes and small
-                    // repeated meshes (at most 256 vertices, within a 64 MiB copy budget).
-                    // Larger repeated architecture keeps shared instanced geometry.
-                    PlayerSettings.SetStaticBatchingForPlatform(BuildTarget.WebGL, true);
+                    // Keep immutable source meshes shared. Static batching adds
+                    // combined vertex/index copies across the resident city; the
+                    // Web geometry pass already preserves instancing and releases
+                    // render-only CPU streams without those additional copies.
+                    PlayerSettings.SetStaticBatchingForPlatform(BuildTarget.WebGL, false);
                     PlayerSettings.SetDynamicBatchingForPlatform(BuildTarget.WebGL, false);
                     PlayerSettings.WebGL.template = "PROJECT:SlopCity";
                     PlayerSettings.WebGL.compressionFormat = WebGLCompressionFormat.Gzip;
@@ -183,15 +186,18 @@ namespace SlopCity.Editor
                     // Keep null and array-bounds checks in the shipped IL2CPP player.
                     // Explicit-throw-only builds can turn those faults into Wasm traps.
                     PlayerSettings.WebGL.exceptionSupport = WebGLExceptionSupport.FullWithoutStacktrace;
-                    PlayerSettings.WebGL.initialMemorySize = 256;
+                    // Start smaller; real allocations may still grow this heap.
+                    // This reduces the initial reservation, not the city's
+                    // measured working set or its eventual memory requirement.
+                    PlayerSettings.WebGL.initialMemorySize = 128;
                     PlayerSettings.WebGL.maximumMemorySize = 1024;
-                    // Do not commit a 512 MiB heap before the city needs it, or allow
-                    // Wasm alone to approach the observed 2 GiB iPhone process ceiling.
-                    // Grow for actual allocations in small increments; this limit is
-                    // only the Wasm heap, not a measurement of total browser memory.
+                    // Preserve headroom for the full city rather than substituting
+                    // a smaller unmeasured maximum that can turn pressure into an
+                    // allocation trap. Linear growth bounds unused heap headroom;
+                    // these settings establish neither process RAM nor an iOS limit.
                     PlayerSettings.WebGL.memoryGrowthMode = WebGLMemoryGrowthMode.Linear;
                     PlayerSettings.WebGL.linearMemoryGrowthStep = 16;
-                    PlayerSettings.WebGL.powerPreference = WebGLPowerPreference.HighPerformance;
+                    PlayerSettings.WebGL.powerPreference = WebGLPowerPreference.Default;
                     AssetDatabase.SaveAssets();
                 }
                 catch { Dispose(); throw; }
@@ -243,6 +249,8 @@ namespace SlopCity.Editor
             public string memoryGrowthMode;
             public string exceptionSupport;
             public int memoryLinearGrowthStepMiB;
+            public bool staticBatching;
+            public string powerPreference;
             public List<SlopCityWebTextureBudgetScope.Entry> worldTextureImports = new List<SlopCityWebTextureBudgetScope.Entry>();
             public string startedAtUtc;
             public string finishedAtUtc;

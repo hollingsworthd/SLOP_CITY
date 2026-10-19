@@ -10,6 +10,7 @@ mergeInto(LibraryManager.library, {
   // decoder must release its source, without throwing that grant away during
   // a held walking gesture. One source-free element is not an active decoder.
   $slopCityReusableIOSVideo: null,
+  $slopCityVideoAdmissionLimit: 480,
   $slopCityDisposingVideoDecoders: false,
   $slopCityNativeVideoDestroy: LibraryManager.library.JS_Video_Destroy,
   $slopCityNativeVideoDestroy__deps: LibraryManager.library.JS_Video_Destroy__deps.slice(),
@@ -24,11 +25,39 @@ mergeInto(LibraryManager.library, {
       || (nav.platform === 'MacIntel' && nav.maxTouchPoints > 1));
   },
 
+  $slopCityAdmitVideoMetadata__deps: ['$slopCityUsesMobileVideo', '$slopCityVideoAdmissionLimit'],
+  $slopCityAdmitVideoMetadata: function (video) {
+    if (video.slopCityRejectedDimensions) {
+      if (!video.slopCityDimensionErrorReported && typeof video.onerror === 'function') {
+        video.slopCityDimensionErrorReported = true;
+        video.onerror({ target: { error: { code: 4 } } });
+      }
+      return false;
+    }
+    if (!(video.readyState >= 1)) return false;
+    var width = video.videoWidth, height = video.videoHeight;
+    var edge = slopCityUsesMobileVideo(video) ? slopCityVideoAdmissionLimit : 4096;
+    if (width > edge || height > edge || width * height > 8388608) {
+      // Metadata is the earliest browser dimension boundary. Prevent play and
+      // texture creation, then abort resource selection instead of retaining a
+      // paused oversized decoder. Packaging bounds the encoded source itself.
+      video.slopCityRejectedDimensions = true;
+      video.isReady = false;
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      return false;
+    }
+    return true;
+  },
+
   JS_Video_IsReady__proxy: 'sync',
   JS_Video_IsReady__sig: 'ii',
-  JS_Video_IsReady__deps: ['$videoInstances', '$slopCityUsesIOSVideo', '$slopCityNativeVideoIsReady'],
+  JS_Video_IsReady__deps: ['$videoInstances', '$slopCityUsesIOSVideo', '$slopCityNativeVideoIsReady', '$slopCityAdmitVideoMetadata', '$slopCityUsesMobileVideo'],
   JS_Video_IsReady: function (id) {
-    if (!slopCityUsesIOSVideo()) return slopCityNativeVideoIsReady(id);
+    var candidate = videoInstances[id];
+    if (!candidate || !slopCityAdmitVideoMetadata(candidate)) return false;
+    if (!slopCityUsesMobileVideo(candidate)) return slopCityNativeVideoIsReady(id);
     // Keep Unity's iOS metadata readiness workaround for desktop-UA iPads too.
     // This permits startup; existing dimensions, seeking and native upload
     // guards still decide whether a picture can be copied to the world display.
@@ -65,11 +94,12 @@ mergeInto(LibraryManager.library, {
 
   JS_Video_Create__proxy: 'sync',
   JS_Video_Create__sig: 'ii',
-  JS_Video_Create__deps: ['$videoInstances', '$videoInstanceIdCounter', '$hasSRGBATextures', '$UTF8ToString', '$jsIsWebkit', '$slopCityDisposeOwnedVideoDecoders', '$slopCityUsesIOSVideo', '$slopCityReusableIOSVideo'],
+  JS_Video_Create__deps: ['$videoInstances', '$videoInstanceIdCounter', '$hasSRGBATextures', '$UTF8ToString', '$jsIsWebkit', '$slopCityDisposeOwnedVideoDecoders', '$slopCityUsesIOSVideo', '$slopCityReusableIOSVideo', '$slopCityAdmitVideoMetadata', '$slopCityUsesMobileVideo'],
   JS_Video_Create: function (url) {
     var str = UTF8ToString(url);
     var ios = slopCityUsesIOSVideo();
     var video = ios && slopCityReusableIOSVideo;
+    var retiredAt = video ? video.slopCityRetiredAt || 0 : 0;
     if (video) {
       slopCityReusableIOSVideo = null;
       // Only the same element's confirmed audio grant survives. Every source
@@ -121,11 +151,32 @@ mergeInto(LibraryManager.library, {
       }
       requestFrame(true);
     }
-    video.src = str;
+    // Configure resource selection before assigning the URL. Metadata-only
+    // preparation avoids eager full-clip buffering before the single slot plays.
+    video.preload = slopCityUsesMobileVideo(video) ? 'metadata' : 'auto';
+    function metadataListener() {
+      if (current()) slopCityAdmitVideoMetadata(video);
+    }
+    video.slopCityMetadataListener = metadataListener;
+    video.addEventListener('loadedmetadata', metadataListener);
+    video.addEventListener('resize', metadataListener);
     video.muted = true;
     video.setAttribute('muted', '');
     video.setAttribute('playsinline', '');
     video.crossOrigin = 'anonymous';
+    function admitSource() {
+      if (!current()) return;
+      // load() aborts the old source asynchronously. Wait for its observable
+      // empty state and a quiet interval before attaching the replacement.
+      if (ios && retiredAt && (Date.now() - retiredAt < 250
+        || video.readyState !== 0 || video.currentSrc)) {
+        video.slopCitySourceAdmissionTimer = setTimeout(admitSource, 50);
+        return;
+      }
+      delete video.slopCitySourceAdmissionTimer;
+      video.src = str;
+    }
+    admitSource();
     if (hasSRGBATextures == null) {
       hasSRGBATextures = true;
       if (Module.SystemInfo.browser === 'Firefox' && Module.SystemInfo.browserVersion < 108) hasSRGBATextures = false;
@@ -141,11 +192,18 @@ mergeInto(LibraryManager.library, {
     var video = videoInstances[id];
     if (!video) return;
     video.slopCityDestroyed = true;
+    if (video.slopCitySourceAdmissionTimer) clearTimeout(video.slopCitySourceAdmissionTimer);
+    delete video.slopCitySourceAdmissionTimer;
     slopCityCancelCreatedVideoFrame(video);
     slopCityReleaseVideoTexture(video);
     if (video.slopCityLoadedDataListener) {
       video.removeEventListener('loadeddata', video.slopCityLoadedDataListener);
       delete video.slopCityLoadedDataListener;
+    }
+    if (video.slopCityMetadataListener) {
+      video.removeEventListener('loadedmetadata', video.slopCityMetadataListener);
+      video.removeEventListener('resize', video.slopCityMetadataListener);
+      delete video.slopCityMetadataListener;
     }
     // Retain Unity's loop/gesture/callback cleanup and identity removal.
     slopCityNativeVideoDestroy(id);
@@ -155,10 +213,13 @@ mergeInto(LibraryManager.library, {
     video.muted = true;
     video.removeAttribute('src');
     video.load();
+    video.slopCityRetiredAt = Date.now();
+    // Reuse the same iOS element even before an audio grant: repeated street
+    // handoffs must not manufacture a new WebKit media element each time.
     // Never carry permission to a different element, retain a playing source,
     // or keep more than one empty shell. Teardown drops even this final shell.
     if (!slopCityDisposingVideoDecoders && !slopCityReusableIOSVideo
-      && slopCityUsesIOSVideo() && video.slopCityAudioUnlocked === true)
+      && slopCityUsesIOSVideo())
       slopCityReusableIOSVideo = video;
   }
 });

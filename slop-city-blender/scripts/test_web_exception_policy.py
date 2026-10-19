@@ -16,7 +16,7 @@ public enum ManagedStrippingLevel { High, Low }
 public enum GraphicsDeviceType { Vulkan, OpenGLES3 }
 public enum WebGLCompressionFormat { Brotli, Gzip }
 public enum WebGLMemoryGrowthMode { Geometric, Linear }
-public enum WebGLPowerPreference { LowPower, HighPerformance }
+public enum WebGLPowerPreference { Default, LowPower, HighPerformance }
 public enum WebGLTextureSubtarget { DXT, ETC2 }
 public enum WebGLExceptionSupport { None, ExplicitlyThrownExceptionsOnly, FullWithoutStacktrace, FullWithStacktrace }
 public static class SlopCityBatchBuild { public const string ProductName="Game"; }
@@ -75,7 +75,7 @@ __SCOPE__
    PlayerSettings.WebGL.exceptionSupport=prior;string before=PlayerSettings.Snapshot();
    using(new WebSettingsScope()){
     Assert(PlayerSettings.WebGL.exceptionSupport==WebGLExceptionSupport.FullWithoutStacktrace,"Every prior setting gets null/bounds checks");
-    Assert(PlayerSettings.WebGL.initialMemorySize==256&&PlayerSettings.WebGL.maximumMemorySize==1024,"Memory budget remains intact");
+    Assert(PlayerSettings.WebGL.initialMemorySize==128&&PlayerSettings.WebGL.maximumMemorySize==1024,"Memory budget remains intact");
    }
    Assert(PlayerSettings.Snapshot()==before,"Successful export restores all original settings");
    for(int failure=0;failure<3;failure++){

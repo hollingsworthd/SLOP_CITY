@@ -216,10 +216,10 @@ mergeInto(LibraryManager.library, {
 
   JS_Video_Play__proxy: 'sync',
   JS_Video_Play__sig: 'vii',
-  JS_Video_Play__deps: ['$videoInstances', 'JS_Video_SetLoop', '$jsVideoAllAudioTracksAreDisabled', '$jsVideoPendingBlockedVideos', '$jsVideoAddPendingBlockedVideo', '$jsVideoRemovePendingBlockedVideo', '$slopCityVideoRetryInFlight', '$slopCityRequestVideoFrame', '$slopCityClearVideoAttemptTimer', '$slopCityTryMutedVideoFallback', '$slopCityApplyVideoMute', '$slopCityUsesMobileVideo', '$slopCityWatchVideoPicture', '$slopCityCancelVideoPictureWatch'],
+  JS_Video_Play__deps: ['$videoInstances', 'JS_Video_SetLoop', '$jsVideoAllAudioTracksAreDisabled', '$jsVideoPendingBlockedVideos', '$jsVideoAddPendingBlockedVideo', '$jsVideoRemovePendingBlockedVideo', '$slopCityVideoRetryInFlight', '$slopCityRequestVideoFrame', '$slopCityClearVideoAttemptTimer', '$slopCityTryMutedVideoFallback', '$slopCityApplyVideoMute', '$slopCityUsesMobileVideo', '$slopCityWatchVideoPicture', '$slopCityCancelVideoPictureWatch', '$slopCityAdmitVideoMetadata'],
   JS_Video_Play: function (video, muted) {
     var v = videoInstances[video];
-    if (!v) return;
+    if (!v || !slopCityAdmitVideoMetadata(v)) return;
     // Keep the latest audio request even while an existing play waits.
     v.slopCityRequestedMuted = muted || jsVideoAllAudioTracksAreDisabled(v);
     slopCityApplyVideoMute(video, v);

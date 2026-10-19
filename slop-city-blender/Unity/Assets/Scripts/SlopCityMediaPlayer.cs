@@ -608,6 +608,10 @@ namespace SlopCity
         private void OnPrepared(VideoPlayer source)
         {
             if (source != player || state != PlaybackState.Loading) return;
+#if UNITY_WEBGL && !UNITY_EDITOR
+            if (MobileWebBudget && (source.width > 480 || source.height > 480))
+            { Fail("Clip resolution exceeds this browser's safe decode limit."); return; }
+#endif
             if (source.width > 4096 || source.height > 4096 || (ulong)source.width * source.height > 8UL * 1024 * 1024)
             { Fail("This clip exceeds the safe decode resolution. Choose another channel."); return; }
             state = PlaybackState.Ready;

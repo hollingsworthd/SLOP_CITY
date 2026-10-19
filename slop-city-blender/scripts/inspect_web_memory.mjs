@@ -23,7 +23,7 @@ while(cursor<wasm.bytes.length){const id=wasm.bytes[cursor++],size=leb(),end=cur
  cursor=end;
 }
 if(memories.length!==1)throw Error('Expected one defined Unity Wasm memory.');
-const limits={initialHeapBytes:256*1024**2,maximumHeapBytes:1024*1024**2,packagedDataBytes:112*1024**2};
+const limits={initialHeapBytes:128*1024**2,maximumHeapBytes:1024*1024**2,packagedDataBytes:112*1024**2};
 const passed=memories[0].initialBytes<=limits.initialHeapBytes&&memories[0].maximumBytes<=limits.maximumHeapBytes&&data.bytes.length<=limits.packagedDataBytes;
 console.log(JSON.stringify({checkedAtUtc:new Date().toISOString(),exportPath:root,passed,limits,wasm:{sha256:wasm.sha256,compressedBytes:wasm.compressedBytes,uncompressedBytes:wasm.bytes.length,...memories[0]},packagedData:{sha256:data.sha256,compressedBytes:data.compressedBytes,uncompressedBytes:data.bytes.length},interpretation:'Build buffer sizes only; not physical device RAM, resident memory, GPU allocations or a leak measurement. Packaged backing and live Unity objects must not be counted twice.'},null,2));
 if(!passed)process.exitCode=1;

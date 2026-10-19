@@ -14,7 +14,7 @@ function resize(width,height,density,touch=true,maximum=16384){
 test('touch canvas caps total backing pixels while preserving aspect ratio and scene budget',()=>{
  for(const [width,height,density] of [[1024,1366,2],[1366,1024,2],[430,932,3],[932,430,3],[2048,2732,4],[1,1,3],[800,600,1]]){
   const {canvas,window}=resize(width,height,density);
-  assert.ok(canvas.width*canvas.height<=1920*1080);
+  assert.ok(canvas.width*canvas.height<=921600);
   assert.ok(canvas.width>=1&&canvas.height>=1);
   assert.ok(Math.abs(canvas.width-window.slopCityDisplayPixelRatio*width)<1.001);
   assert.ok(Math.abs(canvas.height-window.slopCityDisplayPixelRatio*height)<1.001);

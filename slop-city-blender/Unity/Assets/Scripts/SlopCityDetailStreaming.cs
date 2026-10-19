@@ -30,7 +30,7 @@ namespace SlopCity
         {
             public Mesh mesh;
             public int generation, failures;
-            public float retryAt;
+            public float retryAt, lastVisibleAt;
         }
         [SerializeField] private DetailEntry[] entries = Array.Empty<DetailEntry>();
         private Lease[] leases;
@@ -43,8 +43,19 @@ namespace SlopCity
         private bool cleanupWarning;
 #if UNITY_WEBGL && !UNITY_EDITOR
         private Camera view;
+        private readonly Plane[] admissionFrustum = new Plane[6];
         private float nextTick;
 #endif
+        private const float InvisibleRetentionSeconds = 3f;
+        private bool VisibleToAdmissionCamera(int index)
+        {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            DetailEntry entry = entries[index];
+            return entry.target && GeometryUtility.TestPlanesAABB(admissionFrustum, WorldBounds(entry.target.transform, entry.localBounds));
+#else
+            return true;
+#endif
+        }
         private bool testing, disposed;
         public IReadOnlyList<DetailEntry> Entries => entries;
         public long ResidentBytes => residentBytes;
@@ -87,13 +98,25 @@ namespace SlopCity
         {
             if (disposed) return;
             EnsureLeases();
+            bool visibleAdmission = false;
+#if UNITY_WEBGL && !UNITY_EDITOR
+            // Optional street detail follows the touch camera's actual demand.
+            // Keep a short turn-back grace period instead of filling the entire
+            // resident ceiling with geometry behind the player while walking.
+            visibleAdmission = network && view && Application.isMobilePlatform;
+            if (visibleAdmission) GeometryUtility.CalculateFrustumPlanes(view, admissionFrustum);
+#endif
             if (pendingIndex >= 0 && DistanceSquared(pendingIndex, position) > RetirementDistance * RetirementDistance)
                 Retire(pendingIndex);
             bool retired = false;
             for (int i = 0; i < entries.Length; i++)
             {
                 float distance = DistanceSquared(i, position);
-                if (leases[i].mesh && distance > RetirementDistance * RetirementDistance) { Retire(i); retired = true; }
+                bool visible = !visibleAdmission || VisibleToAdmissionCamera(i);
+                if (visible) leases[i].lastVisibleAt = now;
+                bool stale = !visible && now - leases[i].lastVisibleAt >= InvisibleRetentionSeconds;
+                if ((leases[i].mesh || pendingIndex == i) && (distance > RetirementDistance * RetirementDistance || stale))
+                { Retire(i); retired = true; }
                 if (distance > RetirementDistance * RetirementDistance) { leases[i].failures = 0; leases[i].retryAt = 0; }
             }
             // Destruction is deferred in a player. Never allocate a replacement in that same frame.
@@ -102,6 +125,7 @@ namespace SlopCity
             for (int i = 0; i < entries.Length; i++)
             {
                 if (leases[i].mesh || leases[i].failures >= 3 || now < leases[i].retryAt || !ValidEntry(entries[i])) continue;
+                if (visibleAdmission && !VisibleToAdmissionCamera(i)) continue;
                 float distance = DistanceSquared(i, position);
                 if (distance < closest) { closest = distance; best = i; }
             }
@@ -205,9 +229,9 @@ namespace SlopCity
                 leases[index].failures = 0;
                 pendingIndex = -1;
 #if UNITY_WEBGL && !UNITY_EDITOR
-                // Fill the nearby budget one request at a time without imposing
-                // another polling interval after every successful small surface.
-                nextTick = 0;
+                // Demand is reevaluated on the next streaming tick, allowing
+                // native uploads and retired resources to settle between requests.
+                nextTick = Mathf.Max(nextTick, Time.unscaledTime + .2f);
 #endif
                 return true;
             }

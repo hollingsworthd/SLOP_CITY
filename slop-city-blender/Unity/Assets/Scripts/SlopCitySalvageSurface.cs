@@ -35,11 +35,22 @@ namespace SlopCity
         private int savedStateRestoreDepth, indexRebuildCount;
         private bool savedStateRestoreDirty;
         private float nextAdmissionRetry;
-        private long workingReservationBytes;
+        private OwnedEdit workingOwner;
+        // Keep native ownership outside a component that may already be in
+        // OnDestroy. Deferred or refused destruction still consumes the budget.
+        private sealed class OwnedEdit
+        {
+            public UnityEngine.Object resource;
+            public long bytes;
+            public bool retired, destroyRequested, warned;
+            public int releaseAfterFrame;
+        }
+        private static readonly List<OwnedEdit> OwnedEdits = new List<OwnedEdit>();
+        private static int retirementSweepFrame = -1;
         private bool workingAllocationFailed;
         private long failedAdmissionOwnedBytes;
         private static long ownedBytes;
-        private sealed class Finish { public Material material; public int users; public bool owned; }
+        private sealed class Finish { public Material material; public int users; public bool owned; public OwnedEdit owner; }
         private static readonly Dictionary<Material, Finish> Finishes = new Dictionary<Material, Finish>();
         public int PartCount => parts.Length;
         public Mesh SourceMesh => source;
@@ -136,6 +147,7 @@ namespace SlopCity
             if (materialBound || !authoredMaterial || !display) return;
             Material previous = display.sharedMaterial;
             Material candidate = null;
+            OwnedEdit candidateOwner = null;
             Finish finish = null;
             bool created = false;
             try
@@ -149,7 +161,10 @@ namespace SlopCity
                     if (!supplied)
                     {
                         // Keep the local owner before any fallible native setter/cache admission.
+                        candidateOwner = new OwnedEdit();
+                        OwnedEdits.Add(candidateOwner);
                         candidate = material = new Material(authoredMaterial);
+                        candidateOwner.resource = candidate;
                         material.name = authoredMaterial.name + "_SalvagePolish";
                         material.shader = shader;
                         material.SetFloat("_HasMetallicMap", authoredMaterial.GetTexture("_MetallicGlossMap") ? 1 : 0);
@@ -157,7 +172,7 @@ namespace SlopCity
                         material.SetFloat("_HasOcclusionMap", authoredMaterial.GetTexture("_OcclusionMap") ? 1 : 0);
                         material.SetFloat("_WetFilmCoverage", 0);
                     }
-                    finish = new Finish { material = material, owned = !supplied };
+                    finish = new Finish { material = material, owned = !supplied, owner = candidateOwner };
                     created = true;
                     Finishes.Add(authoredMaterial, finish);
                 }
@@ -177,7 +192,7 @@ namespace SlopCity
                 {
                     if (created && Finishes.TryGetValue(authoredMaterial, out Finish cached) && ReferenceEquals(cached, finish))
                         Finishes.Remove(authoredMaterial);
-                    if (candidate) Dispose(candidate);
+                    if (candidateOwner != null) { candidateOwner.retired = true; TryRetireEdit(candidateOwner); }
                 }
                 throw;
             }
@@ -281,6 +296,7 @@ namespace SlopCity
         }
         private void LateUpdate()
         {
+            DrainRetiredEdits();
             if (!pendingSavedState || Time.unscaledTime < nextAdmissionRetry) return;
             nextAdmissionRetry = Time.unscaledTime + 1;
             if (savedStateRestoreDepth == 0) FlushSavedState();
@@ -316,6 +332,7 @@ namespace SlopCity
         }
         private bool EnsureWorking(bool rebuild = true)
         {
+            DrainRetiredEdits();
             if (working) return true;
             if (!source || !source.isReadable || !target || !collision || editBytes <= 0
                 || editBytes > MaximumOwnedBytes || ownedBytes > MaximumOwnedBytes - editBytes) return false;
@@ -325,14 +342,21 @@ namespace SlopCity
             Mesh candidate = null;
             Mesh previousTarget = target.sharedMesh, previousCollision = collision.sharedMesh;
             bool previousCollisionEnabled = collision.enabled;
-            long reservation = editBytes;
-            ownedBytes += reservation;
+            // Register the reservation owner before allocating a native Mesh.
+            // A failed list admission owns no native allocation or budget yet.
+            OwnedEdit owner = null;
+            bool reserved = false;
             try
             {
+                owner = new OwnedEdit { bytes = editBytes };
+                OwnedEdits.Add(owner);
+                ownedBytes += owner.bytes;
+                reserved = true;
                 var nextColors = new Color32[source.vertexCount];
                 for (int index = 0; index < nextColors.Length; index++) nextColors[index] = new Color32(255, 255, 255, 255);
                 var nextScratch = new List<int>(checked(indices.Length + fixedIndices.Length));
                 candidate = Instantiate(source);
+                owner.resource = candidate;
                 candidate.name = source.name + "_OwnedSalvageEdit"; candidate.MarkDynamic();
                 candidate.colors32 = nextColors;
                 if (rebuild) BuildIndices(candidate, nextScratch);
@@ -341,7 +365,7 @@ namespace SlopCity
                 // All allocation, mesh setters and external bindings succeeded.
                 // Publish the complete owned state and transfer the reservation.
                 working = candidate; colors = nextColors; scratch = nextScratch;
-                workingReservationBytes = reservation; reservation = 0;
+                workingOwner = owner;
                 workingAllocationFailed = false;
                 if (rebuild) indexRebuildCount++;
                 return true;
@@ -350,19 +374,27 @@ namespace SlopCity
             {
                 try
                 {
-                    if (target && target.sharedMesh == candidate) target.sharedMesh = previousTarget;
-                    if (collision)
+                    try { if (target && target.sharedMesh == candidate) target.sharedMesh = previousTarget; }
+                    finally
                     {
-                        collision.sharedMesh = previousCollision;
-                        collision.enabled = previousCollisionEnabled;
+                        if (collision)
+                        {
+                            collision.sharedMesh = previousCollision;
+                            collision.enabled = previousCollisionEnabled;
+                        }
                     }
+                }
+                catch (Exception restoreError)
+                {
+                    Debug.LogWarning("Salvage edit binding restore was interrupted: " + restoreError.GetType().Name, this);
                 }
                 finally
                 {
-                    try { if (candidate) Dispose(candidate); }
-                    finally { ownedBytes -= reservation; }
+                    if (reserved) { owner.retired = true; TryRetireEdit(owner); }
                 }
-                workingAllocationFailed = true; failedAdmissionOwnedBytes = ownedBytes;
+                // Reclaiming this failed candidate is not newly available budget
+                // from another edit and must not rearm the same allocation each frame.
+                workingAllocationFailed = true; failedAdmissionOwnedBytes = ownedBytes - (reserved ? owner.bytes : 0);
                 Debug.LogWarning("Salvage edit allocation failed; retry requires released edit budget or re-enabling. " + error.GetType().Name, this);
                 return false;
             }
@@ -389,25 +421,60 @@ namespace SlopCity
             PublishCollision(working, scratch.Count);
             indexRebuildCount++;
         }
+        private static void TryRetireEdit(OwnedEdit owner)
+        {
+            if (!owner.retired || owner.destroyRequested) return;
+            try
+            {
+                if (owner.resource) Dispose(owner.resource);
+                owner.destroyRequested = true;
+                owner.releaseAfterFrame = Application.isPlaying ? Time.frameCount + 1 : Time.frameCount;
+            }
+            catch (Exception error)
+            {
+                if (!owner.warned)
+                {
+                    owner.warned = true;
+                    Debug.LogWarning("Salvage resource retirement was interrupted; ownership and budget remain reserved: " + error.GetType().Name);
+                }
+            }
+        }
+        private static void DrainRetiredEdits()
+        {
+            if (Application.isPlaying && retirementSweepFrame == Time.frameCount) return;
+            retirementSweepFrame = Time.frameCount;
+            for (int index = OwnedEdits.Count - 1; index >= 0; index--)
+            {
+                OwnedEdit owner = OwnedEdits[index];
+                if (!owner.retired) continue;
+                TryRetireEdit(owner);
+                // Destroy returning schedules retirement; it is not reclamation
+                // during the current frame. Also confirm the exact native owner
+                // is gone before allowing another edit to use its reservation.
+                if (!owner.destroyRequested || Time.frameCount < owner.releaseAfterFrame || owner.resource) continue;
+                ownedBytes -= owner.bytes;
+                OwnedEdits.RemoveAt(index);
+            }
+        }
         private void ReleaseWorking()
         {
             Mesh retired = working;
-            working = null; colors = null; scratch = null;
+            OwnedEdit owner = workingOwner;
+            if (owner == null) return;
+            owner.retired = true;
+            working = null; workingOwner = null; colors = null; scratch = null;
             try
             {
-                if (ReferenceEquals(retired, null)) return;
                 if (target && target.sharedMesh == retired) target.sharedMesh = source;
-                if (collision && (collision.sharedMesh == retired || !collision.sharedMesh)) collision.sharedMesh = source;
-                if (collision) collision.enabled = originalCollisionEnabled;
             }
             finally
             {
-                try { if (retired) Dispose(retired); }
-                finally
+                try
                 {
-                    long reservation = workingReservationBytes; workingReservationBytes = 0;
-                    ownedBytes -= reservation;
+                    if (collision && (collision.sharedMesh == retired || !collision.sharedMesh)) collision.sharedMesh = source;
+                    if (collision) collision.enabled = originalCollisionEnabled;
                 }
+                finally { TryRetireEdit(owner); }
             }
         }
         private void OnDestroy()
@@ -428,7 +495,12 @@ namespace SlopCity
                         if (materialBound && !ReferenceEquals(authoredMaterial, null) && Finishes.TryGetValue(authoredMaterial, out Finish finish))
                         {
                             materialBound = false;
-                            if (--finish.users == 0) { Finishes.Remove(authoredMaterial); if (finish.owned && finish.material) Dispose(finish.material); }
+                            if (--finish.users == 0)
+                            {
+                                Finishes.Remove(authoredMaterial);
+                                if (finish.owned && finish.owner != null)
+                                { finish.owner.retired = true; TryRetireEdit(finish.owner); }
+                            }
                         }
                     }
                 }

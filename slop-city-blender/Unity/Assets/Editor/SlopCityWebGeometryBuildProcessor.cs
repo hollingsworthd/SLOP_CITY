@@ -9,7 +9,7 @@ using UnityEngine.SceneManagement;
 namespace SlopCity.Editor
 {
     /// <summary>Captures browser hit bounds in the temporary build scene, before static batching.</summary>
-    [BuildCallbackVersion(24)]
+    [BuildCallbackVersion(25)]
     public sealed class SlopCityWebGeometryBuildProcessor : IProcessSceneWithReport
     {
         public int callbackOrder => int.MinValue;
@@ -35,7 +35,9 @@ namespace SlopCity.Editor
             int count = metadata.AddComponent<SlopCityBrowserGeometry>().Capture(renderers.ToArray());
             CapturedRendererCount += count;
             Debug.Log("SLOP_CITY_WEB_GEOMETRY_CAPTURED " + count + " authored renderer bounds in " + scene.path);
-            SlopCityWebMeshBudget.Prepare(scene, true);
+            // Read the active build setting so disabled batching also retires
+            // render-only CPU streams instead of preserving combine inputs.
+            SlopCityWebMeshBudget.Prepare(scene, PlayerSettings.GetStaticBatchingForPlatform(BuildTarget.WebGL));
         }
 
         /// <summary>Runtime hollowing needs original metric meshes and movable control/equipment transforms.</summary>

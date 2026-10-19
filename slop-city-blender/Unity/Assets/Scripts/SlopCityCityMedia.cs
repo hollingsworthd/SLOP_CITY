@@ -39,6 +39,7 @@ namespace SlopCity
         private SlopCityMediaPlayer loungeMedia;
         private int activeDecoderLimit = ChannelCount;
         private const int MobileScreenTextureLimit = 8;
+        private static int screenTextureRetiredFrame = -1;
         private bool MobileWebBudget => activeDecoderLimit == 1;
         private float nextScreenUpdate, audioGain, audioHoldUntil, focusedAudioGain, featuredTickAt;
         private ScreenState audioOwner, desiredAudioOwner;
@@ -410,6 +411,7 @@ namespace SlopCity
         private bool EnsureScreenTexture(ScreenState display)
         {
             if (!RetryRetiredScreenResources()) return false;
+            if (MobileWebBudget && Time.frameCount <= screenTextureRetiredFrame) return false;
             if (!display.screen || display.screen.AudioOnly) return false;
             if (display.texture && display.texture.IsCreated()) return true;
             try
@@ -454,6 +456,7 @@ namespace SlopCity
             if (keepPausedVideo) display.pausedVideoGeneration = display.generation;
             else ClearPausedVideo(display);
             RenderTexture texture = display.texture;
+            if (texture) screenTextureRetiredFrame = Time.frameCount;
             CleanupMedia(() => { if (display.material) display.material.mainTexture = Texture2D.blackTexture; });
             if (TryMediaCleanup(() => DisposeScreenTexture(texture)) || !texture) display.texture = null;
             display.needsThumbnail = display.screen && !display.screen.AudioOnly && display.post != null;
@@ -1541,6 +1544,10 @@ namespace SlopCity
                 signal.preparedHandler = source =>
                 {
                     if (source != signal.player || operation != signal.operation) return;
+#if UNITY_WEBGL && !UNITY_EDITOR
+                    if (MobileWebBudget && (source.width > 480 || source.height > 480))
+                    { FailChannel(signal, "Clip resolution exceeds this browser's safe decode limit."); return; }
+#endif
                     if (source.width > 4096 || source.height > 4096 || (ulong)source.width * source.height > 8UL * 1024 * 1024)
                     { FailChannel(signal, "Clip resolution exceeds this player's safe decode limit."); return; }
                     signal.ready = true;

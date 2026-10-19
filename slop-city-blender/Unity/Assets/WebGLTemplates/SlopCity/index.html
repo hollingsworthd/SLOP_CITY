@@ -221,6 +221,13 @@
     let navigationModule = null;
     const navigationDisposedModules = new WeakSet();
 
+    function releaseCanvasBacking() {
+      // A stopped/cached page must not retain its full-size drawing surfaces.
+      // This uses the existing canvas only, without creating a new GL context.
+      canvas.width = 1;
+      canvas.height = 1;
+    }
+
     function disposeSessionModule(module) {
       if (!module || navigationDisposedModules.has(module)) return;
       navigationDisposedModules.add(module);
@@ -236,6 +243,12 @@
       catch (error) { console.warn("Session audio cleanup failed.", error); }
       try { if (module.pauseMainLoop) module.pauseMainLoop(); }
       catch (error) { console.warn("Navigation frame cleanup failed.", error); }
+      // Pinned Unity's loader owns these intervals separately from its engine
+      // loop. A paused/failed engine cannot reach its normal Quit cleanup.
+      if (module.intervals) for (const id of Object.keys(module.intervals)) {
+        try { clearInterval(Number(id)); delete module.intervals[id]; }
+        catch (error) { console.warn("Session timer cleanup failed.", error); }
+      }
       try {
         // Pinned Unity publishes its current GL context as Module.ctx. Release
         // only this game's existing context; asking the canvas for one could
@@ -246,6 +259,7 @@
           if (loss) loss.loseContext();
         }
       } catch (error) { console.warn("Navigation graphics cleanup failed.", error); }
+      releaseCanvasBacking();
       // These owned resources retire synchronously. A cached page may retain
       // its Wasm memory until eviction; this is not an engine Quit completion.
     }
@@ -261,6 +275,7 @@
       try { if (window.slopCityStopStartup) window.slopCityStopStartup(reason); }
       catch (error) { console.warn("Navigation startup cleanup failed.", error); }
       disposeSessionModule(navigationModule || (unityInstance && unityInstance.Module));
+      releaseCanvasBacking();
     });
     window.addEventListener("pageshow", function (event) {
       if (!event.persisted || !navigationDisposed) return;
@@ -293,9 +308,10 @@
       window.slopCitySceneRenderHeight = Number(resolution.value);
       // Touch displays need a total-pixel bound as well as a per-axis device
       // limit: a retina tablet otherwise retains several full-size color/depth
-      // surfaces even when its world camera is set to 540p. Preserve aspect ratio.
+      // surfaces even when its world camera is set to 540p. A 720p-sized UI
+      // budget keeps text separate from that world target. Preserve aspect ratio.
       const pixelRatioLimit = window.slopCityTouchControls
-        ? Math.sqrt((1920 * 1080) / (Math.max(1, bounds.width) * Math.max(1, bounds.height))) : Infinity;
+        ? Math.sqrt((1280 * 720) / (Math.max(1, bounds.width) * Math.max(1, bounds.height))) : Infinity;
       const safeRatio = Math.min(ratio, pixelRatioLimit, maxCanvasDimension / Math.max(1, bounds.width), maxCanvasDimension / Math.max(1, bounds.height));
       window.slopCityDisplayPixelRatio = safeRatio;
       const width = Math.max(1, Math.floor(bounds.width * safeRatio));
@@ -364,6 +380,7 @@
       try { if (window.slopCityStopStartup) window.slopCityStopStartup(detail); }
       catch (error) { console.warn("Startup cleanup could not complete.", error); }
       stopAfterGraphicsLoss();
+      releaseCanvasBacking();
       fullscreen.disabled = true;
       resolution.disabled = true;
       gate.hidden = false;
@@ -384,6 +401,7 @@
       disposeSessionModule(navigationModule || (unityInstance && unityInstance.Module));
     }
     canvas.addEventListener("webglcontextlost", function () {
+      if (navigationDisposed || sessionFailed) return;
       graphicsLost = true;
       stopAfterGraphicsLoss();
       fullscreen.disabled = true;
@@ -449,7 +467,11 @@
         return;
       }
       let probe;
-      try { probe = document.createElement("canvas").getContext("webgl2"); }
+      try {
+        const probeCanvas = document.createElement("canvas");
+        probeCanvas.width = probeCanvas.height = 1;
+        probe = probeCanvas.getContext("webgl2", {powerPreference: "default", antialias: false, depth: false});
+      }
       catch (error) { fail("The browser could not initialize graphics. Reload or try another browser.", error); return; }
       if (!probe) {
         fail("This game needs WebGL 2 enabled.", "Try a current browser with hardware acceleration enabled.");

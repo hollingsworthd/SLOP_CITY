@@ -24,7 +24,7 @@ NATIVE = ROOT / 'Unity/Assets/StreamingAssets/TikTok'
 MAC = ROOT / 'Unity/Builds/macOS-v0.8.0/SLOP CITY.app/Contents/Resources/Data/StreamingAssets/TikTok'
 MAC_ZIP = ROOT.parent / 'SlopCity-macOS-v0.8.0-AppleSilicon.zip'
 REPORT = ROOT / 'Unity/Builds/Reports/web-tiktok-optimization.json'
-PROFILE = 'web-h264-crf26-max700k-640-24-aac64-v1'
+PROFILE = 'web-h264-crf26-max700k-480-24-aac64-square-v2'
 MIB = 1024 * 1024
 
 
@@ -92,8 +92,8 @@ def encode(asset, temporary, settings):
     before = probe(source)
     run(['ffmpeg', '-hide_banner', '-loglevel', 'error', '-nostdin', '-y', '-threads', '2', '-i', str(source),
          '-map', '0:v:0', '-map', '0:a:0?', '-vf',
-         f"scale=w='min({settings['maxEdge']},iw)':h='min({settings['maxEdge']},ih)':force_original_aspect_ratio=decrease:force_divisible_by=2,fps=24",
-         '-c:v', 'libx264', '-preset', 'fast', '-profile:v', 'main', '-pix_fmt', 'yuv420p',
+         f"scale=w='max(2,trunc(min(iw*sar,min({settings['maxEdge']},{settings['maxEdge']}*dar))/2)*2)':h='max(2,trunc(min(ih,min({settings['maxEdge']},{settings['maxEdge']}/dar))/2)*2)',setsar=1,fps=24",
+         '-c:v', 'libx264', '-refs', '1', '-bf', '0', '-preset', 'fast', '-profile:v', 'main', '-pix_fmt', 'yuv420p',
          '-crf', str(settings['crf']), '-maxrate', str(settings['videoMaxrate']), '-bufsize', str(settings['videoMaxrate'] * 2), '-threads', '2',
          '-c:a', 'aac', '-b:a', str(settings['audioBitrate']), '-ac', '2', '-ar', '44100', '-movflags', '+faststart', str(target)])
     after = probe(target)
@@ -101,11 +101,10 @@ def encode(asset, temporary, settings):
     before_audio, after_audio = streams(before, 'audio'), streams(after, 'audio')
     assert len(before_video) == len(after_video) == 1
     assert after_video[0]['codec_name'] == 'h264' and after_video[0]['pix_fmt'] == 'yuv420p'
-    if settings['maxEdge'] == 640:
-        assert (after_video[0]['width'], after_video[0]['height']) == (before_video[0]['width'], before_video[0]['height'])
-    assert after_video[0]['width'] <= before_video[0]['width'] and after_video[0]['height'] <= before_video[0]['height']
     assert max(after_video[0]['width'], after_video[0]['height']) <= settings['maxEdge']
-    assert abs(before_video[0]['width'] / before_video[0]['height'] - after_video[0]['width'] / after_video[0]['height']) <= .015
+    source_sar = before_video[0].get('sample_aspect_ratio', '1:1').split(':')
+    source_sar = float(source_sar[0]) / float(source_sar[1]) if len(source_sar) == 2 and float(source_sar[1]) else 1
+    assert abs(before_video[0]['width'] * source_sar / before_video[0]['height'] - after_video[0]['width'] / after_video[0]['height']) <= .02
     assert after_video[0]['avg_frame_rate'] in ('24/1', '24000/1000')
     assert len(before_audio) == len(after_audio) and all(s['codec_name'] == 'aac' for s in after_audio)
     duration_before = float(before['format']['duration'])
@@ -159,7 +158,7 @@ def main():
     # Leave metadata/tar overhead margin even before the outer Site packager runs.
     budget = args.target_mib * MIB - 128 * 1024
     planned_total = before_total
-    settings = {'maxEdge': 640, 'crf': 26, 'videoMaxrate': 700000, 'audioBitrate': 64000}
+    settings = {'maxEdge': 480, 'crf': 26, 'videoMaxrate': 700000, 'audioBitrate': 64000}
     profile = PROFILE
     if args.compact:
         videos = [asset for asset in assets if asset['kind'] == 'video']
@@ -172,9 +171,9 @@ def main():
         assert maxrate >= 80000, 'Insufficient video bitrate budget; no exported media changed'
         settings = {'maxEdge': 480, 'crf': 28, 'videoMaxrate': maxrate, 'audioBitrate': 48000,
                     'sourceVideoDurationSeconds': duration, 'fixedNonvideoBytes': fixed_bytes, 'videoBudgetBytes': video_budget}
-        profile = f'web-h264-crf28-max{maxrate // 1000}k-480-24-aac48-v1'
+        profile = f'web-h264-crf28-max{maxrate // 1000}k-480-24-aac48-square-v2'
     candidates = sorted((asset for asset in assets if asset['kind'] == 'video' and
-                         (asset.get('webOptimizationProfile') != profile if args.compact else not asset.get('webOptimizationProfile'))),
+                         asset.get('webOptimizationProfile') != profile),
                         key=lambda asset: asset['bytes'], reverse=True)
     report = {'startedAtUtc': utc(), 'passed': False, 'profile': profile, 'settings': settings, 'targetMiB': args.target_mib,
               'webBytesBefore': before_total, 'posts': receipt['postCount'], 'assets': receipt['assetCount'], 'changed': [], 'errors': []}
@@ -185,14 +184,9 @@ def main():
             temporary = Path(temporary_name)
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
                 for index in range(0, len(candidates), 2):
-                    if not args.compact and planned_total <= budget:
-                        break
                     pending = [pool.submit(encode, asset, temporary, settings) for asset in candidates[index:index + 2]]
                     for future in pending:
                         result = future.result()
-                        if result['savedBytes'] <= 0 and not args.compact:
-                            print('UNCHANGED (no size gain): ' + result['file'], flush=True)
-                            continue
                         report['changed'].append(result)
                         planned_total -= result['savedBytes']
                         print(f"VERIFIED {result['file']}: {result['beforeBytes']:,} -> {result['afterBytes']:,}; projected tree {planned_total:,}", flush=True)
