@@ -57,6 +57,7 @@ namespace SlopCity
         private bool legacyStreetInteractionsPrepared;
         private static readonly RaycastHit[] feetRayHits = new RaycastHit[24];
         private static readonly RaycastHit[] driveSupportHits = new RaycastHit[16];
+        private readonly RaycastHit[] targetRayHits = new RaycastHit[96];
         private SlopCityInteractable vehicle;
         private SlopCityInteractable restingAt;
         private Transform transitDestination;
@@ -82,7 +83,6 @@ namespace SlopCity
         private bool webSceneryReady, webSceneryWarning;
         private const int WebTargetHitCapacity = 384;
         private readonly RaycastHit[] webTargetHits = new RaycastHit[WebTargetHitCapacity];
-        private readonly RaycastHit[] targetRayHits = new RaycastHit[96];
         private Camera webTargetCamera;
         private Ray webTargetRay;
         private int webTargetFrame = -1;
