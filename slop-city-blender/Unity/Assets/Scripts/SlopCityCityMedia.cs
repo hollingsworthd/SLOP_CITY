@@ -35,6 +35,7 @@ namespace SlopCity
         private readonly SlopCityMediaCoroutines mediaCoroutines = new SlopCityMediaCoroutines();
         private readonly Plane[] frustum = new Plane[6];
         private readonly RaycastHit[] audioHits = new RaycastHit[96];
+        private bool registrationRetryPending;
         private Camera viewCamera;
         private SlopCityMediaPlayer loungeMedia;
         private int activeDecoderLimit = ChannelCount;
@@ -248,10 +249,16 @@ namespace SlopCity
 
         public void RegisterScreen(SlopCityCityScreen screen)
         {
-            if (!RetryRetiredScreenResources()) return;
             if (!screen || !screen.isActiveAndEnabled || !isActiveAndEnabled || !screen.Display || !screenShader || !screenShader.isSupported || screens.Contains(screen)) return;
             int selected = Mathf.Clamp(screen.Channel, 0, ChannelCount - 1);
             if (channels[selected] == null) return;
+            if (!RetryRetiredScreenResources())
+            {
+                // ActiveScreens already owns this live component. Retry that
+                // existing set after retirement; never retain a second queue.
+                registrationRetryPending = true;
+                return;
+            }
             var state = new ScreenState { screen = screen, ordinal = displays.Count, fallback = BundledMedia(displays.Count % ChannelCount) };
             try
             {
@@ -635,6 +642,11 @@ namespace SlopCity
             {
                 nextScreenUpdate = Time.unscaledTime + ScreenUpdateInterval;
                 PruneScreens();
+                if (registrationRetryPending && RetryRetiredScreenResources())
+                {
+                    registrationRetryPending = false;
+                    SlopCityCityScreen.RegisterActiveScreens(this);
+                }
                 RefreshScreenInterest();
                 foreach (Channel signal in channels)
                 {
@@ -660,6 +672,9 @@ namespace SlopCity
                 if (signal.imageIndex + 1 < signal.currentVideo.imageUrls.Length) StartImage(signal, signal.imageIndex + 1);
                 else AdvanceScreen(signal);
             }
+#if UNITY_WEBGL && !UNITY_EDITOR
+            PumpWebVideoPictures();
+#endif
             UpdateFeaturedLoops();
             UpdateAudio();
             PumpThumbnails();
@@ -1517,18 +1532,13 @@ namespace SlopCity
                     signal.webFrameReadyHandler = (source, frame) =>
                     {
                         if (!this || !isActiveAndEnabled || !source || source != player || source != signal.player
-                            || operation != signal.operation
-                            || signal.owner != owner || owner == null || owner.slot != signal
-                            || !owner.screen || signal.texture != target) return;
-                        try
-                        {
-                            Texture picture = source.texture;
-                            if (!picture || picture.width <= 0 || picture.height <= 0) return;
-                            // Preserve FitInside for every advancing frame.
-                            DrawImage(picture, target);
-                            signal.webAwaitingFirstPicture = false;
-                        }
-                        catch (Exception exception) { FailChannel(signal, exception.Message); }
+                            || operation != signal.operation || signal.owner != owner || owner == null
+                            || owner.slot != signal || !owner.screen || signal.texture != target) return;
+                        // Texture access can synchronously deliver this callback.
+                        // Stamp publication only; Update owns texture access/copy.
+                        if (signal.webPublishedFrameIndex == frame) return;
+                        signal.webPublishedFrameIndex = frame;
+                        signal.webPublishedFrameSerial++;
                     };
                     player.frameReady += signal.webFrameReadyHandler;
                     player.sendFrameReadyEvents = true;
@@ -1845,6 +1855,49 @@ namespace SlopCity
             }
         }
 
+#if UNITY_WEBGL && !UNITY_EDITOR
+        private void PumpWebVideoPictures()
+        {
+            if (!MobileWebBudget || Suspended || manuallyPaused) return;
+            foreach (Channel signal in channels)
+            {
+                if (signal == null || !signal.ready || signal.loading || signal.resolving || signal.advance
+                    || signal.slideshow || signal.webFrameReadyHandler == null || signal.webPumpingPicture
+                    || signal.webPicturePumpFrame == Time.frameCount) continue;
+                ScreenState owner = signal.owner;
+                VideoPlayer source = signal.player;
+                if (owner == null || owner.slot != signal || !owner.screen || owner.paused || !source) continue;
+                int operation = signal.operation;
+                signal.webPicturePumpFrame = Time.frameCount;
+                signal.webPumpingPicture = true;
+                try
+                {
+                    // APIOnly has no renderer consuming its decoder texture.
+                    // GetTextureInternal advances WebGL's published frame index;
+                    // waiting for frameReady before this getter can stall forever.
+                    Texture picture = source.texture;
+                    int publication = signal.webPublishedFrameSerial;
+                    if (!this || !isActiveAndEnabled || operation != signal.operation || source != signal.player
+                        || signal.owner != owner || owner.slot != signal || !owner.screen || owner.paused
+                        || publication == signal.webCopiedFrameSerial || !picture || picture.width <= 0 || picture.height <= 0) continue;
+                    if (operation != signal.operation || source != signal.player || signal.owner != owner
+                        || owner.slot != signal || !owner.screen || owner.paused) continue;
+                    RenderTexture target = signal.texture;
+                    if (!target || !target.IsCreated() || target != owner.texture) continue;
+                    DrawImage(picture, target);
+                    signal.webCopiedFrameSerial = publication;
+                    signal.webAwaitingFirstPicture = false;
+                }
+                catch (Exception error)
+                {
+                    if (operation == signal.operation && source == signal.player && signal.owner == owner)
+                        FailChannel(signal, error.Message);
+                }
+                finally { signal.webPumpingPicture = false; }
+            }
+        }
+#endif
+
         private void ApplyPlayback()
         {
             // Suspension is authoritative, rather than a transient gaze loss.
@@ -2094,6 +2147,9 @@ namespace SlopCity
             signal.loading = false;
 #if UNITY_WEBGL && !UNITY_EDITOR
             signal.webAwaitingFirstPicture = false;
+            signal.webPublishedFrameSerial = signal.webCopiedFrameSerial = 0;
+            signal.webPublishedFrameIndex = long.MinValue;
+            signal.webPicturePumpFrame = -1;
 #endif
             VideoPlayer player = signal.player;
             if (player)
@@ -2321,7 +2377,9 @@ namespace SlopCity
             public float startedAt, nextAttempt, imageElapsed;
 #if UNITY_WEBGL && !UNITY_EDITOR
             [NonSerialized] public float webPrepareSuspendedAt = -1f;
-            [NonSerialized] public bool webAwaitingFirstPicture;
+            [NonSerialized] public bool webAwaitingFirstPicture, webPumpingPicture;
+            [NonSerialized] public int webPublishedFrameSerial, webCopiedFrameSerial, webPicturePumpFrame = -1;
+            [NonSerialized] public long webPublishedFrameIndex = long.MinValue;
             [NonSerialized] public VideoPlayer.FrameReadyEventHandler webFrameReadyHandler;
 #endif
             public bool featuredHolding, featuredHeldThisLoop;

@@ -119,13 +119,23 @@ mergeInto(LibraryManager.library, {
     catch (_) { return false; }
   },
 
-  $slopCityDrainRetiredVideoDecoders__deps: ['$slopCityRetiredVideoDecoders', '$slopCityRetireVideoDecoder', '$slopCityReusableIOSVideo', '$slopCityUsesIOSVideo', '$slopCityDisposingVideoDecoders'],
+  $slopCityCanReuseVideoElement: function (video) {
+    // Missing/refused policy state cannot grant reuse. This query never clears
+    // the inline guard's permanent refusal or transfers an element's audio grant.
+    try {
+      return typeof window.slopCityCanReuseInlineVideo === 'function'
+        && window.slopCityCanReuseInlineVideo(video) === true;
+    } catch (_) { return false; }
+  },
+
+  $slopCityDrainRetiredVideoDecoders__deps: ['$slopCityRetiredVideoDecoders', '$slopCityRetireVideoDecoder', '$slopCityReusableIOSVideo', '$slopCityUsesIOSVideo', '$slopCityDisposingVideoDecoders', '$slopCityCanReuseVideoElement'],
   $slopCityDrainRetiredVideoDecoders: function () {
     Object.keys(slopCityRetiredVideoDecoders).forEach(function (id) {
       var video = slopCityRetiredVideoDecoders[id];
       if (!slopCityRetireVideoDecoder(id, video)) return;
       delete slopCityRetiredVideoDecoders[id];
-      if (!slopCityDisposingVideoDecoders && !slopCityReusableIOSVideo && slopCityUsesIOSVideo())
+      if (!slopCityDisposingVideoDecoders && !slopCityReusableIOSVideo && slopCityUsesIOSVideo()
+        && slopCityCanReuseVideoElement(video))
         slopCityReusableIOSVideo = video;
     });
     return Object.keys(slopCityRetiredVideoDecoders).length === 0;
@@ -153,15 +163,19 @@ mergeInto(LibraryManager.library, {
 
   JS_Video_Create__proxy: 'sync',
   JS_Video_Create__sig: 'ii',
-  JS_Video_Create__deps: ['$videoInstances', '$videoInstanceIdCounter', '$hasSRGBATextures', '$UTF8ToString', '$jsIsWebkit', '$slopCityDisposeOwnedVideoDecoders', '$slopCityUsesIOSVideo', '$slopCityReusableIOSVideo', '$slopCityAdmitVideoMetadata', '$slopCityUsesMobileVideo', '$slopCityDrainRetiredVideoDecoders', '$slopCityFailVideoPlayback'],
+  JS_Video_Create__deps: ['$videoInstances', '$videoInstanceIdCounter', '$hasSRGBATextures', '$UTF8ToString', '$jsIsWebkit', '$slopCityDisposeOwnedVideoDecoders', '$slopCityUsesIOSVideo', '$slopCityReusableIOSVideo', '$slopCityAdmitVideoMetadata', '$slopCityUsesMobileVideo', '$slopCityDrainRetiredVideoDecoders', '$slopCityFailVideoPlayback', '$slopCityCanReuseVideoElement'],
   JS_Video_Create: function (url) {
     var str = UTF8ToString(url);
     slopCityDrainRetiredVideoDecoders();
     var ios = slopCityUsesIOSVideo();
     var video = ios && slopCityReusableIOSVideo;
-    var retiredAt = video ? video.slopCityRetiredAt || 0 : 0;
     if (video) {
       slopCityReusableIOSVideo = null;
+      // A late presentation event may refuse the source-free cached element.
+      if (!slopCityCanReuseVideoElement(video)) video = null;
+    }
+    var retiredAt = video ? video.slopCityRetiredAt || 0 : 0;
+    if (video) {
       // Only the same element's confirmed audio grant survives. Every source
       // intent, retry, picture identity and native Unity bookmark starts fresh.
       Object.keys(video).forEach(function (key) {

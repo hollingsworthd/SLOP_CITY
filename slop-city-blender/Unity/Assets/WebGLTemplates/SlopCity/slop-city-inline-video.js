@@ -74,6 +74,11 @@
   function externalPresentation(video) {
     return video.webkitDisplayingFullscreen || (video.webkitPresentationMode && video.webkitPresentationMode !== "inline");
   }
+  // Policy refusal is permanent for this element. Decoder retirement may clear
+  // its source, but must not put that refused element back into the iOS pool.
+  window.slopCityCanReuseInlineVideo = function (video) {
+    return !!(isVideo(video) && !blocked.has(video) && !externalPresentation(video));
+  };
   function recover(video) {
     stop(video, "Video paused: this browser attempted an external video player.");
     try {

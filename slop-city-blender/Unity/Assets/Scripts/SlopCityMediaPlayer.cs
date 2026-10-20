@@ -53,7 +53,9 @@ namespace SlopCity
         private float webDecoderAdmitAt;
         private float webIrrelevantSince = -1f;
         private float webPrepareSuspendedAt = -1f;
-        private bool webAwaitingFirstPicture, webHasPicture;
+        private bool webAwaitingFirstPicture, webHasPicture, webPumpingPicture;
+        private int webPublishedFrameSerial, webCopiedFrameSerial, webPicturePumpFrame = -1;
+        private long webPublishedFrameIndex = long.MinValue;
         private int webPlaybackGeneration;
         private VideoPlayer.FrameReadyEventHandler webFrameReadyHandler;
         private static SlopCityMediaPlayer mobileDecoderOwner;
@@ -271,20 +273,11 @@ namespace SlopCity
                     {
                         if (!this || !isActiveAndEnabled || !source || source != expected || source != player
                             || generation != webPlaybackGeneration || releasingPlayback) return;
-                        try
-                        {
-                            Texture picture = source.texture;
-                            if (!picture || picture.width <= 0 || picture.height <= 0) return;
-                            SlopCityCityMedia.DrawImage(picture, screenTexture);
-                            webAwaitingFirstPicture = false;
-                            webHasPicture = true;
-                            SetDisplayVisible(true);
-                        }
-                        catch (Exception exception)
-                        {
-                            Debug.LogWarning("SLOP CITY: First video picture: " + exception.Message, this);
-                            Fail("The clip could not display its picture. Choose its channel to try again.");
-                        }
+                        // The independent Update pump reads the texture. This
+                        // callback must remain safe inside that native getter.
+                        if (webPublishedFrameIndex == frame) return;
+                        webPublishedFrameIndex = frame;
+                        webPublishedFrameSerial++;
                     };
                     player.frameReady += webFrameReadyHandler;
                     player.sendFrameReadyEvents = true;
@@ -512,10 +505,47 @@ namespace SlopCity
                 RefreshMobileDecoderOwnership();
                 ApplyPlaybackIntent();
             }
+            PumpWebVideoPicture();
 #endif
         }
 
 #if UNITY_WEBGL && !UNITY_EDITOR
+        private void PumpWebVideoPicture()
+        {
+            if (!MobileWebBudget || !wantsPlayback || IsSuspended || state != PlaybackState.Ready
+                || !player || releasingPlayback || webFrameReadyHandler == null || webPumpingPicture
+                || webPicturePumpFrame == Time.frameCount) return;
+            VideoPlayer source = player;
+            RenderTexture target = screenTexture;
+            int generation = webPlaybackGeneration;
+            webPicturePumpFrame = Time.frameCount;
+            webPumpingPicture = true;
+            try
+            {
+                // Drive APIOnly texture publication before waiting for the event
+                // it produces. Preserve the poster until a real frame was stamped.
+                Texture picture = source.texture;
+                int publication = webPublishedFrameSerial;
+                if (!this || !isActiveAndEnabled || generation != webPlaybackGeneration || source != player
+                    || releasingPlayback || publication == webCopiedFrameSerial || !picture || picture.width <= 0
+                    || picture.height <= 0 || !target || target != screenTexture || !target.IsCreated()) return;
+                SlopCityCityMedia.DrawImage(picture, target);
+                webCopiedFrameSerial = publication;
+                webAwaitingFirstPicture = false;
+                webHasPicture = true;
+                SetDisplayVisible(true);
+            }
+            catch (Exception error)
+            {
+                if (generation == webPlaybackGeneration && source == player)
+                {
+                    Debug.LogWarning("SLOP CITY: Video picture: " + error.Message, this);
+                    Fail("The clip could not display its picture. Choose its channel to try again.");
+                }
+            }
+            finally { webPumpingPicture = false; }
+        }
+
         private bool MobilePreparationSuspended => !wantsPlayback || menuSuspended || focusSuspended || applicationSuspended;
 
         private void RefreshMobilePreparationClock()
@@ -755,6 +785,9 @@ namespace SlopCity
 #if UNITY_WEBGL && !UNITY_EDITOR
             webPlaybackGeneration++;
             webAwaitingFirstPicture = false;
+            webPublishedFrameSerial = webCopiedFrameSerial = 0;
+            webPublishedFrameIndex = long.MinValue;
+            webPicturePumpFrame = -1;
             webPrepareSuspendedAt = -1f;
 #endif
             VideoPlayer retiredPlayer = player;
