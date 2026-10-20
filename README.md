@@ -2,7 +2,7 @@
 
 © 2026 Machine Publishers, LLC
 
-A self-contained, single-player city game with bundled offline videos.
+A 3-D video game with embedded social media videos
 
 Current source version: **1.0.1**. See the [game README](slop-city-blender/README.md) for the new jobs, cleaning, salvage, pawn shop and resident population.
 
