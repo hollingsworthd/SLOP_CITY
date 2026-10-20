@@ -86,20 +86,22 @@ namespace SlopCity
         private void Bind()
         {
             if (bindingReady) return;
-            bindingReady = true;
             var list = new List<Renderer>();
             foreach (Renderer renderer in GetComponentsInChildren<Renderer>(true))
                 if (renderer && renderer.GetComponentInParent<SlopCitySalvageItem>() == this
                     && !IsProtectedArt(renderer.transform) && !renderer.GetComponent<TextMesh>()) list.Add(renderer);
-            pulseOwners = GetComponentsInChildren<SlopCityInteractable>(true);
-            renderers = list.ToArray(); baseColors = new Color[renderers.Length]; baseSmoothness = new float[renderers.Length];
-            block = new MaterialPropertyBlock();
-            for (int i = 0; i < renderers.Length; i++)
+            SlopCityInteractable[] nextPulseOwners = GetComponentsInChildren<SlopCityInteractable>(true);
+            Renderer[] nextRenderers = list.ToArray();
+            var nextColors = new Color[nextRenderers.Length]; var nextSmoothness = new float[nextRenderers.Length];
+            var nextBlock = new MaterialPropertyBlock();
+            for (int i = 0; i < nextRenderers.Length; i++)
             {
-                Material material = renderers[i].sharedMaterial;
-                baseColors[i] = material && material.HasProperty("_Color") ? material.GetColor("_Color") : Color.white;
-                baseSmoothness[i] = material && material.HasProperty("_Glossiness") ? material.GetFloat("_Glossiness") : .3f;
+                Material material = nextRenderers[i].sharedMaterial;
+                nextColors[i] = material && material.HasProperty("_Color") ? material.GetColor("_Color") : Color.white;
+                nextSmoothness[i] = material && material.HasProperty("_Glossiness") ? material.GetFloat("_Glossiness") : .3f;
             }
+            pulseOwners = nextPulseOwners; renderers = nextRenderers; baseColors = nextColors; baseSmoothness = nextSmoothness;
+            block = nextBlock; bindingReady = true;
         }
 
         public void SetCleanProgress(int strokes)

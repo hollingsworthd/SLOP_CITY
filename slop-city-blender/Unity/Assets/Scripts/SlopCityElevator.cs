@@ -58,6 +58,7 @@ namespace SlopCity
         private bool retiring, visualAllocationWarning;
         private float visualRetryAfter;
         private int failedVisualFloor = -1;
+        private int visualAdmissionAfterFrame;
         private float blockedSeconds, obstructionRetry;
         private bool returningFromObstruction, obstructed;
 
@@ -200,7 +201,9 @@ namespace SlopCity
             wantedLandingVisuals.Clear();
             wantedLandingVisuals.Add(currentFloor);
             wantedLandingVisuals.Add(moving ? targetFloor : currentFloor);
-            if (player)
+            // Current/target landings already cover the moving car's endpoints.
+            // Its rider does not need new display objects at each passed floor.
+            if (player && !(moving && PlayerInside))
             {
                 float height = transform.InverseTransformPoint(player.transform.position).y;
                 int nearest = 0;
@@ -220,6 +223,11 @@ namespace SlopCity
                     return; // Retained native objects still occupy the visual budget.
                 }
                 landingVisuals.Remove(floor);
+            }
+            if (Application.isPlaying && Time.frameCount < visualAdmissionAfterFrame)
+            {
+                if (changed) visualGeometryChanged?.Invoke();
+                return;
             }
             foreach (int floor in wantedLandingVisuals)
             {
@@ -269,7 +277,11 @@ namespace SlopCity
             {
                 try
                 {
-                    if (visuals[index]) SlopCityInteriorGeometry.Dispose(visuals[index]);
+                    if (visuals[index])
+                    {
+                        if (Application.isPlaying) visualAdmissionAfterFrame = Mathf.Max(visualAdmissionAfterFrame, Time.frameCount + 1);
+                        SlopCityInteriorGeometry.Dispose(visuals[index]);
+                    }
                     visuals.RemoveAt(index);
                 }
                 catch (Exception error)

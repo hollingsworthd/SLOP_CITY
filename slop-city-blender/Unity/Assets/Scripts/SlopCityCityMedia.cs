@@ -1505,8 +1505,11 @@ namespace SlopCity
 #if UNITY_WEBGL && !UNITY_EDITOR
                 if (MobileWebBudget && !audioOnly)
                 {
-                    // Preparation can finish at metadata. APIOnly still decodes and
-                    // uploads, without letting Unity replace the poster with an empty frame.
+                    // Keep one render mode for the entire clip. Switching after the
+                    // first frame replaces Unity's internal texture and can strand
+                    // the physical display on that copied frame. Copy each decoded
+                    // frame into the retained picture, preserving the poster until then.
+                    player.targetTexture = null;
                     player.renderMode = VideoRenderMode.APIOnly;
                     signal.webAwaitingFirstPicture = true;
                     ScreenState owner = signal.owner;
@@ -1514,22 +1517,16 @@ namespace SlopCity
                     signal.webFrameReadyHandler = (source, frame) =>
                     {
                         if (!this || !isActiveAndEnabled || !source || source != player || source != signal.player
-                            || operation != signal.operation || !signal.webAwaitingFirstPicture
+                            || operation != signal.operation
                             || signal.owner != owner || owner == null || owner.slot != signal
                             || !owner.screen || signal.texture != target) return;
-                        Texture picture = source.texture;
-                        if (!picture || picture.width <= 0 || picture.height <= 0) return;
                         try
                         {
-                            // Preserve FitInside and copy before the mode switch can
-                            // replace/release Unity's internal source texture.
+                            Texture picture = source.texture;
+                            if (!picture || picture.width <= 0 || picture.height <= 0) return;
+                            // Preserve FitInside for every advancing frame.
                             DrawImage(picture, target);
                             signal.webAwaitingFirstPicture = false;
-                            source.frameReady -= signal.webFrameReadyHandler;
-                            source.sendFrameReadyEvents = false;
-                            signal.webFrameReadyHandler = null;
-                            source.targetTexture = target;
-                            source.renderMode = VideoRenderMode.RenderTexture;
                         }
                         catch (Exception exception) { FailChannel(signal, exception.Message); }
                     };
@@ -2090,6 +2087,11 @@ namespace SlopCity
 
         private static void StopPlayback(Channel signal)
         {
+            // Invalidate callbacks before native Stop or event detachment. A native
+            // failure can synchronously report an error even during teardown.
+            signal.operation++;
+            signal.ready = false;
+            signal.loading = false;
 #if UNITY_WEBGL && !UNITY_EDITOR
             signal.webAwaitingFirstPicture = false;
 #endif

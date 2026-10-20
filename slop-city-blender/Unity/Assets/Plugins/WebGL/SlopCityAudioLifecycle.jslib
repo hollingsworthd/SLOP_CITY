@@ -4,7 +4,8 @@
 if (typeof LibraryManager.library.JS_Sound_Stop !== 'function'
   || typeof LibraryManager.library.JS_Sound_ReleaseInstance !== 'function'
   || typeof LibraryManager.library.JS_Sound_Init !== 'function'
-  || typeof LibraryManager.library.$jsAudioCreateChannel !== 'function') {
+  || typeof LibraryManager.library.$jsAudioCreateChannel !== 'function'
+  || typeof LibraryManager.library.$jsAudioCreateUncompressedSoundClip !== 'function') {
   throw new Error('Slop City audio lifecycle requires Unity Audio.js first.');
 }
 mergeInto(LibraryManager.library, {
@@ -16,9 +17,26 @@ mergeInto(LibraryManager.library, {
   $slopCityNativeSoundRelease__deps: LibraryManager.library.JS_Sound_ReleaseInstance__deps.slice(),
   $slopCityNativeAudioCreateChannel: LibraryManager.library.$jsAudioCreateChannel,
   $slopCityNativeAudioCreateChannel__deps: LibraryManager.library.$jsAudioCreateChannel__deps.slice(),
+  $slopCityNativeAudioCreatePcmClip: LibraryManager.library.$jsAudioCreateUncompressedSoundClip,
+  $slopCityNativeAudioCreatePcmClip__deps: LibraryManager.library.$jsAudioCreateUncompressedSoundClip__deps.slice(),
   $slopCityAudioDisposed: false,
   $slopCityAudioIntervals: [],
   $slopCityAudioDeinitializers: [],
+
+  $jsAudioCreateUncompressedSoundClip__deps: ['$slopCityNativeAudioCreatePcmClip', '$slopCityAudioDisposed'],
+  $jsAudioCreateUncompressedSoundClip: function (buffer, error) {
+    var clip = slopCityNativeAudioCreatePcmClip(buffer, error), pcm = buffer, retired = false;
+    buffer = null; // The wrapper activation has only one retained PCM owner.
+    // Native release() is a no-op. decodeAudioData may finish after an instance
+    // was released; its callback must not restore PCM on that retired owner.
+    Object.defineProperty(clip, 'buffer', {
+      configurable: true,
+      get: function () { return pcm; },
+      set: function (value) { pcm = retired || slopCityAudioDisposed ? null : value; }
+    });
+    clip.release = function () { retired = true; pcm = null; };
+    return clip;
+  },
 
   $slopCityRetireCompressedAudioSource: function (source) {
     if (!source || !source.mediaElement) return;
@@ -102,18 +120,23 @@ mergeInto(LibraryManager.library, {
   $slopCityDisposeOwnedAudio__deps: ['$WEBAudio', '$slopCityAudioDisposed', '$slopCityAudioIntervals', '$slopCityAudioDeinitializers', 'JS_Sound_Stop', 'JS_Sound_ReleaseInstance'],
   $slopCityDisposeOwnedAudio__postset: "Module['slopCityDisposeOwnedAudio'] = slopCityDisposeOwnedAudio;",
   $slopCityDisposeOwnedAudio: function () {
-    if (slopCityAudioDisposed) return;
+    // Disposal blocks new admissions immediately, but a refused native release
+    // remains owned and may be retried by the terminal/pagehide cleanup.
     slopCityAudioDisposed = true;
     var firstError;
-    function retire(action) { try { action(); } catch (error) { if (!firstError) firstError = error; } }
+    function retire(action) { try { action(); return true; } catch (error) { if (!firstError) firstError = error; return false; } }
     var context = WEBAudio.audioContext;
-    if (context) context.onstatechange = null;
+    if (context) retire(function () { context.onstatechange = null; });
     WEBAudio.soundsPendingContextResume.length = 0;
-    slopCityAudioIntervals.splice(0).forEach(function (id) { retire(function () { Module.clearInterval(id); }); });
-    slopCityAudioDeinitializers.splice(0).forEach(function (cleanup) {
-      var index = Module.deinitializers.indexOf(cleanup);
-      if (index >= 0) Module.deinitializers.splice(index, 1);
-      retire(cleanup);
+    slopCityAudioIntervals.slice().forEach(function (id) {
+      if (retire(function () { Module.clearInterval(id); })) slopCityAudioIntervals.splice(slopCityAudioIntervals.indexOf(id), 1);
+    });
+    slopCityAudioDeinitializers.slice().forEach(function (cleanup) {
+      if (retire(cleanup)) {
+        var index = Module.deinitializers.indexOf(cleanup);
+        if (index >= 0) Module.deinitializers.splice(index, 1);
+        slopCityAudioDeinitializers.splice(slopCityAudioDeinitializers.indexOf(cleanup), 1);
+      }
     });
     Object.keys(WEBAudio.audioInstances).forEach(function (id) {
       var object = WEBAudio.audioInstances[id];
@@ -121,16 +144,19 @@ mergeInto(LibraryManager.library, {
       // Wasm player. Clips do not have callbacks or a channel source.
       if (object) {
         object.callback = null;
-        if (object.source) object.source.onended = null;
+        retire(function () { if (object.source) object.source.onended = null; });
       }
       retire(function () { if (object && object.source) _JS_Sound_Stop(id, 0); });
       retire(function () { _JS_Sound_ReleaseInstance(id); });
-      delete WEBAudio.audioInstances[id];
+      // Native release removes its instance only after it succeeds. Never
+      // erase that last owner after a source/node cleanup exception.
     });
     WEBAudio.audioWebEnabled = 0; WEBAudio.contextIsRunning = false;
-    WEBAudio.audioCache.splice(0).forEach(function (element) {
-      retire(function () { element.pause(); });
-      retire(function () { element.removeAttribute('src'); element.load(); });
+    WEBAudio.audioCache.slice().forEach(function (element) {
+      var clean = retire(function () { element.pause(); });
+      clean = retire(function () { element.removeAttribute('src'); }) && clean;
+      clean = retire(function () { element.load(); }) && clean;
+      if (clean) WEBAudio.audioCache.splice(WEBAudio.audioCache.indexOf(element), 1);
     });
     Object.keys(WEBAudio.pendingAudioSources || {}).forEach(function (id) { delete WEBAudio.pendingAudioSources[id]; });
     if (context && context.state !== 'closed' && typeof context.close === 'function') {

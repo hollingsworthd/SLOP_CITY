@@ -17,6 +17,9 @@ namespace SlopCity
         [SerializeField] private bool homeDetailsPrepared;
         [SerializeField] private bool dustPrepared;
         private readonly HashSet<int> admittedInteriors = new HashSet<int>();
+        private readonly HashSet<int> liveInteriors = new HashSet<int>();
+        private readonly List<SlopCityInteriorFurnishing> interiorScratch = new List<SlopCityInteriorFurnishing>();
+        private Predicate<int> retiredInterior;
         private static readonly string[] DustyRoomParts =
         {
             "_Desk", "_Desk_Leg", "_Notebook", "_Coffee_Table", "_Reading_Material", "_Bedside_Table",
@@ -140,15 +143,29 @@ namespace SlopCity
 
         private void AdmitStreamedFurniture(Transform city)
         {
-            var live = new HashSet<int>();
-            foreach (var room in city.GetComponentsInChildren<SlopCityInteriorFurnishing>(true))
+            liveInteriors.Clear();
+            try
             {
-                int id = room.GetInstanceID(); live.Add(id);
-                if (!admittedInteriors.Add(id)) continue;
-                PrepareFurniture(room.transform);
+                city.GetComponentsInChildren(true, interiorScratch);
+                foreach (SlopCityInteriorFurnishing room in interiorScratch)
+                {
+                    if (!room) continue;
+                    int id = room.GetInstanceID(); liveInteriors.Add(id);
+                    if (admittedInteriors.Contains(id)) continue;
+                    PrepareFurniture(room.transform);
+                    // A callback or allocation failure must not publish a partial
+                    // preparation as ready and suppress every later attempt.
+                    admittedInteriors.Add(id);
+                }
+                if (retiredInterior == null) retiredInterior = IsRetiredInterior;
+                admittedInteriors.RemoveWhere(retiredInterior);
             }
-            admittedInteriors.RemoveWhere(id => !live.Contains(id));
+            finally
+            {
+                interiorScratch.Clear(); liveInteriors.Clear();
+            }
         }
+        private bool IsRetiredInterior(int id) => !liveInteriors.Contains(id);
 
         private static void PrepareFurniture(Transform room)
         {

@@ -8,8 +8,11 @@ mergeInto(LibraryManager.library, {
   $slopCityNativeVideoUpdateToTexture: LibraryManager.library.JS_Video_UpdateToTexture,
   $slopCityNativeVideoUpdateToTexture__deps: LibraryManager.library.JS_Video_UpdateToTexture__deps.slice(),
 
+  $slopCityReleaseVideoTexture__deps: ['$slopCityDetachVideoDestination'],
   $slopCityReleaseVideoTexture: function (decoder) {
-    if (decoder.slopCityLinearVideoTexture && typeof GLctx !== 'undefined' && GLctx) {
+    slopCityDetachVideoDestination();
+    if (decoder.slopCityLinearVideoTexture && typeof GLctx !== 'undefined' && GLctx && !GLctx.isContextLost()) {
+      // Retain this exact owner if deletion fails; decoder retirement retries it.
       GLctx.deleteTexture(decoder.slopCityLinearVideoTexture);
     }
     delete decoder.slopCityLinearVideoTexture;
@@ -27,70 +30,136 @@ mergeInto(LibraryManager.library, {
   $slopCityPauseVideoForGraphicsLoss: function () {
     // Reuse the playback bridge: pause also cancels stale playback intent,
     // pending gesture retries and Unity's loop poll interval for each decoder.
-    Object.keys(videoInstances).forEach(function (video) { _JS_Video_Pause(video); });
+    var firstError;
+    Object.keys(videoInstances).forEach(function (video) {
+      try { _JS_Video_Pause(video); } catch (error) { if (!firstError) firstError = error; }
+    });
+    if (firstError) throw firstError;
   },
 
+  $slopCityFailedVideoTextures: [],
+  $slopCityDrainFailedVideoTextures__deps: ['$slopCityFailedVideoTextures'],
+  $slopCityDrainFailedVideoTextures: function () {
+    for (var i = slopCityFailedVideoTextures.length - 1; i >= 0; --i) {
+      try {
+        if (typeof GLctx !== 'undefined' && GLctx && !GLctx.isContextLost()) GLctx.deleteTexture(slopCityFailedVideoTextures[i]);
+        slopCityFailedVideoTextures.splice(i, 1);
+      } catch (_) { /* Refused deletion remains owned; block replacement. */ }
+    }
+    return slopCityFailedVideoTextures.length === 0;
+  },
+  $jsVideoCreateTexture2D__deps: ['$slopCityFailedVideoTextures', '$slopCityDrainFailedVideoTextures'],
   $jsVideoCreateTexture2D: function () {
-    var texture = GLctx.createTexture();
-    if (!texture) {
-      var error = new Error('The browser could not allocate a video texture.');
+    var texture = null;
+    try {
+      if (!slopCityDrainFailedVideoTextures()) throw new Error('A previous video texture is still retiring.');
+      texture = GLctx.createTexture();
+      if (!texture) throw new Error('The browser could not allocate a video texture.');
+      GLctx.bindTexture(GLctx.TEXTURE_2D, texture);
+      GLctx.texParameteri(GLctx.TEXTURE_2D, GLctx.TEXTURE_WRAP_S, GLctx.CLAMP_TO_EDGE);
+      GLctx.texParameteri(GLctx.TEXTURE_2D, GLctx.TEXTURE_WRAP_T, GLctx.CLAMP_TO_EDGE);
+      GLctx.texParameteri(GLctx.TEXTURE_2D, GLctx.TEXTURE_MIN_FILTER, GLctx.LINEAR);
+      return texture;
+    } catch (cause) {
+      if (texture) {
+        try { GLctx.deleteTexture(texture); }
+        catch (_) { slopCityFailedVideoTextures.push(texture); }
+      }
+      var error = new Error('The browser could not prepare a video texture.');
       error.slopCityVideoTextureAllocationFailure = true;
       throw error;
     }
-    GLctx.bindTexture(GLctx.TEXTURE_2D, texture);
-    GLctx.texParameteri(GLctx.TEXTURE_2D, GLctx.TEXTURE_WRAP_S, GLctx.CLAMP_TO_EDGE);
-    GLctx.texParameteri(GLctx.TEXTURE_2D, GLctx.TEXTURE_WRAP_T, GLctx.CLAMP_TO_EDGE);
-    GLctx.texParameteri(GLctx.TEXTURE_2D, GLctx.TEXTURE_MIN_FILTER, GLctx.LINEAR);
-    return texture;
   },
 
   // Unity's linear video path assumes all shader/buffer/FBO allocations succeed.
   // Prepare those exact resources transactionally before entering that path.
   $slopCityVideoVertexArray: null,
-  $slopCityPrepareLinearVideo__deps: ['$s2lProgram', '$s2lVertexPositionNDC', '$s2lVBO', '$s2lFBO', '$slopCityVideoVertexArray'],
+  $slopCityPendingVideoGraphics: [],
+  $slopCityDrainPendingVideoGraphics__deps: ['$slopCityPendingVideoGraphics'],
+  $slopCityDrainPendingVideoGraphics: function () {
+    var methods = { vertex: 'deleteShader', fragment: 'deleteShader', program: 'deleteProgram',
+      buffer: 'deleteBuffer', framebuffer: 'deleteFramebuffer', vertexArray: 'deleteVertexArray' };
+    for (var i = slopCityPendingVideoGraphics.length - 1; i >= 0; --i) {
+      var owner = slopCityPendingVideoGraphics[i];
+      Object.keys(methods).forEach(function (key) {
+        if (!owner[key]) return;
+        try {
+          if (typeof GLctx !== 'undefined' && GLctx && !GLctx.isContextLost()) GLctx[methods[key]](owner[key]);
+          owner[key] = null;
+        } catch (_) { /* Preserve each failed native owner independently. */ }
+      });
+      if (!Object.keys(methods).some(function (key) { return !!owner[key]; })) slopCityPendingVideoGraphics.splice(i, 1);
+    }
+    return slopCityPendingVideoGraphics.length === 0;
+  },
+  $slopCityPrepareLinearVideo__deps: ['$s2lProgram', '$s2lVertexPositionNDC', '$s2lVBO', '$s2lFBO', '$slopCityVideoVertexArray', '$slopCityPendingVideoGraphics', '$slopCityDrainPendingVideoGraphics'],
   $slopCityPrepareLinearVideo: function () {
+    if (!slopCityDrainPendingVideoGraphics()) return false;
     if (s2lProgram && s2lVBO && s2lFBO && slopCityVideoVertexArray) return true;
-    var vertex = null, fragment = null, program = null, buffer = null, framebuffer = null, vertexArray = null;
     var previousBuffer = GLctx.getParameter(GLctx.ARRAY_BUFFER_BINDING);
+    var owner = {};
+    slopCityPendingVideoGraphics.push(owner);
     try {
       if (!s2lProgram) {
-        vertex = GLctx.createShader(GLctx.VERTEX_SHADER);
-        fragment = GLctx.createShader(GLctx.FRAGMENT_SHADER);
-        program = GLctx.createProgram();
-        if (!vertex || !fragment || !program) return false;
-        GLctx.shaderSource(vertex, 'precision lowp float; attribute vec2 vertexPositionNDC; varying vec2 vTexCoords; void main(){vTexCoords=vertexPositionNDC*vec2(0.5)+vec2(0.5);gl_Position=vec4(vertexPositionNDC,0.0,1.0);}');
-        GLctx.shaderSource(fragment, 'precision mediump float; uniform sampler2D colorMap; varying vec2 vTexCoords; void main(){vec4 c=texture2D(colorMap,vTexCoords);gl_FragColor=vec4(c.rgb*(c.rgb*(c.rgb*0.305306011+0.682171111)+0.012522878),c.a);}');
-        GLctx.compileShader(vertex); GLctx.compileShader(fragment);
-        if (!GLctx.getShaderParameter(vertex, GLctx.COMPILE_STATUS) || !GLctx.getShaderParameter(fragment, GLctx.COMPILE_STATUS)) return false;
-        GLctx.attachShader(program, vertex); GLctx.attachShader(program, fragment); GLctx.linkProgram(program);
-        if (!GLctx.getProgramParameter(program, GLctx.LINK_STATUS)) return false;
-        var attribute = GLctx.getAttribLocation(program, 'vertexPositionNDC');
+        owner.vertex = GLctx.createShader(GLctx.VERTEX_SHADER);
+        owner.fragment = GLctx.createShader(GLctx.FRAGMENT_SHADER);
+        owner.program = GLctx.createProgram();
+        if (!owner.vertex || !owner.fragment || !owner.program) return false;
+        GLctx.shaderSource(owner.vertex, 'precision lowp float; attribute vec2 vertexPositionNDC; varying vec2 vTexCoords; void main(){vTexCoords=vertexPositionNDC*vec2(0.5)+vec2(0.5);gl_Position=vec4(vertexPositionNDC,0.0,1.0);}');
+        GLctx.shaderSource(owner.fragment, 'precision mediump float; uniform sampler2D colorMap; varying vec2 vTexCoords; void main(){vec4 c=texture2D(colorMap,vTexCoords);gl_FragColor=vec4(c.rgb*(c.rgb*(c.rgb*0.305306011+0.682171111)+0.012522878),c.a);}');
+        GLctx.compileShader(owner.vertex); GLctx.compileShader(owner.fragment);
+        if (!GLctx.getShaderParameter(owner.vertex, GLctx.COMPILE_STATUS) || !GLctx.getShaderParameter(owner.fragment, GLctx.COMPILE_STATUS)) return false;
+        GLctx.attachShader(owner.program, owner.vertex); GLctx.attachShader(owner.program, owner.fragment); GLctx.linkProgram(owner.program);
+        if (!GLctx.getProgramParameter(owner.program, GLctx.LINK_STATUS)) return false;
+        var attribute = GLctx.getAttribLocation(owner.program, 'vertexPositionNDC');
         if (attribute < 0) return false;
       }
       if (!s2lVBO) {
-        buffer = GLctx.createBuffer();
-        if (!buffer) return false;
-        GLctx.bindBuffer(GLctx.ARRAY_BUFFER, buffer);
+        owner.buffer = GLctx.createBuffer();
+        if (!owner.buffer) return false;
+        GLctx.bindBuffer(GLctx.ARRAY_BUFFER, owner.buffer);
         GLctx.bufferData(GLctx.ARRAY_BUFFER, new Float32Array([1,1,-1,1,-1,-1,-1,-1,1,-1,1,1]), GLctx.STATIC_DRAW);
       }
-      if (!s2lFBO) { framebuffer = GLctx.createFramebuffer(); if (!framebuffer) return false; }
+      if (!s2lFBO) { owner.framebuffer = GLctx.createFramebuffer(); if (!owner.framebuffer) return false; }
       // The Web build requires WebGL2. A private VAO keeps Unity's enabled
       // attributes, pointers and instancing divisors out of the conversion draw.
-      if (!slopCityVideoVertexArray) { vertexArray = GLctx.createVertexArray(); if (!vertexArray) return false; }
-      if (program) { s2lProgram = program; s2lVertexPositionNDC = attribute; program = null; }
-      if (buffer) { s2lVBO = buffer; buffer = null; }
-      if (framebuffer) { s2lFBO = framebuffer; framebuffer = null; }
-      if (vertexArray) { slopCityVideoVertexArray = vertexArray; vertexArray = null; }
+      if (!slopCityVideoVertexArray) { owner.vertexArray = GLctx.createVertexArray(); if (!owner.vertexArray) return false; }
+      if (owner.program) { s2lProgram = owner.program; s2lVertexPositionNDC = attribute; owner.program = null; }
+      if (owner.buffer) { s2lVBO = owner.buffer; owner.buffer = null; }
+      if (owner.framebuffer) { s2lFBO = owner.framebuffer; owner.framebuffer = null; }
+      if (owner.vertexArray) { slopCityVideoVertexArray = owner.vertexArray; owner.vertexArray = null; }
       return true;
-    } finally {
-      if (vertex) GLctx.deleteShader(vertex);
-      if (fragment) GLctx.deleteShader(fragment);
-      if (program) GLctx.deleteProgram(program);
-      if (buffer) GLctx.deleteBuffer(buffer);
-      if (framebuffer) GLctx.deleteFramebuffer(framebuffer);
-      if (vertexArray) GLctx.deleteVertexArray(vertexArray);
+    } catch (_) { return false; } finally {
+      // Cleanup candidates separately: a refused shader deletion must not lose
+      // the remaining program/buffer/FBO owners or admit another allocation.
+      slopCityDrainPendingVideoGraphics();
       GLctx.bindBuffer(GLctx.ARRAY_BUFFER, previousBuffer);
     }
+  },
+
+  $slopCityDetachVideoDestination__deps: ['$s2lFBO'],
+  $slopCityDetachVideoDestination: function () {
+    if (!s2lFBO || typeof GLctx === 'undefined' || !GLctx || GLctx.isContextLost()) return;
+    var previous = GLctx.getParameter(GLctx.DRAW_FRAMEBUFFER_BINDING);
+    try {
+      GLctx.bindFramebuffer(GLctx.DRAW_FRAMEBUFFER, s2lFBO);
+      GLctx.framebufferTexture2D(GLctx.DRAW_FRAMEBUFFER, GLctx.COLOR_ATTACHMENT0, GLctx.TEXTURE_2D, null, 0);
+    } finally { GLctx.bindFramebuffer(GLctx.DRAW_FRAMEBUFFER, previous); }
+  },
+
+  $slopCityReleaseVideoGraphics__deps: ['$s2lProgram', '$s2lVBO', '$s2lFBO', '$s2lTexture', '$slopCityVideoVertexArray', '$slopCityDetachVideoDestination', '$slopCityDrainFailedVideoTextures', '$slopCityDrainPendingVideoGraphics'],
+  $slopCityReleaseVideoGraphics: function () {
+    var firstError;
+    function clean(action) { try { action(); } catch (error) { if (!firstError) firstError = error; } }
+    clean(function () { slopCityDetachVideoDestination(); });
+    clean(function () { if (s2lTexture && GLctx && !GLctx.isContextLost()) GLctx.deleteTexture(s2lTexture); s2lTexture = null; });
+    clean(function () { if (s2lFBO && GLctx && !GLctx.isContextLost()) GLctx.deleteFramebuffer(s2lFBO); s2lFBO = null; });
+    clean(function () { if (s2lVBO && GLctx && !GLctx.isContextLost()) GLctx.deleteBuffer(s2lVBO); s2lVBO = null; });
+    clean(function () { if (s2lProgram && GLctx && !GLctx.isContextLost()) GLctx.deleteProgram(s2lProgram); s2lProgram = null; });
+    clean(function () { if (slopCityVideoVertexArray && GLctx && !GLctx.isContextLost()) GLctx.deleteVertexArray(slopCityVideoVertexArray); slopCityVideoVertexArray = null; });
+    clean(function () { if (!slopCityDrainFailedVideoTextures()) throw new Error('Video textures are still retiring.'); });
+    clean(function () { if (!slopCityDrainPendingVideoGraphics()) throw new Error('Video graphics are still retiring.'); });
+    if (firstError) throw firstError;
   },
 
   $slopCityCaptureVideoGraphicsState: function (linear) {
@@ -213,6 +282,11 @@ mergeInto(LibraryManager.library, {
     if (linear) {
       GLctx.bindFramebuffer(GLctx.FRAMEBUFFER, s2lFBO);
       GLctx.framebufferTexture2D(GLctx.FRAMEBUFFER, GLctx.COLOR_ATTACHMENT0, GLctx.TEXTURE_2D, GL.textures[texture], 0);
+      if (GLctx.checkFramebufferStatus(GLctx.FRAMEBUFFER) !== GLctx.FRAMEBUFFER_COMPLETE) {
+        var incomplete = new Error('Video conversion target is incomplete.');
+        incomplete.slopCityVideoTextureAllocationFailure = true;
+        throw incomplete;
+      }
       GLctx.bindTexture(GLctx.TEXTURE_2D, s2lTexture);
       GLctx.viewport(0, 0, v.videoWidth, v.videoHeight);
       GLctx.useProgram(s2lProgram);
@@ -229,10 +303,16 @@ mergeInto(LibraryManager.library, {
 
   JS_Video_UpdateToTexture__proxy: 'sync',
   JS_Video_UpdateToTexture__sig: 'iiii',
-  JS_Video_UpdateToTexture__deps: ['$videoInstances', '$s2lTexture', '$jsIsWebkit', '$slopCityWebkitVideoUpload', '$slopCityNativeVideoUpdateToTexture', '$slopCityPauseVideoForGraphicsLoss', '$slopCityPrepareLinearVideo', '$slopCityUsesMobileVideo', '$slopCityVideoVertexArray', '$slopCityCaptureVideoGraphicsState', '$slopCityRestoreVideoGraphicsState', 'JS_Video_Pause'],
+  JS_Video_UpdateToTexture__deps: ['$videoInstances', '$s2lTexture', '$jsIsWebkit', '$slopCityWebkitVideoUpload', '$slopCityNativeVideoUpdateToTexture', '$slopCityPauseVideoForGraphicsLoss', '$slopCityPrepareLinearVideo', '$slopCityUsesMobileVideo', '$slopCityVideoVertexArray', '$slopCityCaptureVideoGraphicsState', '$slopCityRestoreVideoGraphicsState', '$slopCityDetachVideoDestination', '$slopCityWatchVideoPicture', '$slopCityHasCurrentVideoPicture', 'JS_Video_Pause'],
   JS_Video_UpdateToTexture: function (video, texture, adjustToLinearspace) {
     var decoder = videoInstances[video];
-    if (!decoder || typeof GLctx === 'undefined' || !GLctx || GLctx.isContextLost()) return false;
+    if (!decoder || decoder.slopCityDestroyed || typeof GLctx === 'undefined' || !GLctx || GLctx.isContextLost()) return false;
+    if (!decoder.slopCityTextureRequested) {
+      decoder.slopCityTextureRequested = true;
+      var intent = decoder.slopCityPlaybackIntent;
+      if (intent && intent.pictureDeadline && !intent.pictureWatch && !slopCityHasCurrentVideoPicture(decoder, intent))
+        slopCityWatchVideoPicture(video, decoder, intent, intent.pictureDeadline);
+    }
     if (decoder.slopCityTextureRetryAfter > Date.now()) return false;
     // This gates only pixel uploads, not JS_Video_IsReady or JS_Video_Play.
     // Unity prepares and starts APIOnly playback independently of GetTexture.
@@ -242,11 +322,9 @@ mergeInto(LibraryManager.library, {
       && (decoder.slopCityUploadedTextureId !== texture
         || decoder.slopCityUploadedTexture !== GL.textures[texture]
         || decoder.slopCityUploadedLinearMode !== !!adjustToLinearspace);
-    if (decoder.slopCityDecodedFrame !== undefined
-      && decoder.slopCityUploadedDecodedFrame === decoder.slopCityDecodedFrame
-      && !destinationChanged
-      && decoder.previousUploadedWidth === decoder.videoWidth
-      && decoder.previousUploadedHeight === decoder.videoHeight) return false;
+    // requestVideoFrameCallback may be throttled for a hidden video while its
+    // native currentTime advances. Preserve Unity's actual-time upload contract;
+    // a stale callback counter must not pin the world to its first picture.
     // Avoid querying GL state for duplicate frames. A changed destination still
     // receives the same frame once the native decoder has current-frame data.
     if (!(decoder.videoWidth > 0 && decoder.videoHeight > 0) || decoder.seeking
@@ -302,6 +380,7 @@ mergeInto(LibraryManager.library, {
         decoder.slopCityUploadedTextureId = texture;
         decoder.slopCityUploadedLinearMode = !!adjustToLinearspace;
         decoder.slopCityUploadedPictureSource = decoder.src;
+        decoder.slopCityVideoUploadSerial = (decoder.slopCityVideoUploadSerial || 0) + 1;
       }
       return uploaded;
     } catch (error) {
@@ -331,7 +410,14 @@ mergeInto(LibraryManager.library, {
         decoder.slopCityLinearVideoTexture = s2lTexture;
         s2lTexture = previousScratch;
       }
-      slopCityRestoreVideoGraphicsState(graphicsState, previousTexture, texture);
+      // Detach before Unity can retire its destination: an attached, deleted
+      // texture retains native storage until the FBO releases that reference.
+      try { if (adjustToLinearspace) slopCityDetachVideoDestination(); }
+      catch (_) {
+        // Keep the FBO and decoder owners for retirement/retry. A temporary
+        // detach failure cannot skip restoring Unity's render state.
+        decoder.slopCityTextureRetryAfter = Date.now() + 5000;
+      } finally { slopCityRestoreVideoGraphicsState(graphicsState, previousTexture, texture); }
     }
   }
 });

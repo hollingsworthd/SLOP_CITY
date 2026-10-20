@@ -320,7 +320,8 @@ namespace SlopCity
         }
         private void OnEnable()
         {
-            Instance = this; EnsureAgents();
+            EnsureAgents();
+            Instance = this;
             Camera.onPreCull -= RenderCrowd; Camera.onPreCull += RenderCrowd;
         }
         private void OnDisable()
@@ -896,7 +897,11 @@ namespace SlopCity
         }
         private bool EnsureWardrobe()
         {
+            bool retired = MatrixWardrobe.DrainRetired();
             if (wardrobe != null) return true;
+            // A returning component must not overlap a new complete wardrobe
+            // with native meshes/materials still queued for deferred destruction.
+            if (!retired) return false;
             Material source = visuals.clothing[0];
             // A camera callback is not a recovery signal. Reconfiguration, a
             // disable/enable lifecycle or a changed source admits one new try.
@@ -933,14 +938,22 @@ namespace SlopCity
         /// </summary>
         private sealed class MatrixWardrobe : IDisposable
         {
+            private static readonly List<MatrixWardrobe> Owners = new List<MatrixWardrobe>();
             public readonly Material suit, shirt, tie, dress, lenses, lapels, visitorSuit, trouserBlack, trouserBlue;
             public readonly bool animatedTrousers;
             public readonly Mesh suitMesh, shirtMesh, tieMesh, dressMesh, necklineMesh, glassesMesh, lapelsMesh, visitorHatMesh, visitorShirtMesh, visitorSleeveMesh, trouserYokeMesh;
             public readonly Mesh coarseHeadMesh, coarseDressMesh, coarseNecklineMesh, coarseTrouserMesh;
             private readonly List<UnityEngine.Object> owned = new List<UnityEngine.Object>(12);
+            private UnityEngine.Object pendingOwner;
+            private bool retired, cleanupWarning;
+            private int lastCleanupFrame = -1;
+            private int releaseAfterFrame;
 
             public MatrixWardrobe(Material source)
             {
+                // Register the managed owner before any native allocation. Even a
+                // constructor failure or refused Destroy keeps its exact handles.
+                Owners.Add(this);
                 try
                 {
                 visitorSuit = Fabric(source, "Visitor midnight blue wool", new Color(.025f,.12f,.36f), .22f);
@@ -1232,12 +1245,16 @@ namespace SlopCity
                 => new Vector3(Mathf.Cos(angle) * profile.y, profile.x, Mathf.Sin(angle) * profile.z);
             private Mesh Finish(WardrobeMesh builder, string name, bool smooth = false, bool hipWeights = false, bool joinedSkirt = false)
             {
-                return Own(builder.Build(name, smooth, hipWeights, joinedSkirt));
+                return builder.Build(name, this, smooth, hipWeights, joinedSkirt);
             }
-            private T Own<T>(T resource) where T : UnityEngine.Object
+            internal T Own<T>(T resource) where T : UnityEngine.Object
             {
-                try { owned.Add(resource); return resource; }
-                catch { DestroyOwned(resource); throw; }
+                // A list growth failure must retain the just-allocated native
+                // handle too; the failed constructor will retire this owner.
+                pendingOwner = resource;
+                owned.Add(resource);
+                pendingOwner = null;
+                return resource;
             }
             private static void DestroyOwned(UnityEngine.Object resource)
             {
@@ -1247,9 +1264,41 @@ namespace SlopCity
             }
             public void Dispose()
             {
-                foreach (UnityEngine.Object resource in owned)
-                    DestroyOwned(resource);
-                owned.Clear();
+                retired = true;
+                if (Application.isPlaying) releaseAfterFrame = Mathf.Max(releaseAfterFrame, Time.frameCount + 1);
+                Cleanup();
+            }
+            private void Cleanup()
+            {
+                if (Application.isPlaying && lastCleanupFrame == Time.frameCount) return;
+                lastCleanupFrame = Time.frameCount;
+                for (int index = owned.Count - 1; index >= 0; index--)
+                {
+                    try { DestroyOwned(owned[index]); if (!owned[index]) owned.RemoveAt(index); }
+                    catch (Exception error) { WarnCleanup(error); }
+                }
+                try { DestroyOwned(pendingOwner); if (!pendingOwner) pendingOwner = null; }
+                catch (Exception error) { WarnCleanup(error); }
+            }
+            private void WarnCleanup(Exception error)
+            {
+                if (cleanupWarning) return;
+                cleanupWarning = true;
+                Debug.LogWarning("Crowd wardrobe cleanup is pending; native ownership is retained: " + error.GetType().Name);
+            }
+            internal static bool DrainRetired()
+            {
+                bool complete = true;
+                for (int index = Owners.Count - 1; index >= 0; index--)
+                {
+                    MatrixWardrobe owner = Owners[index];
+                    if (!owner.retired) continue;
+                    owner.Cleanup();
+                    if (owner.owned.Count == 0 && !owner.pendingOwner
+                        && (!Application.isPlaying || Time.frameCount >= owner.releaseAfterFrame)) Owners.RemoveAt(index);
+                    else complete = false;
+                }
+                return complete;
             }
         }
         private sealed class WardrobeMesh
@@ -1278,9 +1327,9 @@ namespace SlopCity
                 Vector3 g = center + new Vector3(h.x,h.y,h.z), k = center + new Vector3(-h.x,h.y,h.z);
                 Quad(e,f,g,k); Quad(b,a,d,c); Quad(a,e,k,d); Quad(f,b,c,g); Quad(d,k,g,c); Quad(a,b,f,e);
             }
-            public Mesh Build(string name, bool smooth = false, bool hipWeights = false, bool joinedSkirt = false)
+            public Mesh Build(string name, MatrixWardrobe owner, bool smooth = false, bool hipWeights = false, bool joinedSkirt = false)
             {
-                var mesh = new Mesh();
+                Mesh mesh = owner.Own(new Mesh());
                 try
                 {
                     mesh.name = name; mesh.hideFlags = HideFlags.HideAndDontSave;
@@ -1334,8 +1383,8 @@ namespace SlopCity
                 }
                 catch
                 {
-                    if (Application.isPlaying) UnityEngine.Object.Destroy(mesh);
-                    else UnityEngine.Object.DestroyImmediate(mesh);
+                    // The constructor's registered wardrobe already owns this
+                    // exact allocation, including failures in its first setter.
                     throw;
                 }
             }

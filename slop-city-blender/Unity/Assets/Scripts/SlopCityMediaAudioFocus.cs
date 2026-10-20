@@ -24,7 +24,11 @@ namespace SlopCity
 
         internal static void Submit(MonoBehaviour source, float score, float volume)
         {
-            Request request = Requests.Find(item => item.source == source);
+            // Submission runs every frame. A capturing predicate otherwise creates
+            // garbage on every update of both the lounge and city mixer.
+            Request request = null;
+            for (int index = 0; index < Requests.Count; index++)
+                if (Requests[index].source == source) { request = Requests[index]; break; }
             if (request == null) { request = new Request { source = source }; Requests.Add(request); }
             request.score = Mathf.Clamp01(score);
             request.volume = Mathf.Clamp01(volume);

@@ -94,6 +94,7 @@ FRAMEWORK_PROMISE = r'''return new Promise(function(resolve,reject){
     var framework=unityFramework;unityFramework=null;resolve(framework);
   }
   slopStartupCleanup.add(finish);
+  b.slopCityFrameworkScriptUrl=s;
   script.src=s;
   script.onload=function(){
     if(typeof unityFramework!=="function"){finish(new Error("City framework is unavailable or could not be parsed."));return;}
@@ -110,6 +111,10 @@ def harden_unity_loader(path):
     source = path.read_text()
     source = replace_once(source, 'function createUnityInstance(t,n,l){',
                           'function createUnityInstance(t,n,l){' + HELPERS)
+    # onRuntimeInitialized is too late to own listeners/intervals if framework
+    # initialization fails or navigation cancels the still-starting player.
+    source = replace_once(source, 'b.QuitCleanup=function(){',
+                          'typeof b.slopCityPublishModule==="function"&&b.slopCityPublishModule(b),b.QuitCleanup=function(){')
     start = 'new Promise(function(e,t){try{for(var n in P){'
     end = ';var i,s}).catch(function(e){var t="Failed to download file "'
     if source.count(start) != 1 or source.count(end) != 1:

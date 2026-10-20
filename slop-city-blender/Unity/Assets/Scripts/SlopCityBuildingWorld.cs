@@ -18,6 +18,10 @@ namespace SlopCity
         public const int MaximumActiveFloors = 6;
         private readonly List<SlopCityBuildingInterior> buildings = new List<SlopCityBuildingInterior>();
         private readonly List<SlopCityElevator> stationLifts = new List<SlopCityElevator>();
+        private readonly List<SlopCityBuildingInterior> streamingCandidates = new List<SlopCityBuildingInterior>();
+        private readonly HashSet<SlopCityBuildingInterior> streamingKeep = new HashSet<SlopCityBuildingInterior>();
+        private Vector3 streamingFeet;
+        private Comparison<SlopCityBuildingInterior> streamingComparison;
         private SlopCityFirstPerson player;
         private float nextRefresh;
         private bool geometryChanged;
@@ -189,28 +193,24 @@ namespace SlopCity
             if (!player) return;
             buildings.RemoveAll(item => !item);
             Vector3 feet = player.transform.position;
-            var candidates = new List<SlopCityBuildingInterior>();
+            streamingFeet = feet;
+            streamingCandidates.Clear(); streamingKeep.Clear();
             foreach (SlopCityBuildingInterior item in buildings)
-                if (ShouldConsiderTowerDetail(item, feet)) candidates.Add(item);
-            candidates.Sort((a, b) =>
-            {
-                bool occupiedA = a.ContainsInterior(feet), occupiedB = b.ContainsInterior(feet);
-                if (occupiedA != occupiedB) return occupiedA ? -1 : 1;
-                bool pinA = a.Elevator && a.Elevator.PlayerInside, pinB = b.Elevator && b.Elevator.PlayerInside;
-                if (pinA != pinB) return pinA ? -1 : 1;
-                float distanceA = a.HorizontalDistanceSquared(feet), distanceB = b.HorizontalDistanceSquared(feet);
-                if (a.Elevator) distanceA = Mathf.Max(0f, distanceA - 4f);
-                if (b.Elevator) distanceB = Mathf.Max(0f, distanceB - 4f);
-                return distanceA.CompareTo(distanceB);
-            });
-            var keep = new HashSet<SlopCityBuildingInterior>(candidates.Take(TowerBudget));
+                if (ShouldConsiderTowerDetail(item, feet)) streamingCandidates.Add(item);
+            if (streamingComparison == null) streamingComparison = CompareStreamingCandidates;
+            streamingCandidates.Sort(streamingComparison);
+            for (int index = 0; index < Mathf.Min(TowerBudget, streamingCandidates.Count); index++)
+                streamingKeep.Add(streamingCandidates[index]);
             // Retire distant empty cars before admitting a new occupied building. Never drop the room under a player.
             bool retiredDetail = false;
             foreach (SlopCityBuildingInterior item in buildings)
             {
-                if (!item.IsTower || keep.Contains(item)) continue;
+                if (!item.IsTower || streamingKeep.Contains(item)) continue;
                 bool hadDetail = item.Elevator || item.LoadedFloorCount != 0;
-                if (item.ReleaseStream() && hadDetail) retiredDetail = true;
+                item.ReleaseStream();
+                // A partially completed release can already have queued some
+                // native destruction even when another owner still needs retry.
+                if (hadDetail) retiredDetail = true;
             }
             // Destroy retires native resources at frame end. Do not construct the next
             // tower's car/rooms while the previous ones still occupy that same frame.
@@ -219,7 +219,7 @@ namespace SlopCity
             foreach (SlopCityBuildingInterior item in buildings)
             {
                 if (!item.IsTower) continue;
-                if (keep.Contains(item))
+                if (streamingKeep.Contains(item))
                 {
                     if (!CanAdmitTowerDetail(item, Time.frameCount))
                     { nextRefresh = 0f; continue; }
@@ -253,6 +253,18 @@ namespace SlopCity
                 if (near) lift.gameObject.SetActive(true);
                 else if (lift.CanUnload && lift.Release()) lift.gameObject.SetActive(false);
             }
+        }
+
+        private int CompareStreamingCandidates(SlopCityBuildingInterior a, SlopCityBuildingInterior b)
+        {
+            bool occupiedA = a.ContainsInterior(streamingFeet), occupiedB = b.ContainsInterior(streamingFeet);
+            if (occupiedA != occupiedB) return occupiedA ? -1 : 1;
+            bool pinA = a.Elevator && a.Elevator.PlayerInside, pinB = b.Elevator && b.Elevator.PlayerInside;
+            if (pinA != pinB) return pinA ? -1 : 1;
+            float distanceA = a.HorizontalDistanceSquared(streamingFeet), distanceB = b.HorizontalDistanceSquared(streamingFeet);
+            if (a.Elevator) distanceA = Mathf.Max(0f, distanceA - 4f);
+            if (b.Elevator) distanceB = Mathf.Max(0f, distanceB - 4f);
+            return distanceA.CompareTo(distanceB);
         }
 
         internal bool CanAdmitTowerDetail(SlopCityBuildingInterior item, int frame)

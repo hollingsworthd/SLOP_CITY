@@ -627,8 +627,8 @@ namespace SlopCity
 
         private void RefreshMediaSuspension()
         {
-            if (media) media.SetSuspended((paused && !sourceOpen) || !appFocused || appSuspended);
-            if (cityMedia) cityMedia.SetSuspended((paused && !sourceOpen) || !appFocused || appSuspended);
+            if (media) media.SetSuspended(!isActiveAndEnabled || (paused && !sourceOpen) || !appFocused || appSuspended);
+            if (cityMedia) cityMedia.SetSuspended(!isActiveAndEnabled || (paused && !sourceOpen) || !appFocused || appSuspended);
         }
 
         private void UpdateCityProgress()
@@ -736,6 +736,16 @@ namespace SlopCity
                 sandbox.MunicipalReportRequested -= ShowLocalReport;
             }
         }
-        private void OnDisable() { if (media) media.SetSuspended(true); Time.timeScale = 1f; UnlockCursor(); }
+        private void OnEnable()
+        {
+            if (initializationComplete) RefreshMediaSuspension();
+        }
+        private void OnDisable()
+        {
+            if (media) media.SetSuspended(true);
+            if (cityMedia) cityMedia.SetSuspended(true);
+            Time.timeScale = 1f;
+            UnlockCursor();
+        }
     }
 }

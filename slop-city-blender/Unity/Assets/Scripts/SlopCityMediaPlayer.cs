@@ -24,6 +24,7 @@ namespace SlopCity
         private VideoPlayer player;
         private AudioSource audioSource;
         private GameObject playbackObject;
+        private bool releasingPlayback;
         private RenderTexture screenTexture;
         private Material screenMaterial;
         private Material failedDisplayMaterial;
@@ -259,8 +260,9 @@ namespace SlopCity
 #if UNITY_WEBGL && !UNITY_EDITOR
                 if (MobileWebBudget)
                 {
-                    // Metadata may prepare before WebKit has supplied pixels. Keep
-                    // the physical screen's still image until an uploaded frame arrives.
+                    // Keep the same decoder texture for the entire clip. Copy each
+                    // advancing frame into the retained physical picture; metadata
+                    // alone must never replace it with a black or frozen first frame.
                     player.renderMode = VideoRenderMode.APIOnly;
                     webAwaitingFirstPicture = true;
                     int generation = webPlaybackGeneration;
@@ -268,20 +270,13 @@ namespace SlopCity
                     webFrameReadyHandler = (source, frame) =>
                     {
                         if (!this || !isActiveAndEnabled || !source || source != expected || source != player
-                            || generation != webPlaybackGeneration || !webAwaitingFirstPicture) return;
-                        Texture picture = source.texture;
-                        if (!picture || picture.width <= 0 || picture.height <= 0) return;
+                            || generation != webPlaybackGeneration || releasingPlayback) return;
                         try
                         {
-                            // Changing renderMode can replace Unity's internal texture.
-                            // Copy the confirmed frame before attaching the retained target.
+                            Texture picture = source.texture;
+                            if (!picture || picture.width <= 0 || picture.height <= 0) return;
                             SlopCityCityMedia.DrawImage(picture, screenTexture);
                             webAwaitingFirstPicture = false;
-                            source.frameReady -= webFrameReadyHandler;
-                            source.sendFrameReadyEvents = false;
-                            webFrameReadyHandler = null;
-                            source.targetTexture = screenTexture;
-                            source.renderMode = VideoRenderMode.RenderTexture;
                             webHasPicture = true;
                             SetDisplayVisible(true);
                         }
@@ -607,7 +602,7 @@ namespace SlopCity
 
         private void OnPrepared(VideoPlayer source)
         {
-            if (source != player || state != PlaybackState.Loading) return;
+            if (releasingPlayback || source != player || state != PlaybackState.Loading) return;
 #if UNITY_WEBGL && !UNITY_EDITOR
             if (MobileWebBudget && (source.width > 480 || source.height > 480))
             { Fail("Clip resolution exceeds this browser's safe decode limit."); return; }
@@ -628,14 +623,14 @@ namespace SlopCity
 
         private void OnError(VideoPlayer source, string message)
         {
-            if (source != player) return;
+            if (releasingPlayback || source != player) return;
             Debug.LogWarning("SLOP CITY: Media decoder: " + message, this);
             Fail("This clip could not be played. Choose another channel or try again.");
         }
 
         private void OnEnded(VideoPlayer source)
         {
-            if (source != player) return;
+            if (releasingPlayback || source != player) return;
             // loopPointReached is also raised on a looping decoder. Keep its
             // playback intent, including an explicit pause at the loop boundary.
             if (source.isLooping) return;
@@ -746,6 +741,16 @@ namespace SlopCity
         }
 
         private void ReleasePlayback()
+        {
+            // Native Stop can synchronously report an error if event detachment
+            // failed. Do not recurse into release or revive a retiring player.
+            if (releasingPlayback) return;
+            releasingPlayback = true;
+            try { ReleasePlaybackResources(); }
+            finally { releasingPlayback = false; }
+        }
+
+        private void ReleasePlaybackResources()
         {
 #if UNITY_WEBGL && !UNITY_EDITOR
             webPlaybackGeneration++;

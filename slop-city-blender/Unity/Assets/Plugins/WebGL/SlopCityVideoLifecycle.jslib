@@ -10,6 +10,7 @@ mergeInto(LibraryManager.library, {
   // decoder must release its source, without throwing that grant away during
   // a held walking gesture. One source-free element is not an active decoder.
   $slopCityReusableIOSVideo: null,
+  $slopCityRetiredVideoDecoders: {},
   $slopCityVideoAdmissionLimit: 480,
   $slopCityDisposingVideoDecoders: false,
   $slopCityNativeVideoDestroy: LibraryManager.library.JS_Video_Destroy,
@@ -34,8 +35,9 @@ mergeInto(LibraryManager.library, {
       }
       return false;
     }
-    if (!(video.readyState >= 1)) return false;
+    if (video.slopCityDestroyed || !(video.readyState >= 1)) return false;
     var width = video.videoWidth, height = video.videoHeight;
+    if (!(width > 0 && height > 0)) return false;
     var edge = slopCityUsesMobileVideo(video) ? slopCityVideoAdmissionLimit : 4096;
     if (width > edge || height > edge || width * height > 8388608) {
       // Metadata is the earliest browser dimension boundary. Prevent play and
@@ -69,22 +71,79 @@ mergeInto(LibraryManager.library, {
 
   $slopCityCancelCreatedVideoFrame: function (v) {
     var request = v.slopCityCreatedFrameRequest;
-    delete v.slopCityCreatedFrameRequest;
     if (request && typeof v.cancelVideoFrameCallback === 'function') v.cancelVideoFrameCallback(request.id);
+    delete v.slopCityCreatedFrameRequest;
   },
 
-  $slopCityDisposeOwnedVideoDecoders__deps: ['$videoInstances', 'JS_Video_Destroy', '$slopCityReusableIOSVideo', '$slopCityDisposingVideoDecoders'],
+  $slopCityRetireVideoDecoder__deps: ['$videoInstances', '$slopCityNativeVideoDestroy', '$slopCityCancelCreatedVideoFrame', '$slopCityReleaseVideoTexture', '$slopCityClearVideoAttemptTimer', '$slopCityCancelVideoPictureWatch', '$slopCityCancelVideoFrame', '$jsVideoRemovePendingBlockedVideo'],
+  $slopCityRetireVideoDecoder: function (id, video) {
+    var complete = true;
+    function clean(action) { try { action(); } catch (_) { complete = false; } }
+    video.slopCityDestroyed = true;
+    // Keep the exact decoder owner until *every* native retirement step succeeds.
+    // One failed cancellation/GL call must never leave hidden playback running.
+    clean(function () { if (video.slopCitySourceAdmissionTimer) clearTimeout(video.slopCitySourceAdmissionTimer); delete video.slopCitySourceAdmissionTimer; });
+    clean(function () { slopCityCancelCreatedVideoFrame(video); });
+    clean(function () { slopCityCancelVideoFrame(video); });
+    clean(function () { slopCityClearVideoAttemptTimer(video.slopCityPlaybackIntent); });
+    clean(function () { slopCityCancelVideoPictureWatch(video.slopCityPlaybackIntent); });
+    clean(function () { jsVideoRemovePendingBlockedVideo(id); });
+    delete video.slopCityPlaybackIntent;
+    clean(function () { if (video.loopEndPollInterval) clearInterval(video.loopEndPollInterval); delete video.loopEndPollInterval; });
+    clean(function () { slopCityReleaseVideoTexture(video); });
+    clean(function () {
+      if (video.slopCityLoadedDataListener) video.removeEventListener('loadeddata', video.slopCityLoadedDataListener);
+      delete video.slopCityLoadedDataListener;
+    });
+    clean(function () {
+      if (video.slopCityMetadataListener) {
+        video.removeEventListener('loadedmetadata', video.slopCityMetadataListener);
+        video.removeEventListener('resize', video.slopCityMetadataListener);
+      }
+      delete video.slopCityMetadataListener;
+    });
+    clean(function () { if (videoInstances[id] === video) slopCityNativeVideoDestroy(id); });
+    // Retain Unity's callback/identity cleanup even if its helper was interrupted.
+    clean(function () { video.onended = video.onerror = video.oncanplay = video.onseeked = null; delete video.onendedCallback; delete video.onendedRef; });
+    delete videoInstances[id];
+    clean(function () { video.pause(); });
+    clean(function () { video.muted = true; });
+    clean(function () { video.removeAttribute('src'); });
+    clean(function () {
+      if (!video.slopCitySourceClearRequested) { video.load(); video.slopCitySourceClearRequested = true; }
+    });
+    if (!video.slopCityRetiredAt) video.slopCityRetiredAt = Date.now();
+    // load() is asynchronous. No replacement source is admitted until its old
+    // resource selection is observably empty, even after native Destroy returns.
+    try { return complete && video.paused && !video.getAttribute('src') && !video.currentSrc && video.readyState === 0; }
+    catch (_) { return false; }
+  },
+
+  $slopCityDrainRetiredVideoDecoders__deps: ['$slopCityRetiredVideoDecoders', '$slopCityRetireVideoDecoder', '$slopCityReusableIOSVideo', '$slopCityUsesIOSVideo', '$slopCityDisposingVideoDecoders'],
+  $slopCityDrainRetiredVideoDecoders: function () {
+    Object.keys(slopCityRetiredVideoDecoders).forEach(function (id) {
+      var video = slopCityRetiredVideoDecoders[id];
+      if (!slopCityRetireVideoDecoder(id, video)) return;
+      delete slopCityRetiredVideoDecoders[id];
+      if (!slopCityDisposingVideoDecoders && !slopCityReusableIOSVideo && slopCityUsesIOSVideo())
+        slopCityReusableIOSVideo = video;
+    });
+    return Object.keys(slopCityRetiredVideoDecoders).length === 0;
+  },
+
+  $slopCityDisposeOwnedVideoDecoders__deps: ['$videoInstances', 'JS_Video_Destroy', '$slopCityReusableIOSVideo', '$slopCityDisposingVideoDecoders', '$slopCityDrainRetiredVideoDecoders', '$slopCityReleaseVideoGraphics'],
   $slopCityDisposeOwnedVideoDecoders__postset: "Module['slopCityDisposeOwnedVideoDecoders'] = slopCityDisposeOwnedVideoDecoders;",
   $slopCityDisposeOwnedVideoDecoders: function () {
-    // pagehide cannot wait for another Unity frame to retire detached decoders.
     slopCityDisposingVideoDecoders = true;
     slopCityReusableIOSVideo = null;
     var firstError;
     try {
-      Object.keys(videoInstances).forEach(function (video) {
-        try { _JS_Video_Destroy(video); }
+      Object.keys(videoInstances).forEach(function (id) {
+        try { _JS_Video_Destroy(id); }
         catch (error) { if (!firstError) firstError = error; }
       });
+      try { if (!slopCityDrainRetiredVideoDecoders()) throw new Error('Video decoders are still retiring.'); } catch (error) { if (!firstError) firstError = error; }
+      try { slopCityReleaseVideoGraphics(); } catch (error) { if (!firstError) firstError = error; }
     } finally {
       slopCityReusableIOSVideo = null;
       slopCityDisposingVideoDecoders = false;
@@ -94,9 +153,10 @@ mergeInto(LibraryManager.library, {
 
   JS_Video_Create__proxy: 'sync',
   JS_Video_Create__sig: 'ii',
-  JS_Video_Create__deps: ['$videoInstances', '$videoInstanceIdCounter', '$hasSRGBATextures', '$UTF8ToString', '$jsIsWebkit', '$slopCityDisposeOwnedVideoDecoders', '$slopCityUsesIOSVideo', '$slopCityReusableIOSVideo', '$slopCityAdmitVideoMetadata', '$slopCityUsesMobileVideo'],
+  JS_Video_Create__deps: ['$videoInstances', '$videoInstanceIdCounter', '$hasSRGBATextures', '$UTF8ToString', '$jsIsWebkit', '$slopCityDisposeOwnedVideoDecoders', '$slopCityUsesIOSVideo', '$slopCityReusableIOSVideo', '$slopCityAdmitVideoMetadata', '$slopCityUsesMobileVideo', '$slopCityDrainRetiredVideoDecoders', '$slopCityFailVideoPlayback'],
   JS_Video_Create: function (url) {
     var str = UTF8ToString(url);
+    slopCityDrainRetiredVideoDecoders();
     var ios = slopCityUsesIOSVideo();
     var video = ios && slopCityReusableIOSVideo;
     var retiredAt = video ? video.slopCityRetiredAt || 0 : 0;
@@ -164,12 +224,18 @@ mergeInto(LibraryManager.library, {
     video.setAttribute('muted', '');
     video.setAttribute('playsinline', '');
     video.crossOrigin = 'anonymous';
+    var admissionStartedAt = Date.now();
     function admitSource() {
       if (!current()) return;
       // load() aborts the old source asynchronously. Wait for its observable
       // empty state and a quiet interval before attaching the replacement.
-      if (ios && retiredAt && (Date.now() - retiredAt < 250
-        || video.readyState !== 0 || video.currentSrc)) {
+      if (!slopCityDrainRetiredVideoDecoders() || (ios && retiredAt && (Date.now() - retiredAt < 250
+        || video.readyState !== 0 || video.currentSrc))) {
+        if (Date.now() - admissionStartedAt >= 30000) {
+          delete video.slopCitySourceAdmissionTimer;
+          slopCityFailVideoPlayback(id, video, video.slopCityPlaybackIntent);
+          return;
+        }
         video.slopCitySourceAdmissionTimer = setTimeout(admitSource, 50);
         return;
       }
@@ -187,39 +253,13 @@ mergeInto(LibraryManager.library, {
 
   JS_Video_Destroy__proxy: 'sync',
   JS_Video_Destroy__sig: 'vi',
-  JS_Video_Destroy__deps: ['$videoInstances', '$slopCityNativeVideoDestroy', '$slopCityCancelCreatedVideoFrame', '$slopCityReleaseVideoTexture', '$slopCityUsesIOSVideo', '$slopCityReusableIOSVideo', '$slopCityDisposingVideoDecoders'],
+  JS_Video_Destroy__deps: ['$videoInstances', '$slopCityRetiredVideoDecoders', '$slopCityDrainRetiredVideoDecoders'],
   JS_Video_Destroy: function (id) {
-    var video = videoInstances[id];
+    var video = videoInstances[id] || slopCityRetiredVideoDecoders[id];
     if (!video) return;
-    video.slopCityDestroyed = true;
-    if (video.slopCitySourceAdmissionTimer) clearTimeout(video.slopCitySourceAdmissionTimer);
-    delete video.slopCitySourceAdmissionTimer;
-    slopCityCancelCreatedVideoFrame(video);
-    slopCityReleaseVideoTexture(video);
-    if (video.slopCityLoadedDataListener) {
-      video.removeEventListener('loadeddata', video.slopCityLoadedDataListener);
-      delete video.slopCityLoadedDataListener;
-    }
-    if (video.slopCityMetadataListener) {
-      video.removeEventListener('loadedmetadata', video.slopCityMetadataListener);
-      video.removeEventListener('resize', video.slopCityMetadataListener);
-      delete video.slopCityMetadataListener;
-    }
-    // Retain Unity's loop/gesture/callback cleanup and identity removal.
-    slopCityNativeVideoDestroy(id);
-    // Assigning src="" alone does not explicitly run media resource selection.
-    // Empty the source and load to abort decoding/downloads on retired players.
-    video.pause();
-    video.muted = true;
-    video.removeAttribute('src');
-    video.load();
-    video.slopCityRetiredAt = Date.now();
-    // Reuse the same iOS element even before an audio grant: repeated street
-    // handoffs must not manufacture a new WebKit media element each time.
-    // Never carry permission to a different element, retain a playing source,
-    // or keep more than one empty shell. Teardown drops even this final shell.
-    if (!slopCityDisposingVideoDecoders && !slopCityReusableIOSVideo
-      && slopCityUsesIOSVideo())
-      slopCityReusableIOSVideo = video;
+    slopCityRetiredVideoDecoders[id] = video;
+    // Retirement owns partial failures and blocks new source admission. It can
+    // be retried without allocating another active decoder beside that owner.
+    slopCityDrainRetiredVideoDecoders();
   }
 });

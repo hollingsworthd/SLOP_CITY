@@ -220,6 +220,17 @@
     let navigationDisposed = false;
     let navigationModule = null;
     const navigationDisposedModules = new WeakSet();
+    let displayObserver = null;
+    let densityCleanup = null;
+
+    function releaseDisplayObservers() {
+      try { if (displayObserver) { displayObserver.disconnect(); displayObserver = null; } }
+      catch (error) { console.warn("Display observer cleanup failed.", error); }
+      try { if (densityCleanup) { densityCleanup(); densityCleanup = null; } }
+      catch (error) { console.warn("Display density cleanup failed.", error); }
+      window.removeEventListener("resize", resizeGame);
+      document.removeEventListener("fullscreenchange", resizeGame);
+    }
 
     function releaseCanvasBacking() {
       // A stopped/cached page must not retain its full-size drawing surfaces.
@@ -231,6 +242,12 @@
     function disposeSessionModule(module) {
       if (!module || navigationDisposedModules.has(module)) return;
       navigationDisposedModules.add(module);
+      try {
+      // The loader can be stopped before the framework installs this helper.
+      // No media devices exist yet; its listener deinitializer is still owned.
+      if (typeof module.disableAccessToMediaDevices !== "function") module.disableAccessToMediaDevices = function () {};
+      try { if (module.slopCityDisposeOwnedNetwork) module.slopCityDisposeOwnedNetwork(); }
+      catch (error) { console.warn("Session network cleanup failed.", error); }
       try { if (module.slopCityAbortOwnedWebRequests) module.slopCityAbortOwnedWebRequests(); }
       catch (error) { console.warn("Session request cleanup failed.", error); }
       // The bridge owns detached video elements that DOM queries cannot find.
@@ -243,6 +260,16 @@
       catch (error) { console.warn("Session audio cleanup failed.", error); }
       try { if (module.pauseMainLoop) module.pauseMainLoop(); }
       catch (error) { console.warn("Navigation frame cleanup failed.", error); }
+      // Quit cannot finish on a paused/fatal engine. Retire loader/framework
+      // listeners now; remove only successful callbacks so failures keep owners
+      // available for a later terminal/pagehide retry.
+      if (module.deinitializers) for (const cleanup of module.deinitializers.slice()) {
+        try {
+          cleanup();
+          const index = module.deinitializers.indexOf(cleanup);
+          if (index >= 0) module.deinitializers.splice(index, 1);
+        } catch (error) { console.warn("Session listener cleanup failed.", error); }
+      }
       // Pinned Unity's loader owns these intervals separately from its engine
       // loop. A paused/failed engine cannot reach its normal Quit cleanup.
       if (module.intervals) for (const id of Object.keys(module.intervals)) {
@@ -262,12 +289,18 @@
       releaseCanvasBacking();
       // These owned resources retire synchronously. A cached page may retain
       // its Wasm memory until eviction; this is not an engine Quit completion.
+      } finally {
+        // This set prevents recursive context-loss cleanup, not retry after a
+        // native release refused. The exact Module remains owned until departure.
+        navigationDisposedModules.delete(module);
+      }
     }
 
-    window.addEventListener("pagehide", function () {
-      if (!loadingStarted || navigationDisposed) return;
+    function disposePageSession() {
+      if (!loadingStarted) return;
       navigationDisposed = true;
       sessionFailed = true;
+      releaseDisplayObservers();
       if (startupWatch !== null) { clearInterval(startupWatch); startupWatch = null; }
       const reason = new Error("City startup cancelled because this page was left.");
       try { if (window.slopCityChunks) window.slopCityChunks.abortAll(reason); }
@@ -276,7 +309,9 @@
       catch (error) { console.warn("Navigation startup cleanup failed.", error); }
       disposeSessionModule(navigationModule || (unityInstance && unityInstance.Module));
       releaseCanvasBacking();
-    });
+    }
+    window.slopCityDisposeSession = disposePageSession;
+    window.addEventListener("pagehide", disposePageSession);
     window.addEventListener("pageshow", function (event) {
       if (!event.persisted || !navigationDisposed) return;
       // A cached page has deliberately retired its decoders and engine loop.
@@ -323,11 +358,12 @@
       canvas.dataset.displayResolution = width + "x" + height;
       canvas.dataset.pixelRatio = String(safeRatio);
     }
-    try { if (typeof ResizeObserver === "function") new ResizeObserver(resizeGame).observe(stage); }
+    try { if (typeof ResizeObserver === "function") { displayObserver = new ResizeObserver(resizeGame); displayObserver.observe(stage); } }
     catch (error) { console.warn("Using window resize events for the city display.", error); }
     window.addEventListener("resize", resizeGame);
     document.addEventListener("fullscreenchange", resizeGame);
     function watchDisplayDensity() {
+      if (graphicsLost || sessionFailed) return;
       const query = mediaQuery("(resolution: " + (window.devicePixelRatio || 1) + "dppx)");
       if (!query) return;
       const changed = function () {
@@ -337,6 +373,10 @@
       };
       if (typeof query.addEventListener === "function") query.addEventListener("change", changed, {once: true});
       else if (typeof query.addListener === "function") query.addListener(changed);
+      densityCleanup = function () {
+        if (typeof query.removeEventListener === "function") query.removeEventListener("change", changed);
+        else if (typeof query.removeListener === "function") query.removeListener(changed);
+      };
     }
     watchDisplayDensity();
     resolution.addEventListener("change", function () { resizeGame(); canvas.focus(); });
@@ -374,6 +414,7 @@
     function fail(message, detail) {
       if (sessionFailed) return;
       sessionFailed = true;
+      releaseDisplayObservers();
       if (startupWatch !== null) { clearInterval(startupWatch); startupWatch = null; }
       try { if (window.slopCityChunks) window.slopCityChunks.abortAll(detail); }
       catch (error) { console.warn("Download cleanup could not complete.", error); }
@@ -429,6 +470,13 @@
       companyName: {{{ JSON.stringify(COMPANY_NAME) }}},
       productName: {{{ JSON.stringify(PRODUCT_NAME) }}},
       productVersion: {{{ JSON.stringify(PRODUCT_VERSION) }}},
+      slopCityPublishModule: function (module) {
+        navigationModule = module;
+        if (navigationDisposed || sessionFailed || graphicsLost) {
+          disposeSessionModule(module);
+          throw new Error("City startup cancelled because this session stopped.");
+        }
+      },
       onRuntimeInitialized: function () {
         navigationModule = this;
         if (navigationDisposed || sessionFailed || graphicsLost) {
@@ -443,7 +491,14 @@
       errorHandler: function (message, filename) {
         // The Unity loader observes global errors. Claim only errors identifying
         // its framework/Wasm; unrelated page errors keep their normal reporting.
-        if (!/wasm-function|WebGL(?:-[A-Za-z0-9][A-Za-z0-9.-]*)?\.framework|unityFramework|\.wasm(?:\b|:)/i.test(String(message) + " " + (filename || ""))) return false;
+        const detail = String(message) + " " + (filename || "");
+        const frameworkScriptUrl = navigationModule && navigationModule.slopCityFrameworkScriptUrl;
+        // Decompressed frameworks run from a revoked Blob URL. Async plugin
+        // errors can have only that exact source URL, without a Wasm frame or
+        // framework filename. Never claim errors from unrelated Blob scripts.
+        const ownedFramework = typeof frameworkScriptUrl === "string" && frameworkScriptUrl.startsWith("blob:")
+          && (filename === frameworkScriptUrl || detail.includes(frameworkScriptUrl + ":"));
+        if (!ownedFramework && !/wasm-function|WebGL(?:-[A-Za-z0-9][A-Za-z0-9.-]*)?\.framework|unityFramework|\.wasm(?:\b|:)/i.test(detail)) return false;
         fail("The game encountered an error. Reload to return to the city.", message);
         return true;
       },
