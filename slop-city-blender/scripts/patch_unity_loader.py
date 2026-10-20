@@ -53,7 +53,39 @@ function slopDecompress(bytes, sourceUrl) {
             "this.require=", codec.require.toString(), ";this.decompress=", codec.decompress.toString(), ";this.onmessage=",
             function(event) {
               try {
-                var result = this.decompress(event.data.compressed);
+                var compressed = event.data.compressed, result;
+                if (event.data.gzip) {
+                  // Pinned Gzip.js exports pako's Inflate constructor. Its
+                  // default onData retains all chunks, then onEnd flattens
+                  // them into another whole output. Write directly instead.
+                  if (!(compressed instanceof Uint8Array) || compressed.length < 18)
+                    throw new Error("Invalid compressed city data.");
+                  var end = compressed.length;
+                  var size = compressed[end-4] + compressed[end-3] * 256
+                    + compressed[end-2] * 65536 + compressed[end-1] * 16777216;
+                  // Match the existing packaged gzip output ceiling. ISIZE is
+                  // untrusted until the inflater validates the full gzip CRC
+                  // and length trailer; never grow this allocation from input.
+                  if (!(size > 0 && size <= 1024 * 1024 * 1024))
+                    throw new Error("Invalid city gzip output size.");
+                  if (!this.exports) this.exports = this.require("inflate.js");
+                  if (typeof this.exports.Inflate !== "function")
+                    throw new Error("Pinned city gzip inflater is unavailable.");
+                  var inflater = new this.exports.Inflate(), offset = 0;
+                  result = new Uint8Array(size);
+                  inflater.onData = function(chunk) {
+                    if (!(chunk instanceof Uint8Array) || chunk.length > size - offset)
+                      throw new Error("Unexpected city gzip output size.");
+                    result.set(chunk, offset);
+                    offset += chunk.length;
+                  };
+                  // Do not force Z_FINISH: the pinned API can close an
+                  // incomplete input on that flag. Its natural stream end
+                  // requires the checksum/trailer to have actually arrived.
+                  if (!inflater.push(compressed, false) || !inflater.ended
+                    || inflater.err !== 0 || inflater.strm.avail_in !== 0 || offset !== size)
+                    throw new Error("Incomplete or invalid city gzip data.");
+                } else result = this.decompress(compressed);
                 if (!result) throw new Error("Invalid compressed city data.");
                 postMessage({id:event.data.id, bytes:result}, [result.buffer]);
               } catch (error) { postMessage({id:event.data.id, error:String(error)}); }
@@ -75,7 +107,7 @@ function slopDecompress(bytes, sourceUrl) {
       var id = state.next++;
       var timer = setTimeout(function() { state.close(new Error("City decompression exceeded its deadline.")); }, 120000);
       state.pending.set(id, {resolve:resolve, reject:reject, timer:timer});
-      try { state.worker.postMessage({id:id, compressed:bytes}, [bytes.buffer]); }
+      try { state.worker.postMessage({id:id, compressed:bytes, gzip:codec === P.gzip}, [bytes.buffer]); }
       catch (error) { state.close(error); }
     } catch (error) { reject(error); }
   });
