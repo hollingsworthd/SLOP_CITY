@@ -4,6 +4,8 @@
 
 A 3-D video game with embedded social media videos
 
+[SLOPCITY.org](https://slopcity.org)
+
 Current source version: **1.0.1**. See the [game README](slop-city-blender/README.md) for the new jobs, cleaning, salvage, pawn shop and resident population.
 
 ## GNU AFFERO GENERAL PUBLIC LICENSE — AGPLv3-or-later
