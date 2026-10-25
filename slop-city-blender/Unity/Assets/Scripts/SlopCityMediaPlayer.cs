@@ -54,7 +54,7 @@ namespace SlopCity
         private float webIrrelevantSince = -1f;
         private float webPrepareSuspendedAt = -1f;
         private bool webAwaitingFirstPicture, webHasPicture, webPumpingPicture;
-        private int webPublishedFrameSerial, webCopiedFrameSerial, webPicturePumpFrame = -1;
+        private int webPublishedFrameSerial, webCopiedFrameSerial, webPicturePumpFrame = -1, webPumpStallFrames;
         private double webCopiedMediaTime = -1d;
         private long webPublishedFrameIndex = long.MinValue;
         private int webPlaybackGeneration;
@@ -519,20 +519,29 @@ namespace SlopCity
             VideoPlayer source = player;
             RenderTexture target = screenTexture;
             int generation = webPlaybackGeneration;
+            int publication = webPublishedFrameSerial;
+            double presented = source.time;
+            bool clockMoved = webCopiedMediaTime >= 0d && System.Math.Abs(presented - webCopiedMediaTime) > 0.0005d;
+            bool playing = source.isPlaying;
+            if (!webAwaitingFirstPicture && !playing && !clockMoved && publication == webCopiedFrameSerial) return;
             webPicturePumpFrame = Time.frameCount;
             webPumpingPicture = true;
             try
             {
-                int publication = webPublishedFrameSerial;
-                double presented = source.time;
-                bool clockMoved = webCopiedMediaTime >= 0d && System.Math.Abs(presented - webCopiedMediaTime) > 0.0005d;
-                if (!webAwaitingFirstPicture && !clockMoved && publication == webCopiedFrameSerial) return;
                 // Drive APIOnly texture publication before waiting for the event
                 // it produces. Preserve the poster until a real frame was stamped.
                 Texture picture = source.texture;
                 if (!this || !isActiveAndEnabled || generation != webPlaybackGeneration || source != player
-                    || releasingPlayback || (!clockMoved && publication == webCopiedFrameSerial) || !picture || picture.width <= 0
+                    || releasingPlayback || !picture || picture.width <= 0
                     || picture.height <= 0 || !target || target != screenTexture || !target.IsCreated()) return;
+                bool copyPicture = webAwaitingFirstPicture || clockMoved || publication != webCopiedFrameSerial;
+                if (!copyPicture && playing)
+                {
+                    webPumpStallFrames++;
+                    if (webPumpStallFrames < 8) return;
+                }
+                else webPumpStallFrames = 0;
+                if (!copyPicture) copyPicture = true;
                 SlopCityCityMedia.DrawImage(picture, target);
                 webCopiedFrameSerial = publication;
                 webCopiedMediaTime = presented;
@@ -792,6 +801,7 @@ namespace SlopCity
             webAwaitingFirstPicture = false;
             webPublishedFrameSerial = webCopiedFrameSerial = 0;
             webCopiedMediaTime = -1d;
+            webPumpStallFrames = 0;
             webPublishedFrameIndex = long.MinValue;
             webPicturePumpFrame = -1;
             webPrepareSuspendedAt = -1f;

@@ -1868,14 +1868,18 @@ namespace SlopCity
                 VideoPlayer source = signal.player;
                 if (owner == null || owner.slot != signal || !owner.screen || owner.paused || !source) continue;
                 int operation = signal.operation;
+                int publication = signal.webPublishedFrameSerial;
+                double presented = source.time;
+                bool clockMoved = signal.webCopiedMediaTime >= 0d && System.Math.Abs(presented - signal.webCopiedMediaTime) > 0.0005d;
+                bool playing = source.isPlaying;
+                // Paused and already copied: skip the getter entirely. While playing,
+                // iOS still needs GetTextureInternal even when frameReady and time stall.
+                if (!signal.webAwaitingFirstPicture && !playing && !clockMoved
+                    && publication == signal.webCopiedFrameSerial) continue;
                 signal.webPicturePumpFrame = Time.frameCount;
                 signal.webPumpingPicture = true;
                 try
                 {
-                    int publication = signal.webPublishedFrameSerial;
-                    double presented = source.time;
-                    bool clockMoved = signal.webCopiedMediaTime >= 0d && System.Math.Abs(presented - signal.webCopiedMediaTime) > 0.0005d;
-                    if (!signal.webAwaitingFirstPicture && !clockMoved && publication == signal.webCopiedFrameSerial) return;
                     // APIOnly has no renderer consuming its decoder texture.
                     // GetTextureInternal advances WebGL's published frame index;
                     // waiting for frameReady before this getter can stall forever.
@@ -1884,7 +1888,15 @@ namespace SlopCity
                     Texture picture = source.texture;
                     if (!this || !isActiveAndEnabled || operation != signal.operation || source != signal.player
                         || signal.owner != owner || owner.slot != signal || !owner.screen || owner.paused
-                        || (!clockMoved && publication == signal.webCopiedFrameSerial) || !picture || picture.width <= 0 || picture.height <= 0) continue;
+                        || !picture || picture.width <= 0 || picture.height <= 0) continue;
+                    bool copyPicture = signal.webAwaitingFirstPicture || clockMoved || publication != signal.webCopiedFrameSerial;
+                    if (!copyPicture && playing)
+                    {
+                        signal.webPumpStallFrames++;
+                        if (signal.webPumpStallFrames < 8) continue;
+                    }
+                    else signal.webPumpStallFrames = 0;
+                    if (!copyPicture) copyPicture = true;
                     if (operation != signal.operation || source != signal.player || signal.owner != owner
                         || owner.slot != signal || !owner.screen || owner.paused) continue;
                     RenderTexture target = signal.texture;
@@ -2155,6 +2167,7 @@ namespace SlopCity
             signal.webAwaitingFirstPicture = false;
             signal.webPublishedFrameSerial = signal.webCopiedFrameSerial = 0;
             signal.webCopiedMediaTime = -1d;
+            signal.webPumpStallFrames = 0;
             signal.webPublishedFrameIndex = long.MinValue;
             signal.webPicturePumpFrame = -1;
 #endif
@@ -2385,7 +2398,7 @@ namespace SlopCity
 #if UNITY_WEBGL && !UNITY_EDITOR
             [NonSerialized] public float webPrepareSuspendedAt = -1f;
             [NonSerialized] public bool webAwaitingFirstPicture, webPumpingPicture;
-            [NonSerialized] public int webPublishedFrameSerial, webCopiedFrameSerial, webPicturePumpFrame = -1;
+            [NonSerialized] public int webPublishedFrameSerial, webCopiedFrameSerial, webPicturePumpFrame = -1, webPumpStallFrames;
             [NonSerialized] public double webCopiedMediaTime = -1d;
             [NonSerialized] public long webPublishedFrameIndex = long.MinValue;
             [NonSerialized] public VideoPlayer.FrameReadyEventHandler webFrameReadyHandler;

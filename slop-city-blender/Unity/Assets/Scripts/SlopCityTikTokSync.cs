@@ -366,11 +366,22 @@ namespace SlopCity
                     DateTimeStyles.None, out DateTimeOffset synced) ? synced.ToUniversalTime().ToString("O") : ""
             };
         }
+        private const int MaxRetainedCatalogVideos = 2048;
+
         private void SaveCatalog()
         {
             if (string.IsNullOrEmpty(CatalogPath) || cacheUnavailable) return;
             try
             {
+                if (catalog?.videos != null && catalog.videos.Length > MaxRetainedCatalogVideos)
+                {
+                    Array.Sort(catalog.videos, (left, right) =>
+                    {
+                        int byTime = right.createTime.CompareTo(left.createTime);
+                        return byTime != 0 ? byTime : string.CompareOrdinal(left.id, right.id);
+                    });
+                    catalog.videos = catalog.videos.Take(MaxRetainedCatalogVideos).ToArray();
+                }
                 string temporary = CatalogPath + ".tmp";
                 File.WriteAllText(temporary, JsonUtility.ToJson(catalog, true));
                 if (File.Exists(CatalogPath)) File.Replace(temporary, CatalogPath, null);
