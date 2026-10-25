@@ -1872,20 +1872,26 @@ namespace SlopCity
                 signal.webPumpingPicture = true;
                 try
                 {
+                    int publication = signal.webPublishedFrameSerial;
+                    double presented = source.time;
+                    bool clockMoved = signal.webCopiedMediaTime >= 0d && System.Math.Abs(presented - signal.webCopiedMediaTime) > 0.0005d;
+                    if (!signal.webAwaitingFirstPicture && !clockMoved && publication == signal.webCopiedFrameSerial) return;
                     // APIOnly has no renderer consuming its decoder texture.
                     // GetTextureInternal advances WebGL's published frame index;
                     // waiting for frameReady before this getter can stall forever.
+                    // frameReady can repeat index 0 after iOS stops reporting
+                    // requestVideoFrameCallback. Playback time still advances.
                     Texture picture = source.texture;
-                    int publication = signal.webPublishedFrameSerial;
                     if (!this || !isActiveAndEnabled || operation != signal.operation || source != signal.player
                         || signal.owner != owner || owner.slot != signal || !owner.screen || owner.paused
-                        || publication == signal.webCopiedFrameSerial || !picture || picture.width <= 0 || picture.height <= 0) continue;
+                        || (!clockMoved && publication == signal.webCopiedFrameSerial) || !picture || picture.width <= 0 || picture.height <= 0) continue;
                     if (operation != signal.operation || source != signal.player || signal.owner != owner
                         || owner.slot != signal || !owner.screen || owner.paused) continue;
                     RenderTexture target = signal.texture;
                     if (!target || !target.IsCreated() || target != owner.texture) continue;
                     DrawImage(picture, target);
                     signal.webCopiedFrameSerial = publication;
+                    signal.webCopiedMediaTime = presented;
                     signal.webAwaitingFirstPicture = false;
                 }
                 catch (Exception error)
@@ -2148,6 +2154,7 @@ namespace SlopCity
 #if UNITY_WEBGL && !UNITY_EDITOR
             signal.webAwaitingFirstPicture = false;
             signal.webPublishedFrameSerial = signal.webCopiedFrameSerial = 0;
+            signal.webCopiedMediaTime = -1d;
             signal.webPublishedFrameIndex = long.MinValue;
             signal.webPicturePumpFrame = -1;
 #endif
@@ -2379,6 +2386,7 @@ namespace SlopCity
             [NonSerialized] public float webPrepareSuspendedAt = -1f;
             [NonSerialized] public bool webAwaitingFirstPicture, webPumpingPicture;
             [NonSerialized] public int webPublishedFrameSerial, webCopiedFrameSerial, webPicturePumpFrame = -1;
+            [NonSerialized] public double webCopiedMediaTime = -1d;
             [NonSerialized] public long webPublishedFrameIndex = long.MinValue;
             [NonSerialized] public VideoPlayer.FrameReadyEventHandler webFrameReadyHandler;
 #endif

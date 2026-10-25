@@ -400,9 +400,9 @@ for (const linear of [false, true]) {
   check((linear ? ios.video.slopCityLinearVideoTexture : ios.context.GL.textures[7]) === uploadedTexture
     && ios.state.textureStorage.get(uploadedTexture).frame === 2,
     'Subsequent mobile frames reuse the texture object while defining source-sized storage');
-  check(ios.calls.filter(call => call[0] === 'texImage2D' && call.length === 7 && call[6] === ios.video).length === 2
-    && !ios.calls.some(call => call[0] === 'texSubImage2D') && ios.state.transferErrors.length === 0,
-    'Every mobile frame uses the pinned video-source upload instead of a guessed-size subimage');
+  check(ios.calls.filter(call => call[0] === 'texImage2D' && call.length === 7 && call[6] === ios.video).length === 1
+    && ios.calls.filter(call => call[0] === 'texSubImage2D').length === 1 && ios.state.transferErrors.length === 0,
+    'Stable mobile frames reuse source-sized storage with subimages instead of reallocating every frame');
 }
 for (const readyState of [0, 1]) {
   const waiting = environment(); waiting.video.readyState = readyState;

@@ -264,11 +264,19 @@ mergeInto(LibraryManager.library, {
     if (mobile) {
       // iOS videoWidth/videoHeight describe the aspect-corrected picture, not
       // necessarily the source pixels copied by WebGL (for example, a 480x426
-      // duet with 639:640 pixel aspect). A subimage cannot redefine undersized
-      // guessed storage. As in pinned Unity, let the video define storage on
-      // every frame; later frames can also recover from an unavailable upload.
-      // HAVE_CURRENT_DATA above keeps metadata-only attempts out of this path.
-      GLctx.texImage2D(GLctx.TEXTURE_2D, 0, format, format, GLctx.UNSIGNED_BYTE, v);
+      // duet with 639:640 pixel aspect). Define storage from the video source
+      // once, then reuse it with subimages so WebKit does not retain a fresh
+      // GPU allocation on every frame during gameplay. Fall back to a full
+      // source-sized upload when Safari rejects the copy.
+      if (defineStorage || resized) {
+        GLctx.texImage2D(GLctx.TEXTURE_2D, 0, format, format, GLctx.UNSIGNED_BYTE, v);
+      } else {
+        try {
+          GLctx.texSubImage2D(GLctx.TEXTURE_2D, 0, 0, 0, format, GLctx.UNSIGNED_BYTE, v);
+        } catch (subError) {
+          GLctx.texImage2D(GLctx.TEXTURE_2D, 0, format, format, GLctx.UNSIGNED_BYTE, v);
+        }
+      }
     } else if (defineStorage) {
       GLctx.texImage2D(GLctx.TEXTURE_2D, 0, format, format, GLctx.UNSIGNED_BYTE, v);
     } else {

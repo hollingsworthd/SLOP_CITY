@@ -55,6 +55,7 @@ namespace SlopCity
         private float webPrepareSuspendedAt = -1f;
         private bool webAwaitingFirstPicture, webHasPicture, webPumpingPicture;
         private int webPublishedFrameSerial, webCopiedFrameSerial, webPicturePumpFrame = -1;
+        private double webCopiedMediaTime = -1d;
         private long webPublishedFrameIndex = long.MinValue;
         private int webPlaybackGeneration;
         private VideoPlayer.FrameReadyEventHandler webFrameReadyHandler;
@@ -522,15 +523,19 @@ namespace SlopCity
             webPumpingPicture = true;
             try
             {
+                int publication = webPublishedFrameSerial;
+                double presented = source.time;
+                bool clockMoved = webCopiedMediaTime >= 0d && System.Math.Abs(presented - webCopiedMediaTime) > 0.0005d;
+                if (!webAwaitingFirstPicture && !clockMoved && publication == webCopiedFrameSerial) return;
                 // Drive APIOnly texture publication before waiting for the event
                 // it produces. Preserve the poster until a real frame was stamped.
                 Texture picture = source.texture;
-                int publication = webPublishedFrameSerial;
                 if (!this || !isActiveAndEnabled || generation != webPlaybackGeneration || source != player
-                    || releasingPlayback || publication == webCopiedFrameSerial || !picture || picture.width <= 0
+                    || releasingPlayback || (!clockMoved && publication == webCopiedFrameSerial) || !picture || picture.width <= 0
                     || picture.height <= 0 || !target || target != screenTexture || !target.IsCreated()) return;
                 SlopCityCityMedia.DrawImage(picture, target);
                 webCopiedFrameSerial = publication;
+                webCopiedMediaTime = presented;
                 webAwaitingFirstPicture = false;
                 webHasPicture = true;
                 SetDisplayVisible(true);
@@ -786,6 +791,7 @@ namespace SlopCity
             webPlaybackGeneration++;
             webAwaitingFirstPicture = false;
             webPublishedFrameSerial = webCopiedFrameSerial = 0;
+            webCopiedMediaTime = -1d;
             webPublishedFrameIndex = long.MinValue;
             webPicturePumpFrame = -1;
             webPrepareSuspendedAt = -1f;
