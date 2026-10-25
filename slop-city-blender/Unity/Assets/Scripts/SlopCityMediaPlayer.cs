@@ -54,7 +54,7 @@ namespace SlopCity
         private float webIrrelevantSince = -1f;
         private float webPrepareSuspendedAt = -1f;
         private bool webAwaitingFirstPicture, webHasPicture, webPumpingPicture;
-        private int webPublishedFrameSerial, webCopiedFrameSerial, webPicturePumpFrame = -1, webPumpStallFrames;
+        private int webPublishedFrameSerial, webCopiedFrameSerial, webPicturePumpFrame = -1;
         private double webCopiedMediaTime = -1d;
         private long webPublishedFrameIndex = long.MinValue;
         private int webPlaybackGeneration;
@@ -523,7 +523,9 @@ namespace SlopCity
             double presented = source.time;
             bool clockMoved = webCopiedMediaTime >= 0d && System.Math.Abs(presented - webCopiedMediaTime) > 0.0005d;
             bool playing = source.isPlaying;
-            if (!webAwaitingFirstPicture && !playing && !clockMoved && publication == webCopiedFrameSerial) return;
+            bool needsPicture = webAwaitingFirstPicture || playing || clockMoved
+                || publication != webCopiedFrameSerial;
+            if (!needsPicture) return;
             webPicturePumpFrame = Time.frameCount;
             webPumpingPicture = true;
             try
@@ -534,14 +536,6 @@ namespace SlopCity
                 if (!this || !isActiveAndEnabled || generation != webPlaybackGeneration || source != player
                     || releasingPlayback || !picture || picture.width <= 0
                     || picture.height <= 0 || !target || target != screenTexture || !target.IsCreated()) return;
-                bool copyPicture = webAwaitingFirstPicture || clockMoved || publication != webCopiedFrameSerial;
-                if (!copyPicture && playing)
-                {
-                    webPumpStallFrames++;
-                    if (webPumpStallFrames < 8) return;
-                }
-                else webPumpStallFrames = 0;
-                if (!copyPicture) copyPicture = true;
                 SlopCityCityMedia.DrawImage(picture, target);
                 webCopiedFrameSerial = publication;
                 webCopiedMediaTime = presented;
@@ -654,9 +648,6 @@ namespace SlopCity
             if (source.width > 4096 || source.height > 4096 || (ulong)source.width * source.height > 8UL * 1024 * 1024)
             { Fail("This clip exceeds the safe decode resolution. Choose another channel."); return; }
             state = PlaybackState.Ready;
-#if UNITY_WEBGL && !UNITY_EDITOR
-            if (!webAwaitingFirstPicture)
-#endif
             SetDisplayVisible(true);
 #if UNITY_WEBGL && !UNITY_EDITOR
             RefreshAudioInterest();
@@ -801,7 +792,6 @@ namespace SlopCity
             webAwaitingFirstPicture = false;
             webPublishedFrameSerial = webCopiedFrameSerial = 0;
             webCopiedMediaTime = -1d;
-            webPumpStallFrames = 0;
             webPublishedFrameIndex = long.MinValue;
             webPicturePumpFrame = -1;
             webPrepareSuspendedAt = -1f;

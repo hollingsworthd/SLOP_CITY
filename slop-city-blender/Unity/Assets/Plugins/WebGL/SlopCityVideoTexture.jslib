@@ -231,7 +231,11 @@ mergeInto(LibraryManager.library, {
     var v = videoInstances[video];
     var mobile = slopCityUsesMobileVideo(v);
     if (typeof v.requestVideoFrameCallback === 'function' ? !v.isLoaded : !v.isReady) return false;
-    if (!(v.videoWidth > 0 && v.videoHeight > 0) || v.lastUpdateTextureTime === v.currentTime || v.seeking) return false;
+    var sameTime = v.lastUpdateTextureTime === v.currentTime;
+    // iOS decoders omit requestVideoFrameCallback; currentTime can repeat while
+    // frames still advance. Keep uploading while playback is active.
+    if (!(v.videoWidth > 0 && v.videoHeight > 0) || v.seeking
+      || (sameTime && (!mobile || v.paused || v.ended))) return false;
     // Preparation/play still use iOS metadata readiness. Texture publication
     // requires data for the current frame so zero-filled storage cannot count
     // as the first picture and replace a screen's retained still image.
@@ -335,8 +339,11 @@ mergeInto(LibraryManager.library, {
     // a stale callback counter must not pin the world to its first picture.
     // Avoid querying GL state for duplicate frames. A changed destination still
     // receives the same frame once the native decoder has current-frame data.
+    var mobileDecoder = slopCityUsesMobileVideo(decoder);
+    var samePlaybackTime = decoder.lastUpdateTextureTime === decoder.currentTime;
     if (!(decoder.videoWidth > 0 && decoder.videoHeight > 0) || decoder.seeking
-      || (!destinationChanged && decoder.lastUpdateTextureTime === decoder.currentTime)) return false;
+      || (!destinationChanged && samePlaybackTime
+        && (!mobileDecoder || decoder.paused || decoder.ended))) return false;
     if (decoder.videoWidth > (slopCityUsesMobileVideo(decoder) ? 480 : 4096) || decoder.videoHeight > (slopCityUsesMobileVideo(decoder) ? 480 : 4096) || decoder.videoWidth * decoder.videoHeight > 8388608) {
       _JS_Video_Pause(video);
       decoder.slopCityTextureRetryAfter = Date.now() + 30000;
