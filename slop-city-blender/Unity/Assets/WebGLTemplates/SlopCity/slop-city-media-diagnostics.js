@@ -102,5 +102,15 @@
   }
   window.slopCityMediaDiagnosticsVersion = 1;
   sample();
-  window.setInterval(sample, 250);
+  const interval = window.setInterval(sample, 250);
+  window.slopCityDisposeMediaDiagnostics = function () {
+    clearInterval(interval);
+    entries.clear();
+    if (output) {
+      output.removeAttribute("data-snapshot");
+      output.textContent = "";
+      output.remove();
+      output = null;
+    }
+  };
 })();

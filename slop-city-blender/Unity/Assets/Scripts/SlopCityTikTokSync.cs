@@ -799,6 +799,12 @@ namespace SlopCity
             foreach (DownloadWork work in downloads.Values) work.consumers.Clear();
             downloads.Clear();
             downloadQueue.Clear();
+            lock (CacheWorkLock)
+            {
+                foreach (string key in activeCacheWork.Keys.ToArray())
+                    if (activeCacheWork.TryGetValue(key, out DownloadWork reserved))
+                        ReleaseTemporaryFiles(reserved);
+            }
             StopAllCoroutines();
             mediaCoroutines.DisposeAll();
             pinned.Clear();

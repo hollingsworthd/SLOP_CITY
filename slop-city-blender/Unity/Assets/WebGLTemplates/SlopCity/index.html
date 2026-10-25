@@ -217,6 +217,7 @@
     }
     let unityInstance = null;
     let loadingStarted = false;
+    let launchRequested = false;
     let navigationDisposed = false;
     let navigationModule = null;
     const navigationDisposedModules = new WeakSet();
@@ -297,9 +298,11 @@
     }
 
     function disposePageSession() {
-      if (!loadingStarted) return;
+      if (!launchRequested && !loadingStarted) return;
       navigationDisposed = true;
       sessionFailed = true;
+      try { if (window.slopCityDisposeMediaDiagnostics) window.slopCityDisposeMediaDiagnostics(); }
+      catch (error) { console.warn("Media diagnostics cleanup failed.", error); }
       releaseDisplayObservers();
       if (startupWatch !== null) { clearInterval(startupWatch); startupWatch = null; }
       const reason = new Error("City startup cancelled because this page was left.");
@@ -507,7 +510,8 @@
     };
 
     launch.addEventListener("click", function () {
-      if (loadingStarted || sessionFailed) return;
+      if (launchRequested || loadingStarted || sessionFailed) return;
+      launchRequested = true;
       if (window.slopCityInlineVideoPolicyVersion !== 3) {
         fail("The playback update could not load. Reload the page to try again.", "The required in-world video guard is missing or out of date.");
         return;
