@@ -1877,6 +1877,13 @@ namespace SlopCity
                 bool needsPicture = signal.webAwaitingFirstPicture || playing || clockMoved
                     || publication != signal.webCopiedFrameSerial;
                 if (!needsPicture) continue;
+                bool copyPicture = signal.webAwaitingFirstPicture || clockMoved || publication != signal.webCopiedFrameSerial;
+                if (!copyPicture && playing)
+                {
+                    signal.webPumpStallFrames++;
+                    if (signal.webPumpStallFrames < 8) continue;
+                }
+                else signal.webPumpStallFrames = 0;
                 signal.webPicturePumpFrame = Time.frameCount;
                 signal.webPumpingPicture = true;
                 try
@@ -2162,6 +2169,7 @@ namespace SlopCity
             signal.webCopiedMediaTime = -1d;
             signal.webPublishedFrameIndex = long.MinValue;
             signal.webPicturePumpFrame = -1;
+            signal.webPumpStallFrames = 0;
 #endif
             VideoPlayer player = signal.player;
             if (player)
@@ -2390,7 +2398,7 @@ namespace SlopCity
 #if UNITY_WEBGL && !UNITY_EDITOR
             [NonSerialized] public float webPrepareSuspendedAt = -1f;
             [NonSerialized] public bool webAwaitingFirstPicture, webPumpingPicture;
-            [NonSerialized] public int webPublishedFrameSerial, webCopiedFrameSerial, webPicturePumpFrame = -1;
+            [NonSerialized] public int webPublishedFrameSerial, webCopiedFrameSerial, webPicturePumpFrame = -1, webPumpStallFrames;
             [NonSerialized] public double webCopiedMediaTime = -1d;
             [NonSerialized] public long webPublishedFrameIndex = long.MinValue;
             [NonSerialized] public VideoPlayer.FrameReadyEventHandler webFrameReadyHandler;

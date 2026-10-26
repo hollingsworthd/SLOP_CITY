@@ -54,7 +54,7 @@ namespace SlopCity
         private float webIrrelevantSince = -1f;
         private float webPrepareSuspendedAt = -1f;
         private bool webAwaitingFirstPicture, webHasPicture, webPumpingPicture;
-        private int webPublishedFrameSerial, webCopiedFrameSerial, webPicturePumpFrame = -1;
+        private int webPublishedFrameSerial, webCopiedFrameSerial, webPicturePumpFrame = -1, webPumpStallFrames;
         private double webCopiedMediaTime = -1d;
         private long webPublishedFrameIndex = long.MinValue;
         private int webPlaybackGeneration;
@@ -526,6 +526,13 @@ namespace SlopCity
             bool needsPicture = webAwaitingFirstPicture || playing || clockMoved
                 || publication != webCopiedFrameSerial;
             if (!needsPicture) return;
+            bool copyPicture = webAwaitingFirstPicture || clockMoved || publication != webCopiedFrameSerial;
+            if (!copyPicture && playing)
+            {
+                webPumpStallFrames++;
+                if (webPumpStallFrames < 8) return;
+            }
+            else webPumpStallFrames = 0;
             webPicturePumpFrame = Time.frameCount;
             webPumpingPicture = true;
             try
@@ -794,6 +801,7 @@ namespace SlopCity
             webCopiedMediaTime = -1d;
             webPublishedFrameIndex = long.MinValue;
             webPicturePumpFrame = -1;
+            webPumpStallFrames = 0;
             webPrepareSuspendedAt = -1f;
 #endif
             VideoPlayer retiredPlayer = player;
