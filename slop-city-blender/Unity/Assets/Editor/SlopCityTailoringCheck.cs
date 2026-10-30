@@ -23,6 +23,25 @@ namespace SlopCity.Editor
         }
         private const BindingFlags Fields=BindingFlags.Instance|BindingFlags.Public|BindingFlags.NonPublic;
         private static object Get(object target,string name)=>target.GetType().GetField(name,Fields).GetValue(target);
+        private static void CheckReleaseWithoutDraw(SlopCityCrowd crowd, Action<bool,string> check)
+        {
+            Type wardrobeType=typeof(SlopCityCrowd).GetNestedType("MatrixWardrobe",BindingFlags.NonPublic);
+            var owners=(IList)wardrobeType.GetField("Owners",BindingFlags.NonPublic|BindingFlags.Static).GetValue(null);
+            object live=Get(crowd,"wardrobe");
+            check(live!=null&&owners.Contains(live),"A configured wardrobe is owned before any crowd draw.");
+            Type batchType=typeof(SlopCityCrowd).GetNestedType("DrawBatch",BindingFlags.NonPublic);
+            object batch=Activator.CreateInstance(batchType,true);
+            batchType.GetField("matrices",Fields).SetValue(batch,new Matrix4x4[1023]);
+            batchType.GetField("hipPoses",Fields).SetValue(batch,new Vector4[1023]);
+            ((IList)Get(crowd,"batches")).Add(batch);
+            ((IDictionary)Get(crowd,"batchLookup")).Add(1L,batch);
+            typeof(SlopCityCrowd).GetMethod("ReleaseWardrobe",Fields).Invoke(crowd,null);
+            var released=(Matrix4x4[])batchType.GetField("matrices",Fields).GetValue(batch);
+            check(Get(crowd,"wardrobe")==null,"ReleaseWardrobe drops the wardrobe without RenderCrowd.");
+            check(!owners.Contains(live),"ReleaseWardrobe drains the retired wardrobe without a later camera draw.");
+            check(((IList)Get(crowd,"batches")).Count==0&&released!=null&&released.Length==0,
+                "ReleaseWardrobe drops peak instancing arrays without RenderCrowd.");
+        }
         private static void Set(object target,string name,object value)=>target.GetType().GetField(name,Fields).SetValue(target,value);
         public static void Run()
         {
@@ -43,6 +62,8 @@ namespace SlopCity.Editor
                 RenderSettings.fog=false;RenderSettings.skybox=null;
                 var crowd=new GameObject("Tailoring_Fixture").AddComponent<SlopCityCrowd>();crowd.enabled=false;
                 crowd.Configure(library,Array.Empty<SlopCityCrowdRoute>(),Array.Empty<SlopCityNpcSeed>());
+                typeof(SlopCityCrowd).GetMethod("EnsureWardrobe",Fields).Invoke(crowd,null);
+                CheckReleaseWithoutDraw(crowd,Check);
                 typeof(SlopCityCrowd).GetMethod("EnsureWardrobe",Fields).Invoke(crowd,null);
                 var wardrobe=Get(crowd,"wardrobe");Check(wardrobe!=null,"Shared wardrobe allocates successfully.");
                 var yoke=(Mesh)Get(wardrobe,"trouserYokeMesh");report.yokeVertices=yoke.vertexCount;

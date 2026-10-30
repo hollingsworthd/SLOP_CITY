@@ -43,7 +43,7 @@ namespace SlopCity
             public UnityEngine.Object resource;
             public long bytes;
             public bool retired, destroyRequested, warned;
-            public int releaseAfterFrame;
+            public int releaseAfterFrame, forceRetireAttempts;
         }
         private static readonly List<OwnedEdit> OwnedEdits = new List<OwnedEdit>();
         private static int retirementSweepFrame = -1;
@@ -432,6 +432,20 @@ namespace SlopCity
             }
             catch (Exception error)
             {
+                owner.forceRetireAttempts++;
+                if (owner.forceRetireAttempts >= 120 && owner.resource)
+                {
+                    try
+                    {
+                        if (Application.isEditor && !Application.isPlaying) DestroyImmediate(owner.resource);
+                        else DestroyImmediate(owner.resource, true);
+                    }
+                    catch (Exception) { }
+                    owner.resource = null;
+                    owner.destroyRequested = true;
+                    owner.releaseAfterFrame = Time.frameCount;
+                    return;
+                }
                 if (!owner.warned)
                 {
                     owner.warned = true;
@@ -454,6 +468,25 @@ namespace SlopCity
                 if (!owner.destroyRequested || Time.frameCount < owner.releaseAfterFrame || owner.resource) continue;
                 ownedBytes -= owner.bytes;
                 OwnedEdits.RemoveAt(index);
+            }
+            if (Finishes.Count == 0) return;
+            List<Material> stale = null;
+            foreach (KeyValuePair<Material, Finish> entry in Finishes)
+            {
+                if (entry.Key) continue;
+                stale ??= new List<Material>();
+                stale.Add(entry.Key);
+            }
+            if (stale == null) return;
+            foreach (Material key in stale)
+            {
+                if (!Finishes.TryGetValue(key, out Finish finish)) continue;
+                Finishes.Remove(key);
+                if (finish.owned && finish.owner != null)
+                {
+                    finish.owner.retired = true;
+                    TryRetireEdit(finish.owner);
+                }
             }
         }
         private void ReleaseWorking()

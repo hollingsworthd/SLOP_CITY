@@ -156,7 +156,7 @@ mergeInto(LibraryManager.library, {
     jsVideoAttemptToPlayBlockedVideos();
   },
 
-  $slopCityFailVideoPlayback__deps: ['$videoInstances', '$slopCityClearVideoAttemptTimer', '$slopCityCancelVideoPictureWatch', '$jsVideoRemovePendingBlockedVideo'],
+  $slopCityFailVideoPlayback__deps: ['$videoInstances', '$slopCityClearVideoAttemptTimer', '$slopCityCancelVideoPictureWatch', '$jsVideoRemovePendingBlockedVideo', '$slopCityCancelVideoFrame', '$slopCityCancelCreatedVideoFrame'],
   $slopCityFailVideoPlayback: function (id, video, intent) {
     if (videoInstances[id] !== video || video.slopCityDestroyed
       || (intent && video.slopCityPlaybackIntent !== intent)) return;
@@ -165,6 +165,9 @@ mergeInto(LibraryManager.library, {
     // must not become new autoplay promises every time Unity polls Play().
     try { slopCityClearVideoAttemptTimer(intent); } catch (_) {}
     try { slopCityCancelVideoPictureWatch(intent); } catch (_) {}
+    try { slopCityCancelVideoFrame(video); } catch (_) {}
+    try { slopCityCancelCreatedVideoFrame(video); } catch (_) {}
+    try { if (video.loopEndPollInterval) clearInterval(video.loopEndPollInterval); delete video.loopEndPollInterval; } catch (_) {}
     try { video.pause(); } catch (_) {}
     try { jsVideoRemovePendingBlockedVideo(id); } catch (_) {}
     var onerror = video.onerror;
@@ -341,17 +344,19 @@ mergeInto(LibraryManager.library, {
 
   JS_Video_Pause__proxy: 'sync',
   JS_Video_Pause__sig: 'vi',
-  JS_Video_Pause__deps: ['$videoInstances', '$jsVideoRemovePendingBlockedVideo', '$slopCityClearVideoAttemptTimer', '$slopCityCancelVideoPictureWatch'],
+  JS_Video_Pause__deps: ['$videoInstances', '$jsVideoRemovePendingBlockedVideo', '$slopCityClearVideoAttemptTimer', '$slopCityCancelVideoPictureWatch', '$slopCityCancelVideoFrame', '$slopCityCancelCreatedVideoFrame'],
   JS_Video_Pause: function (video) {
     var v = videoInstances[video];
     if (v) {
       slopCityClearVideoAttemptTimer(v.slopCityPlaybackIntent);
       slopCityCancelVideoPictureWatch(v.slopCityPlaybackIntent);
+      try { slopCityCancelVideoFrame(v); } catch (_) {}
+      try { slopCityCancelCreatedVideoFrame(v); } catch (_) {}
       delete v.slopCityPlaybackIntent;
       v.pause();
     }
     jsVideoRemovePendingBlockedVideo(video);
-    if (v && v.loopEndPollInterval) clearInterval(v.loopEndPollInterval);
+    if (v && v.loopEndPollInterval) { clearInterval(v.loopEndPollInterval); delete v.loopEndPollInterval; }
   },
 
   $slopCityNotifyVideoPlayback__deps: ['$jsVideoPendingBlockedVideos'],

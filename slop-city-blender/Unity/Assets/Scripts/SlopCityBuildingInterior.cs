@@ -30,6 +30,10 @@ namespace SlopCity
         private readonly HashSet<int> wantedFloors = new HashSet<int>();
         private readonly List<int> retiringFloors = new List<int>();
         private readonly Dictionary<string, SlopCityInteractable.SessionState> utilityState = new Dictionary<string, SlopCityInteractable.SessionState>();
+        private readonly List<int> utilityFloorOrder = new List<int>();
+        // Loaded floors stay. Recent releases stay so a short elevator trip restores
+        // switches. Walking a whole tower must not keep every floor's session state.
+        private const int MaximumRetainedUtilityFloors = 8;
         private readonly List<SlopCityElevatorButton> routeButtons = new List<SlopCityElevatorButton>();
         private readonly List<Mesh> ownedFacadeMeshes = new List<Mesh>();
         private readonly Dictionary<MeshFilter, Mesh> originalFacadeMeshes = new Dictionary<MeshFilter, Mesh>();
@@ -259,6 +263,7 @@ namespace SlopCity
                     if (utilityState.TryGetValue(floor + "/" + item.name, out SlopCityInteractable.SessionState state)) item.RestoreSessionState(state);
                 world.GeometryChanged();
                 loaded[floor] = root;
+                TouchUtilityFloor(floor);
                 SlopCityInteriorPopulation.AdmitFloor(this, floor, root);
                 return root;
             }
@@ -295,8 +300,37 @@ namespace SlopCity
                 loaded.Remove(floor);
                 floorRetirementWarning = false;
                 world.GeometryChanged();
+                TouchUtilityFloor(floor);
             }
             catch (Exception error) { WarnFloorRetirement(error); }
+        }
+
+        private void TouchUtilityFloor(int floor)
+        {
+            utilityFloorOrder.Remove(floor);
+            utilityFloorOrder.Add(floor);
+            int index = 0;
+            while (utilityFloorOrder.Count > MaximumRetainedUtilityFloors)
+            {
+                if (index >= utilityFloorOrder.Count) return;
+                int candidate = utilityFloorOrder[index];
+                if (loaded.ContainsKey(candidate) || candidate == failedFloorIndex)
+                {
+                    index++;
+                    continue;
+                }
+                utilityFloorOrder.RemoveAt(index);
+                ForgetUtilityFloor(candidate);
+            }
+        }
+
+        private void ForgetUtilityFloor(int floor)
+        {
+            string prefix = floor + "/";
+            var drop = new List<string>();
+            foreach (string key in utilityState.Keys)
+                if (key.StartsWith(prefix, StringComparison.Ordinal)) drop.Add(key);
+            for (int index = 0; index < drop.Count; index++) utilityState.Remove(drop[index]);
         }
 
         private bool ReleaseFailedFloor()
@@ -779,6 +813,8 @@ namespace SlopCity
 
         private void OnDestroy()
         {
+            utilityState.Clear();
+            utilityFloorOrder.Clear();
             // Initialization failure can remove this component while its authored
             // tower survives. Restore authored state independently, then retire only
             // the new roots still owned by incomplete architecture initialization.

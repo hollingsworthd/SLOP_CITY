@@ -826,7 +826,14 @@ namespace SlopCity
             bool retired = TryMediaCleanup(() => { if (retiredObject) Destroy(retiredObject); });
             // If destruction was refused, retain the exact owner for a later
             // Stop/retry. A throw after destruction is already a released owner.
-            if (!retired && retiredObject) return;
+            if (!retired && retiredObject)
+            {
+#if UNITY_WEBGL && !UNITY_EDITOR
+                if (mobileDecoderOwner == this) mobileDecoderOwner = null;
+                webAwaitingAdmission = false;
+#endif
+                return;
+            }
             player = null;
 #if UNITY_WEBGL && !UNITY_EDITOR
             webFrameReadyHandler = null;

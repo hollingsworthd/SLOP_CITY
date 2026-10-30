@@ -68,6 +68,7 @@ namespace SlopCity
         {
 #if UNITY_WEBGL && !UNITY_EDITOR
             if (disposed || Time.unscaledTime < nextTick) return;
+            if (pendingRequest != null || pendingDownload != null) RetryPendingRequestCleanup();
             nextTick = Time.unscaledTime + .2f;
             if (!view) view = Camera.main;
             if (view) Select(view.transform.position, Time.unscaledTime, true);
@@ -261,6 +262,11 @@ namespace SlopCity
             if (cleanupWarning) return;
             cleanupWarning = true;
             Debug.LogWarning("Detail cleanup was interrupted; unreleased resources remain owned for retry.", this);
+        }
+        private void RetryPendingRequestCleanup()
+        {
+            if (pendingRequest == null && pendingDownload == null) return;
+            ClearRequest();
         }
         private void ClearRequest()
         {

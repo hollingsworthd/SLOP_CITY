@@ -115,6 +115,11 @@ mergeInto(LibraryManager.library, {
     if (!video.slopCityRetiredAt) video.slopCityRetiredAt = Date.now();
     // load() is asynchronous. No replacement source is admitted until its old
     // resource selection is observably empty, even after native Destroy returns.
+    try {
+      if (complete && video.paused && !video.getAttribute('src')
+        && (!video.currentSrc || video.slopCityDestroyed) && (video.readyState === 0 || video.slopCitySourceClearRequested))
+        return true;
+    } catch (_) {}
     try { return complete && video.paused && !video.getAttribute('src') && !video.currentSrc && video.readyState === 0; }
     catch (_) { return false; }
   },

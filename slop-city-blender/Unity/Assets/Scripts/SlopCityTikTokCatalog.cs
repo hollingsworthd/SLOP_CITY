@@ -53,6 +53,11 @@ namespace SlopCity
         private static DownloadHandler constructionDownload;
         private static bool cleaningConstruction, warnedConstruction;
 
+        internal static void PumpConstructionLedger()
+        {
+            RetryConstructionCleanup();
+        }
+
         private static bool RetryConstructionCleanup()
         {
             if (cleaningConstruction) return false;

@@ -328,7 +328,6 @@ namespace SlopCity
         {
             Camera.onPreCull -= RenderCrowd;
             if (Instance == this) Instance = null;
-            batches.Clear(); batchLookup.Clear();
             ReleaseWardrobe();
         }
         private void EnsureAgents()
@@ -926,9 +925,31 @@ namespace SlopCity
             wardrobeAllocationFailed = false; failedWardrobeSource = null;
             renderingAllocationFailed = false;
             Array.Clear(pendingParts,0,pendingParts.Length);pendingPartCount=0;
-            batches.Clear(); batchLookup.Clear();
-            if (wardrobe == null) return;
-            wardrobe.Dispose(); wardrobe = null;
+            ReleaseDrawBatches();
+            if (wardrobe != null) { wardrobe.Dispose(); wardrobe = null; }
+            // A refused destroy stays in the static owner list until a later
+            // release or camera pass. Drain even when this crowd has no wardrobe.
+            MatrixWardrobe.DrainRetired();
+        }
+
+        private void ReleaseDrawBatches()
+        {
+            // Instancing buffers grow to the busiest frame and otherwise stay there.
+            // Drop them with the wardrobe so the managed peak does not outlive it.
+            for (int index = 0; index < batches.Count; index++)
+            {
+                DrawBatch batch = batches[index];
+                batch.matrices = Array.Empty<Matrix4x4>();
+                batch.hipPoses = null;
+                batch.properties = null;
+                batch.mesh = null;
+                batch.material = null;
+                batch.count = batch.reserved = 0;
+            }
+            batches.Clear();
+            batches.TrimExcess();
+            batchLookup.Clear();
+            batchLookup.TrimExcess();
         }
 
         /// <summary>

@@ -18,6 +18,7 @@ namespace SlopCity
     {
         private const int ChannelCount = 3;
         private static readonly List<ScreenState> retiredScreenResources = new List<ScreenState>();
+        private static bool warnedRetiredScreenAbandon;
         private const int MaximumScreenLoop = 5;
         private const float PrepareTimeout = 25f;
         private const float ResolveTimeout = 120f;
@@ -490,11 +491,28 @@ namespace SlopCity
         {
             // Refused native destruction is bounded by already-owned screens.
             // New screen/texture admissions wait instead of growing an orphan list.
+            const int maxAttempts = 120;
             for (int i = retiredScreenResources.Count - 1; i >= 0; i--)
             {
                 ScreenState display = retiredScreenResources[i];
                 ReleaseScreenResources(display);
-                if (!display.texture && !display.material) retiredScreenResources.RemoveAt(i);
+                if (!display.texture && !display.material)
+                {
+                    display.retiredReleaseAttempts = 0;
+                    retiredScreenResources.RemoveAt(i);
+                    continue;
+                }
+                display.retiredReleaseAttempts++;
+                if (display.retiredReleaseAttempts < maxAttempts) continue;
+                if (!warnedRetiredScreenAbandon)
+                {
+                    warnedRetiredScreenAbandon = true;
+                    Debug.LogWarning("City screen GPU cleanup is still pending; continuing without blocking new screens.");
+                }
+                display.texture = null;
+                display.material = null;
+                display.retiredReleaseAttempts = 0;
+                retiredScreenResources.RemoveAt(i);
             }
             return retiredScreenResources.Count == 0;
         }
@@ -635,6 +653,8 @@ namespace SlopCity
         private void Update()
         {
             if (!initialized) return;
+            SlopCityMediaTransfer.PumpConstructionLedger();
+            if (retiredScreenResources.Count > 0) RetryRetiredScreenResources();
 #if UNITY_WEBGL && !UNITY_EDITOR
             RefreshMobilePreparationClocks();
 #endif
@@ -2272,6 +2292,11 @@ namespace SlopCity
                 }
             CleanupMedia(StopAllCoroutines);
             CleanupMedia(mediaCoroutines.DisposeAll);
+#if UNITY_WEBGL && !UNITY_EDITOR
+            foreach (Channel signal in channels)
+                if (signal != null) CleanupMedia(() => ReleasePlayback(signal));
+            RetryRetiredScreenResources();
+#endif
             refreshing = false;
             thumbnailRequests = 0;
             foreach (ScreenState display in displays)
@@ -2371,6 +2396,7 @@ namespace SlopCity
             public float audioScore, audioPriority, priority;
             public bool aimed;
             public bool needsThumbnail, paused;
+            public int retiredReleaseAttempts;
             public string pausedVideoKey;
             public double pausedVideoTime;
             public int pausedVideoGeneration = -1;

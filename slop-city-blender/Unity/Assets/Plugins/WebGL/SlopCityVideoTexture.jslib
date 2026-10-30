@@ -8,12 +8,13 @@ mergeInto(LibraryManager.library, {
   $slopCityNativeVideoUpdateToTexture: LibraryManager.library.JS_Video_UpdateToTexture,
   $slopCityNativeVideoUpdateToTexture__deps: LibraryManager.library.JS_Video_UpdateToTexture__deps.slice(),
 
-  $slopCityReleaseVideoTexture__deps: ['$slopCityDetachVideoDestination'],
+  $slopCityReleaseVideoTexture__deps: ['$slopCityDetachVideoDestination', '$slopCityFailedVideoTextures'],
   $slopCityReleaseVideoTexture: function (decoder) {
     slopCityDetachVideoDestination();
     if (decoder.slopCityLinearVideoTexture && typeof GLctx !== 'undefined' && GLctx && !GLctx.isContextLost()) {
       // Retain this exact owner if deletion fails; decoder retirement retries it.
-      GLctx.deleteTexture(decoder.slopCityLinearVideoTexture);
+      try { GLctx.deleteTexture(decoder.slopCityLinearVideoTexture); }
+      catch (_) { slopCityFailedVideoTextures.push(decoder.slopCityLinearVideoTexture); }
     }
     delete decoder.slopCityLinearVideoTexture;
     delete decoder.slopCityUploadedDecodedFrame;

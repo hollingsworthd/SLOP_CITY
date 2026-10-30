@@ -444,9 +444,14 @@
       // cleanup as navigation; a paused engine cannot complete a queued Quit.
       disposeSessionModule(navigationModule || (unityInstance && unityInstance.Module));
     }
-    canvas.addEventListener("webglcontextlost", function () {
+    canvas.addEventListener("webglcontextlost", function (event) {
       if (navigationDisposed || sessionFailed) return;
+      if (event && event.preventDefault) event.preventDefault();
       graphicsLost = true;
+      var module = navigationModule || (unityInstance && unityInstance.Module);
+      try {
+        if (module && module.slopCityPauseVideoForGraphicsLoss) module.slopCityPauseVideoForGraphicsLoss();
+      } catch (error) { console.warn("Graphics-loss video pause failed.", error); }
       stopAfterGraphicsLoss();
       fullscreen.disabled = true;
       resolution.disabled = true;
