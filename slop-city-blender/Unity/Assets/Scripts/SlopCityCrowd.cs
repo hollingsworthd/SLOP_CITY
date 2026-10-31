@@ -639,6 +639,24 @@ namespace SlopCity
             renderingAllocationFailed = true;
             renderingRetryAt = Time.unscaledTime + 5f;
         }
+        private void ReleaseIdleInstanceBuffers()
+        {
+            for (int i = 0; i < batches.Count; i++)
+            {
+                DrawBatch batch = batches[i];
+                int length = batch.matrices == null ? 0 : batch.matrices.Length;
+                int used = batch.count;
+                if (length <= 32 || used * 4 >= length) continue;
+                int next = Mathf.Max(16, used * 2);
+                if (next >= length) continue;
+                Array.Resize(ref batch.matrices, next);
+                if (batch.hipPoses != null)
+                {
+                    Array.Resize(ref batch.hipPoses, next);
+                    batch.poseCapacityChanged = true;
+                }
+            }
+        }
         private void RenderCrowd(Camera camera)
         {
             if (renderingAllocationFailed)
@@ -659,6 +677,7 @@ namespace SlopCity
             constrainedCrowd = false;
 #endif
             SubmittedVertexCount = detailedPresented = 0;
+            ReleaseIdleInstanceBuffers();
             foreach (DrawBatch batch in batches) { batch.count = 0; batch.reserved = 0; }
             if(presentationSerial==int.MaxValue){Array.Clear(presentationStamp,0,presentationStamp.Length);presentationSerial=0;}
             presentationSerial++;lastPresentationFrame=Time.frameCount;PresentedCount=WholePeopleDeferred=0;
@@ -881,7 +900,7 @@ namespace SlopCity
             if(red)Add(coarse ? wardrobe.coarseNecklineMesh : wardrobe.necklineMesh,skin,root);
             if (!red)
             {
-                if(wardrobe.animatedTrousers)
+                if(wardrobe.animatedTrousers || coarse)
                 {
                     Add(coarse ? wardrobe.coarseTrouserMesh : wardrobe.trouserYokeMesh,person.casual?wardrobe.trouserBlue:wardrobe.trouserBlack,root,
                         hipPose);
@@ -899,7 +918,10 @@ namespace SlopCity
                 new Vector3(.96f + look % 5 * .012f, 1, .97f + look % 3 * .018f));
             if(coarse)Add(wardrobe.coarseHeadMesh, skin, head);
             else Add(SlopCityHumanPart.Head, skin, head);
-            Add(red ? SlopCityHumanPart.HairBob : SlopCityHumanPart.HairShort, hair, head);
+            // Distant bodies keep the suit, tie and glasses. Hair and limbs are
+            // small shared lofts, so the sculpted human meshes stay on the nearby set.
+            if(coarse)Add(wardrobe.coarseHairMesh, hair, head);
+            else Add(red ? SlopCityHumanPart.HairBob : SlopCityHumanPart.HairShort, hair, head);
             if (details)
             {
                 Add(SlopCityHumanPart.Face, hair, head);
@@ -916,19 +938,19 @@ namespace SlopCity
                 Vector2 foot = side < 0 ? leftFoot : rightFoot;
                 Vector2 leg=side<0?leftLeg:rightLeg;float thighAngle=leg.x,knee=leg.y;
                 Matrix4x4 thigh = root * Matrix4x4.TRS(new Vector3(side * .096f, .91f, 0), Quaternion.Euler(thighAngle, 0, 0), Vector3.one);
-                if(red||!wardrobe.animatedTrousers)Add(SlopCityHumanPart.Thigh, pants, thigh);
+                if(red||(!wardrobe.animatedTrousers && !coarse))Add(PresentedMesh(coarse, wardrobe.coarseThighMesh, SlopCityHumanPart.Thigh), pants, thigh);
                 Matrix4x4 shin = thigh * Matrix4x4.TRS(new Vector3(0, -.43f, 0), Quaternion.Euler(knee, 0, 0), Vector3.one);
-                Add(SlopCityHumanPart.Shin, pants, shin);
+                Add(PresentedMesh(coarse, wardrobe.coarseShinMesh, SlopCityHumanPart.Shin), pants, shin);
                 Matrix4x4 shoe = shin * Matrix4x4.TRS(new Vector3(0, -.415f, 0), Quaternion.Euler(-thighAngle - knee, 0, 0), new Vector3(.96f, 1, .96f));
-                Add(SlopCityHumanPart.Shoe, visuals.shoes, shoe);
+                Add(PresentedMesh(coarse, wardrobe.coarseShoeMesh, SlopCityHumanPart.Shoe), visuals.shoes, shoe);
                 if (details) Add(SlopCityHumanPart.ShoeSole, visuals.rubber, shoe);
                 float armSwing = person.moving ? -gait * side * 13 : Mathf.Sin(simulationTime * 1.6f + look) * .8f;
                 Matrix4x4 arm = root * Matrix4x4.TRS(new Vector3(side * (red ? .174f : .190f), 1.358f, 0),
                     Quaternion.Euler(armSwing, 0, side * 4), new Vector3(red ? .80f : 1, 1, red ? .80f : 1));
-                Add(SlopCityHumanPart.UpperArm, red || person.casual ? skin : cloth, arm);
+                Add(PresentedMesh(coarse, wardrobe.coarseUpperArmMesh, SlopCityHumanPart.UpperArm), red || person.casual ? skin : cloth, arm);
                 if (person.casual) Add(wardrobe.visitorSleeveMesh, cloth, arm);
                 Matrix4x4 forearm = arm * Matrix4x4.TRS(new Vector3(0, -.282f, 0), Quaternion.Euler(-12 - Mathf.Max(0, -armSwing) * .45f, 0, 0), Vector3.one);
-                Add(SlopCityHumanPart.Forearm, red || person.casual ? skin : cloth, forearm);
+                Add(PresentedMesh(coarse, wardrobe.coarseForearmMesh, SlopCityHumanPart.Forearm), red || person.casual ? skin : cloth, forearm);
                 Matrix4x4 hand = forearm * Matrix4x4.Translate(new Vector3(0, -.265f, 0));
                 Matrix4x4 palm = hand * Matrix4x4.Rotate(Quaternion.Euler(0, side < 0 ? 180 : 0, 0));
                 if (details) Add(SlopCityHumanPart.Hand, skin, palm);
@@ -1004,6 +1026,7 @@ namespace SlopCity
             public readonly bool animatedTrousers;
             public readonly Mesh suitMesh, shirtMesh, tieMesh, dressMesh, necklineMesh, glassesMesh, lapelsMesh, visitorHatMesh, visitorShirtMesh, visitorSleeveMesh, trouserYokeMesh;
             public readonly Mesh coarseHeadMesh, coarseDressMesh, coarseNecklineMesh, coarseTrouserMesh;
+            public readonly Mesh coarseHairMesh, coarseUpperArmMesh, coarseForearmMesh, coarseThighMesh, coarseShinMesh, coarseShoeMesh;
             private readonly List<UnityEngine.Object> owned = new List<UnityEngine.Object>(12);
             private UnityEngine.Object pendingOwner;
             private bool retired, cleanupWarning;
@@ -1054,6 +1077,21 @@ namespace SlopCity
                     new Vector3(.145f,.076f,.074f), new Vector3(.195f,.072f,.078f),
                     new Vector3(.238f,.065f,.067f), new Vector3(.266f,.043f,.049f),
                     new Vector3(.278f,.011f,.022f) });
+                // Same joint lengths as the sculpted limbs, with eight sides.
+                // Phone streets instance these instead of the authored human meshes.
+                coarseHairMesh = Loft("Distant shared hair", new[] {
+                    new Vector3(.12f,.072f,.082f), new Vector3(.20f,.086f,.096f), new Vector3(.29f,.028f,.04f) }, 8);
+                coarseUpperArmMesh = Loft("Distant shared upper arm", new[] {
+                    new Vector3(.028f,.037f,.048f), new Vector3(-.12f,.054f,.058f), new Vector3(-.282f,.046f,.046f) }, 8);
+                coarseForearmMesh = Loft("Distant shared forearm", new[] {
+                    new Vector3(.03f,.044f,.044f), new Vector3(-.12f,.038f,.038f), new Vector3(-.265f,.032f,.03f) }, 8);
+                coarseThighMesh = Loft("Distant shared thigh", new[] {
+                    new Vector3(.025f,.055f,.055f), new Vector3(-.2f,.062f,.058f), new Vector3(-.43f,.048f,.046f) }, 8);
+                coarseShinMesh = Loft("Distant shared shin", new[] {
+                    new Vector3(.04f,.046f,.046f), new Vector3(-.2f,.038f,.036f), new Vector3(-.415f,.032f,.03f) }, 8);
+                var distantShoe = new WardrobeMesh();
+                distantShoe.Box(new Vector3(0f, -.02f, .07f), new Vector3(.09f, .045f, .16f));
+                coarseShoeMesh = Finish(distantShoe, "Distant shared shoe");
                 var b = new WardrobeMesh();
                 FrontPanel(b, new Vector2(-.028f,1.04f), new Vector2(.028f,1.04f),
                     new Vector2(.079f,1.414f), new Vector2(-.079f,1.414f), .008f);
@@ -1165,9 +1203,10 @@ namespace SlopCity
                 if (material.HasProperty("_Glossiness")) material.SetFloat("_Glossiness", smoothness);
                 return material;
             }
-            private Mesh Loft(string name, Vector3[] profile)
+            private Mesh Loft(string name, Vector3[] profile, int sides = 24)
             {
-                var b = new WardrobeMesh(); const int sides = 24;
+                var b = new WardrobeMesh();
+                sides = Mathf.Clamp(sides, 6, 24);
                 for (int ring = 0; ring < profile.Length - 1; ring++)
                     for (int side = 0; side < sides; side++)
                     {
@@ -1342,14 +1381,19 @@ namespace SlopCity
                 try { DestroyOwned(pendingOwner); if (!pendingOwner) pendingOwner = null; }
                 catch (Exception error) { refused = true; WarnCleanup(error); }
                 if (!refused) { cleanupRefusals = 0; return; }
-                cleanupRefusals++;
+                if (cleanupRefusals < 120) cleanupRefusals++;
                 if (cleanupRefusals < 120) return;
+                bool stillHeld = false;
                 for (int index = owned.Count - 1; index >= 0; index--)
                 {
-                    try { if (owned[index]) DestroyImmediate(owned[index], true); }
-                    catch (Exception error) { WarnCleanup(error); }
+                    UnityEngine.Object resource = owned[index];
+                    if (!resource) { owned.RemoveAt(index); continue; }
+                    try { DestroyImmediate(resource, true); }
+                    catch (Exception error) { WarnCleanup(error); stillHeld = true; continue; }
+                    if (resource) { stillHeld = true; continue; }
                     owned.RemoveAt(index);
                 }
+                if (stillHeld) return;
                 pendingOwner = null;
                 cleanupRefusals = 0;
             }
@@ -1483,6 +1527,12 @@ namespace SlopCity
         private static float ReachableHip(Vector2 foot)
             => foot.y + Mathf.Sqrt(Mathf.Max(.01f, .837f * .837f - foot.x * foot.x)) - .91f;
         private static readonly int[] Sides = { -1, 1 };
+        private Mesh PresentedMesh(bool coarse, Mesh standIn, SlopCityHumanPart part)
+        {
+            if (coarse && standIn) return standIn;
+            int index = (int)part;
+            return visuals.parts != null && (uint)index < (uint)visuals.parts.Length ? visuals.parts[index] : null;
+        }
         private void Add(SlopCityHumanPart part, Material material, Matrix4x4 matrix)
         {
             if ((int)part >= visuals.parts.Length) return;
