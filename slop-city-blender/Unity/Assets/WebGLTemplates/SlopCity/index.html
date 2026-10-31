@@ -298,16 +298,18 @@
     }
 
     function disposePageSession() {
+      const reason = new Error("City startup cancelled because this page was left.");
+      try { if (window.slopCityChunks) window.slopCityChunks.abortAll(reason); }
+      catch (error) { console.warn("Navigation download cleanup failed.", error); }
       if (!launchRequested && !loadingStarted) return;
       navigationDisposed = true;
       sessionFailed = true;
       try { if (window.slopCityDisposeMediaDiagnostics) window.slopCityDisposeMediaDiagnostics(); }
       catch (error) { console.warn("Media diagnostics cleanup failed.", error); }
+      try { if (window.slopCityDisconnectInlineVideo) window.slopCityDisconnectInlineVideo(); }
+      catch (error) { console.warn("Inline video policy cleanup failed.", error); }
       releaseDisplayObservers();
       if (startupWatch !== null) { clearInterval(startupWatch); startupWatch = null; }
-      const reason = new Error("City startup cancelled because this page was left.");
-      try { if (window.slopCityChunks) window.slopCityChunks.abortAll(reason); }
-      catch (error) { console.warn("Navigation download cleanup failed.", error); }
       try { if (window.slopCityStopStartup) window.slopCityStopStartup(reason); }
       catch (error) { console.warn("Navigation startup cleanup failed.", error); }
       disposeSessionModule(navigationModule || (unityInstance && unityInstance.Module));

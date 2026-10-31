@@ -45,7 +45,8 @@ namespace SlopCity
         public bool Toggle(Transform user)
         {
             if (!leaf || !blocker || IsMoving) return false;
-            users = FindObjectsByType<CharacterController>(FindObjectsSortMode.None);
+            CharacterController capsule = user ? user.GetComponentInParent<CharacterController>() : null;
+            users = capsule ? new[] { capsule } : new CharacterController[0];
             float destination = IsOpen ? 0f : openAngle;
             if (!IsOpen && user)
             {

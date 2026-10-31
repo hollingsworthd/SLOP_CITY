@@ -14,10 +14,12 @@ namespace SlopCity
             public float score;
             public Node parent;
             public bool clear, closed;
+            public int heapIndex = -1;
         }
 
         private readonly Dictionary<Vector2Int, Node> nodes = new Dictionary<Vector2Int, Node>();
-        private readonly List<Node> open = new List<Node>();
+        private readonly List<Node> openHeap = new List<Node>();
+        private readonly Stack<Node> nodePool = new Stack<Node>();
         private readonly List<Vector3> path = new List<Vector3>();
         private readonly RaycastHit[] hits = new RaycastHit[48];
         private readonly Collider[] overlaps = new Collider[48];
@@ -33,14 +35,16 @@ namespace SlopCity
         public void Begin(Vector3 start, Vector3 end, Transform user, Transform targetRoot)
         {
             origin = start; target = end; player = user; destination = targetRoot;
-            nodes.Clear(); open.Clear(); path.Clear(); expanded = 0;
+            foreach (Node node in nodes.Values) ReturnNode(node);
+            nodes.Clear(); openHeap.Clear(); path.Clear(); expanded = 0;
             Finished = ReachedTarget = false;
             min = new Vector2Int(Mathf.FloorToInt(Mathf.Min(start.x, end.x)) - 18, Mathf.FloorToInt(Mathf.Min(start.z, end.z)) - 18);
             max = new Vector2Int(Mathf.CeilToInt(Mathf.Max(start.x, end.x)) + 18, Mathf.CeilToInt(Mathf.Max(start.z, end.z)) + 18);
             Vector2Int cell = new Vector2Int(Mathf.RoundToInt(start.x), Mathf.RoundToInt(start.z));
             // Keep the first node at the actual player position, including narrow doorways.
-            var first = new Node { cell = cell, point = start, clear = true, cost = 0, score = FlatDistance(start, end) };
-            nodes.Add(cell, first); open.Add(first);
+            Node first = RentNode();
+            first.cell = cell; first.point = start; first.clear = true; first.cost = 0; first.score = FlatDistance(start, end);
+            nodes.Add(cell, first); PushOpen(first);
         }
 
         public void Step(int budget = 40)
@@ -49,10 +53,8 @@ namespace SlopCity
             var timer = System.Diagnostics.Stopwatch.StartNew();
             for (int work = 0; work < budget && timer.Elapsed.TotalMilliseconds < 1.8; work++)
             {
-                if (open.Count == 0 || expanded >= 6000) { Finished = true; return; }
-                int best = 0;
-                for (int i = 1; i < open.Count; i++) if (open[i].score < open[best].score) best = i;
-                Node current = open[best]; open.RemoveAt(best);
+                if (openHeap.Count == 0 || expanded >= 6000) { Finished = true; return; }
+                Node current = PopOpenMin();
                 if (current.closed) continue;
                 current.closed = true; expanded++;
                 if (FlatDistance(current.point, target) <= 2.4f && Mathf.Abs(current.point.y - target.y) <= 2.5f
@@ -68,7 +70,8 @@ namespace SlopCity
                     if (key.x < min.x || key.y < min.y || key.x > max.x || key.y > max.y) continue;
                     if (!nodes.TryGetValue(key, out Node next))
                     {
-                        next = new Node { cell = key };
+                        next = RentNode();
+                        next.cell = key;
                         next.clear = Ground(new Vector3(key.x, origin.y, key.y), out next.point);
                         nodes.Add(key, next);
                     }
@@ -77,7 +80,8 @@ namespace SlopCity
                     if (cost >= next.cost || !ClearWalk(current.point, next.point)) continue;
                     bool firstVisit = float.IsPositiveInfinity(next.cost);
                     next.cost = cost; next.score = cost + FlatDistance(next.point, target) * 1.12f; next.parent = current;
-                    if (firstVisit) open.Add(next);
+                    if (firstVisit) PushOpen(next);
+                    else DecreaseKey(next);
                 }
             }
         }
@@ -96,6 +100,96 @@ namespace SlopCity
                 nearest = Mathf.Min(nearest, (offset - edge * along).sqrMagnitude);
             }
             return nearest;
+        }
+
+        private Node RentNode()
+        {
+            Node node = nodePool.Count > 0 ? nodePool.Pop() : new Node();
+            node.cell = default;
+            node.point = default;
+            node.cost = float.PositiveInfinity;
+            node.score = 0f;
+            node.parent = null;
+            node.clear = false;
+            node.closed = false;
+            node.heapIndex = -1;
+            return node;
+        }
+
+        private void ReturnNode(Node node)
+        {
+            node.parent = null;
+            node.heapIndex = -1;
+            nodePool.Push(node);
+        }
+
+        private void PushOpen(Node node)
+        {
+            openHeap.Add(node);
+            node.heapIndex = openHeap.Count - 1;
+            BubbleUp(node.heapIndex);
+        }
+
+        private Node PopOpenMin()
+        {
+            int count = openHeap.Count;
+            if (count == 0) return null;
+            Node root = openHeap[0];
+            root.heapIndex = -1;
+            if (count == 1)
+            {
+                openHeap.Clear();
+                return root;
+            }
+            Node last = openHeap[count - 1];
+            openHeap.RemoveAt(count - 1);
+            openHeap[0] = last;
+            last.heapIndex = 0;
+            BubbleDown(0);
+            return root;
+        }
+
+        private void DecreaseKey(Node node)
+        {
+            if (node.heapIndex < 0) return;
+            BubbleUp(node.heapIndex);
+        }
+
+        private void BubbleUp(int index)
+        {
+            while (index > 0)
+            {
+                int parent = (index - 1) >> 1;
+                Node node = openHeap[index];
+                if (node.score >= openHeap[parent].score) break;
+                SwapHeap(index, parent);
+                index = parent;
+            }
+        }
+
+        private void BubbleDown(int index)
+        {
+            int count = openHeap.Count;
+            while (true)
+            {
+                int left = (index << 1) + 1;
+                if (left >= count) break;
+                int right = left + 1;
+                int smallest = right < count && openHeap[right].score < openHeap[left].score ? right : left;
+                if (openHeap[index].score <= openHeap[smallest].score) break;
+                SwapHeap(index, smallest);
+                index = smallest;
+            }
+        }
+
+        private void SwapHeap(int a, int b)
+        {
+            Node nodeA = openHeap[a];
+            Node nodeB = openHeap[b];
+            openHeap[a] = nodeB;
+            openHeap[b] = nodeA;
+            nodeA.heapIndex = b;
+            nodeB.heapIndex = a;
         }
 
         private bool Ground(Vector3 point, out Vector3 supported)

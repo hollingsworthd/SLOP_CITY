@@ -28,6 +28,7 @@ namespace SlopCity
         private bool pendingInteractionRefresh;
         private float nextInteractionRefresh;
         private const float InteractionRefreshInterval = 2.5f;
+        private const float ConstrainedInteractionRefreshInterval = 8f;
         private bool installed;
         private bool installationAttempted;
         private bool constrainedBrowser;
@@ -40,6 +41,7 @@ namespace SlopCity
         private readonly List<Mesh> streetMeshes = new List<Mesh>();
         private Material streetAsphalt, streetPavement;
         private readonly Dictionary<SlopCityBuildingInterior, float> streamingRetry = new Dictionary<SlopCityBuildingInterior, float>();
+        private readonly List<SlopCityBuildingInterior> streamingRetryDrop = new List<SlopCityBuildingInterior>();
         public IReadOnlyList<SlopCityBuildingInterior> Buildings => buildings;
         public int ActiveFloorCount => buildings.Where(item => item).Sum(item => item.LoadedFloorCount);
         public int ActiveElevatorCount => buildings.Count(item => item && item.Elevator && item.Elevator.gameObject.activeInHierarchy)
@@ -144,6 +146,16 @@ namespace SlopCity
 
         public void GeometryChanged() { geometryChanged = true; }
 
+        private void PruneStreamingRetry()
+        {
+            if (streamingRetry.Count == 0) return;
+            streamingRetryDrop.Clear();
+            foreach (SlopCityBuildingInterior item in streamingRetry.Keys)
+                if (!item || !buildings.Contains(item)) streamingRetryDrop.Add(item);
+            for (int index = 0; index < streamingRetryDrop.Count; index++)
+                streamingRetry.Remove(streamingRetryDrop[index]);
+        }
+
         internal bool PrepareWalkingSpace(Vector3 point)
         {
             if (!constrainedBrowser) return true;
@@ -151,8 +163,16 @@ namespace SlopCity
             {
                 // Stand/arrival enables capsule collision before the next streaming
                 // tick. Retire any authored solid core around that destination first.
+                SlopCityBuildingInterior architecture = null;
+                float nearestHorizontal = float.MaxValue;
                 foreach (SlopCityBuildingInterior item in buildings)
-                    if (item && item.IsTower && item.ContainsHorizontal(point, 1f)) item.EnsureArchitecture();
+                {
+                    if (!item || !item.IsTower || !item.ContainsHorizontal(point, 1f)) continue;
+                    if (item.ContainsInterior(point)) { architecture = item; break; }
+                    float horizontal = item.HorizontalDistanceSquared(point);
+                    if (horizontal < nearestHorizontal) { architecture = item; nearestHorizontal = horizontal; }
+                }
+                if (architecture) architecture.EnsureArchitecture();
                 nextInteractionRefresh = 0f;
                 FlushChanges();
                 return true;
@@ -192,6 +212,7 @@ namespace SlopCity
         {
             if (!player) return;
             buildings.RemoveAll(item => !item);
+            PruneStreamingRetry();
             Vector3 feet = player.transform.position;
             streamingFeet = feet;
             streamingCandidates.Clear(); streamingKeep.Clear();
@@ -387,7 +408,7 @@ namespace SlopCity
         {
             if (!pendingInteractionRefresh || Time.unscaledTime < nextInteractionRefresh) return;
             pendingInteractionRefresh = false;
-            nextInteractionRefresh = Time.unscaledTime + InteractionRefreshInterval;
+            nextInteractionRefresh = Time.unscaledTime + (constrainedBrowser ? ConstrainedInteractionRefreshInterval : InteractionRefreshInterval);
             if (player) player.RefreshWorldInteractions();
         }
 

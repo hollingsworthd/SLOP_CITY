@@ -19,6 +19,7 @@ namespace SlopCity
         // Only one synchronous floor build can be pending for this building.
         private Transform failedFloorRoot;
         private int failedFloorIndex = -1;
+        private int failedFloorReleaseAttempts;
         private MeshFilter[] architectureRollbackFilters;
         private HashSet<MeshFilter> architecturePreviousFilters;
         private int architecturePreviousMeshCount, architectureAdmissionAfterFrame;
@@ -336,7 +337,7 @@ namespace SlopCity
         private bool ReleaseFailedFloor()
         {
             Transform root = failedFloorRoot;
-            if (!root) { failedFloorRoot = null; failedFloorIndex = -1; return true; }
+            if (!root) { failedFloorRoot = null; failedFloorIndex = -1; failedFloorReleaseAttempts = 0; return true; }
             bool disposedRoot = false;
             try
             {
@@ -351,7 +352,7 @@ namespace SlopCity
                 catch (Exception error) { released = false; WarnFloorRetirement(error); }
                 try { root.GetComponent<SlopCityInteriorFurnishing>()?.Release(); }
                 catch (Exception error) { released = false; WarnFloorRetirement(error); }
-                if (!released) return false;
+                if (!released) return FailFailedFloorRelease(root);
                 root.name = "Retired_Runtime_Floor_" + failedFloorIndex + "_" + root.GetInstanceID();
                 SlopCityInteriorGeometry.Dispose(root.gameObject);
                 disposedRoot = true;
@@ -360,11 +361,29 @@ namespace SlopCity
             if (disposedRoot || !root)
             {
                 failedFloorRoot = null; failedFloorIndex = -1;
+                failedFloorReleaseAttempts = 0;
                 DeferFloorAdmission();
                 if (world) world.GeometryChanged();
                 return true;
             }
-            return false;
+            return FailFailedFloorRelease(root);
+        }
+
+        private bool FailFailedFloorRelease(Transform root)
+        {
+            failedFloorReleaseAttempts++;
+            if (failedFloorReleaseAttempts < 120) return false;
+            try
+            {
+                if (Application.isEditor && !Application.isPlaying) DestroyImmediate(root.gameObject);
+                else DestroyImmediate(root.gameObject, true);
+            }
+            catch (Exception error) { WarnFloorRetirement(error); }
+            failedFloorRoot = null; failedFloorIndex = -1;
+            failedFloorReleaseAttempts = 0;
+            DeferFloorAdmission();
+            if (world) world.GeometryChanged();
+            return true;
         }
 
         private void WarnFloorRetirement(Exception error)
@@ -468,7 +487,14 @@ namespace SlopCity
             // resources retire at frame end before admitting replacement rooms.
             foreach (int floor in retiringFloors) if (loaded.ContainsKey(floor)) return;
             if (!CanAdmitFloorDetail(Time.frameCount)) return;
-            foreach (int floor in wantedFloors) EnsureFloor(floor);
+            foreach (int floor in wantedFloors)
+            {
+                // The occupied floor still admits at the ceiling. Skipping it leaves
+                // the player inside an unfurnished tower while other buildings hold the six.
+                if (floor != nearest && world != null && world.ActiveFloorCount >= SlopCityBuildingWorld.MaximumActiveFloors && !loaded.ContainsKey(floor))
+                    continue;
+                EnsureFloor(floor);
+            }
         }
 
         internal bool ReleaseStream()
@@ -524,6 +550,9 @@ namespace SlopCity
             // looking up only its former name on retry would lose its ownership.
             if (!architectureNewShell) architectureNewShell = transform.Find("Runtime_Hollow_Building_Shell");
             if (!RetireArchitectureRoot(ref architectureNewShell, "Retired_Hollow_Building_Shell")) return false;
+            // The doorway mesh stays. Drop only its city-screen registration so a
+            // far tower does not keep a decoder slot. The next shell admit registers it again.
+            SlopCityEntranceBroadcast.ReleasePersistentEntrance(transform);
             // The small persistent entrance owns the original hinge/door component;
             // its rotation, obstruction state and target are never recreated or reset.
             architectureReady = false; architectureShellReady = false;

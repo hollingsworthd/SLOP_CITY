@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace SlopCity
@@ -19,6 +20,9 @@ namespace SlopCity
         private Texture currentAtlas;
         private bool subscribed;
         private static readonly int MainTexture = Shader.PropertyToID("_MainTex");
+        private static readonly Queue<SlopCityWorldText> pendingFontRebuild = new Queue<SlopCityWorldText>();
+        private static readonly HashSet<SlopCityWorldText> pendingFontRebuildSet = new HashSet<SlopCityWorldText>();
+        private const int MaxFontRebuildsPerFrame = 8;
 #if UNITY_WEBGL && !UNITY_EDITOR
         private float nextBrowserRefresh;
 #endif
@@ -39,7 +43,7 @@ namespace SlopCity
             Refresh(true);
 #if UNITY_WEBGL && !UNITY_EDITOR
             // Spread the city's signs across frames instead of polling every font
-            // and renderer binding on every frame. Font atlas rebuilds stay immediate.
+            // and renderer binding on every frame.
             nextBrowserRefresh = Time.unscaledTime + Mathf.Abs(GetInstanceID() % 20) * .01f;
 #endif
         }
@@ -49,13 +53,34 @@ namespace SlopCity
 #if UNITY_WEBGL && !UNITY_EDITOR
         private void LateUpdate()
         {
+            DrainFontRebuildQueue();
             if (Time.unscaledTime < nextBrowserRefresh) return;
             nextBrowserRefresh = Time.unscaledTime + .2f;
             Refresh(false);
         }
 #else
-        private void LateUpdate() { Refresh(false); }
+        private void LateUpdate()
+        {
+            DrainFontRebuildQueue();
+            Refresh(false);
+        }
 #endif
+
+        private static void DrainFontRebuildQueue()
+        {
+            for (int i = 0; i < MaxFontRebuildsPerFrame && pendingFontRebuild.Count > 0; i++)
+            {
+                SlopCityWorldText sign = pendingFontRebuild.Dequeue();
+                if (!sign || !pendingFontRebuildSet.Remove(sign)) continue;
+                sign.Refresh(true);
+            }
+        }
+
+        private void EnqueueFontRebuild()
+        {
+            if (pendingFontRebuildSet.Add(this))
+                pendingFontRebuild.Enqueue(this);
+        }
 
         private void Refresh(bool force)
         {
@@ -88,11 +113,12 @@ namespace SlopCity
 
         private void OnFontTextureRebuilt(Font font)
         {
-            if (textMesh && textMesh.font == font) Refresh(true);
+            if (textMesh && textMesh.font == font) EnqueueFontRebuild();
         }
 
         private void OnDisable()
         {
+            pendingFontRebuildSet.Remove(this);
             if (subscribed) Font.textureRebuilt -= OnFontTextureRebuilt;
             subscribed = false;
             // The shared saved material owns no transient resources. Restore the

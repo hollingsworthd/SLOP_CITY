@@ -75,6 +75,10 @@ namespace SlopCity
         private MatrixWardrobe wardrobe;
         private bool wardrobeAllocationFailed;
         private bool renderingAllocationFailed;
+        private float renderingRetryAt;
+#if UNITY_WEBGL && !UNITY_EDITOR
+        private int worldSweepCastsThisStep;
+#endif
         private Material failedWardrobeSource;
         private int redContactCount;
         private SlopCityLocalAgent localAgents = new SlopCityLocalAgent();
@@ -377,6 +381,11 @@ namespace SlopCity
         {
             EnsureAgents();
             if (!Finite(deltaTime) || deltaTime <= 0 || Time.timeScale <= 0 || (playerController && playerController.IsPaused)) return;
+#if UNITY_WEBGL && !UNITY_EDITOR
+            if (!playerInput && playerController) playerInput = playerController.GetComponent<SlopCityPlayerInput>();
+            constrainedCrowd = Application.isMobilePlatform || (playerInput && playerInput.UseTouchControls);
+            worldSweepCastsThisStep = 0;
+#endif
             // Keep collision prediction bounded after backgrounding the app.
             float delta = Mathf.Min(deltaTime, .1f); simulationTime += delta;
             RefreshPopulationSlots(delta);
@@ -494,6 +503,13 @@ namespace SlopCity
         }
         private bool BlockedByWorld(Vector3 feet, Vector3 direction, float distance)
         {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            if (constrainedCrowd)
+            {
+                if (worldSweepCastsThisStep >= 8) return false;
+                worldSweepCastsThisStep++;
+            }
+#endif
             int count = Physics.CapsuleCastNonAlloc(feet + Vector3.up * .53f, feet + Vector3.up * 1.60f, .26f,
                 direction, sweepHits, distance, ~0, QueryTriggerInteraction.Ignore);
             for (int i = 0; i < count; i++)
@@ -618,9 +634,19 @@ namespace SlopCity
             }
         }
         public bool IsResidentPresented(int index)=>IsPresented(index);
+        private void LatchRenderingFailure()
+        {
+            renderingAllocationFailed = true;
+            renderingRetryAt = Time.unscaledTime + 5f;
+        }
         private void RenderCrowd(Camera camera)
         {
-            if (renderingAllocationFailed || !isActiveAndEnabled || !camera || camera.cameraType == CameraType.Preview || !SystemInfo.supportsInstancing) return;
+            if (renderingAllocationFailed)
+            {
+                if (Time.unscaledTime < renderingRetryAt) return;
+                renderingAllocationFailed = false;
+            }
+            if (!isActiveAndEnabled || !camera || camera.cameraType == CameraType.Preview || !SystemInfo.supportsInstancing) return;
             if(Application.isPlaying && camera != (playerController?playerController.ViewCamera:Camera.main))return;
             EnsureAgents();
             if (visuals == null || visuals.parts == null || visuals.parts.Length < 20 || visuals.clothing == null || visuals.clothing.Length == 0
@@ -683,7 +709,7 @@ namespace SlopCity
             {
                 // Camera callbacks recur every frame. A partial reservation or draw
                 // failure must not retry with corrupted batch state or overrun buffers.
-                renderingAllocationFailed = true;
+                LatchRenderingFailure();
                 Array.Clear(pendingParts, 0, pendingParts.Length); pendingPartCount = 0;
                 foreach (DrawBatch batch in batches) { batch.count = 0; batch.reserved = 0; }
                 lastPresentationFrame = -1; PresentedCount = WholePeopleDeferred = 0;
@@ -746,7 +772,7 @@ namespace SlopCity
                 if (batch.count <= 0 || !batch.mesh || !batch.material || !batch.material.enableInstancing) continue;
                 if (batch.count > batch.matrices.Length || batch.count > 1023)
                 {
-                    renderingAllocationFailed = true;
+                    LatchRenderingFailure();
                     Debug.LogWarning("Crowd instance count exceeded its reserved matrix buffer; retry requires reconfiguration or re-enabling.", this);
                     return;
                 }
@@ -783,7 +809,7 @@ namespace SlopCity
             {
                 // Matrix/batch growth is attempted from a recurring camera
                 // callback. A failed admission must not retry every frame.
-                renderingAllocationFailed = true;
+                LatchRenderingFailure();
                 Array.Clear(pendingParts, 0, pendingParts.Length); pendingPartCount = 0;
                 foreach (DrawBatch batch in batches) batch.reserved = 0;
                 lastPresentationFrame = -1; PresentedCount = WholePeopleDeferred = 0;
@@ -796,7 +822,21 @@ namespace SlopCity
         }
         private void CommitReservedPerson()
         {
-            // Matrices are calculated once into one shared bounded command buffer, then committed atomically.
+            // Grow instance buffers only after the whole person is accepted.
+            // A rejected reservation must not keep the larger arrays.
+            for (int i = 0; i < pendingPartCount; i++)
+            {
+                DrawBatch batch = pendingParts[i].batch;
+                int needed = batch.count + batch.reserved;
+                if (needed <= batch.matrices.Length) continue;
+                int capacity = Mathf.Min(1023, Mathf.Max(needed, batch.matrices.Length * 2));
+                Array.Resize(ref batch.matrices, capacity);
+                if (batch.hipPoses != null)
+                {
+                    Array.Resize(ref batch.hipPoses, capacity);
+                    batch.poseCapacityChanged = true;
+                }
+            }
             SubmittedVertexCount += reservedVertices;
             for(int i=0;i<pendingPartCount;i++)
             {PendingPart part=pendingParts[i];int slot=part.batch.count++;part.batch.matrices[slot]=part.matrix;if(part.batch.hipPoses!=null)part.batch.hipPoses[slot]=part.hipPose;}
@@ -923,7 +963,7 @@ namespace SlopCity
         private void ReleaseWardrobe()
         {
             wardrobeAllocationFailed = false; failedWardrobeSource = null;
-            renderingAllocationFailed = false;
+            renderingAllocationFailed = false; renderingRetryAt = 0;
             Array.Clear(pendingParts,0,pendingParts.Length);pendingPartCount=0;
             ReleaseDrawBatches();
             if (wardrobe != null) { wardrobe.Dispose(); wardrobe = null; }
@@ -968,7 +1008,7 @@ namespace SlopCity
             private UnityEngine.Object pendingOwner;
             private bool retired, cleanupWarning;
             private int lastCleanupFrame = -1;
-            private int releaseAfterFrame;
+            private int releaseAfterFrame, cleanupRefusals;
 
             public MatrixWardrobe(Material source)
             {
@@ -1293,13 +1333,25 @@ namespace SlopCity
             {
                 if (Application.isPlaying && lastCleanupFrame == Time.frameCount) return;
                 lastCleanupFrame = Time.frameCount;
+                bool refused = false;
                 for (int index = owned.Count - 1; index >= 0; index--)
                 {
                     try { DestroyOwned(owned[index]); if (!owned[index]) owned.RemoveAt(index); }
-                    catch (Exception error) { WarnCleanup(error); }
+                    catch (Exception error) { refused = true; WarnCleanup(error); }
                 }
                 try { DestroyOwned(pendingOwner); if (!pendingOwner) pendingOwner = null; }
-                catch (Exception error) { WarnCleanup(error); }
+                catch (Exception error) { refused = true; WarnCleanup(error); }
+                if (!refused) { cleanupRefusals = 0; return; }
+                cleanupRefusals++;
+                if (cleanupRefusals < 120) return;
+                for (int index = owned.Count - 1; index >= 0; index--)
+                {
+                    try { if (owned[index]) DestroyImmediate(owned[index], true); }
+                    catch (Exception error) { WarnCleanup(error); }
+                    owned.RemoveAt(index);
+                }
+                pendingOwner = null;
+                cleanupRefusals = 0;
             }
             private void WarnCleanup(Exception error)
             {
@@ -1464,16 +1516,6 @@ namespace SlopCity
                 int needed=batch.count+(++batch.reserved);
                 if(needed>1023||pendingPartCount>=pendingParts.Length){reservationFailed=true;return;}
                 pendingParts[pendingPartCount++]=new PendingPart{batch=batch,matrix=matrix,hipPose=hipPose};
-                if (needed > batch.matrices.Length)
-                {
-                    int capacity = Mathf.Min(1023, Mathf.Max(needed, batch.matrices.Length * 2));
-                    Array.Resize(ref batch.matrices, capacity);
-                    if (batch.hipPoses != null)
-                    {
-                        Array.Resize(ref batch.hipPoses, capacity);
-                        batch.poseCapacityChanged = true;
-                    }
-                }
                 return;
             }
             // Every key/repetition was reserved atomically before any part was emitted.

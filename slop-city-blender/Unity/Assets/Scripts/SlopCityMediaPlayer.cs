@@ -18,6 +18,10 @@ namespace SlopCity
         [SerializeField, Range(0f, 1f)] private float volume = 0.8f;
 
         private const float PrepareTimeoutSeconds = 25f;
+#if UNITY_WEBGL && !UNITY_EDITOR
+        private const float MobileDecoderReleaseTimeoutSeconds = 2f;
+        private const float MobileDecoderDrainSeconds = .25f;
+#endif
         private enum PlaybackState { Idle, Loading, Ready, Ended, Failed }
         private PlaybackState state;
         private SlopCityMediaChannel selectedChannel;
@@ -51,6 +55,7 @@ namespace SlopCity
         private bool webCityPriority;
         private bool webAwaitingAdmission;
         private float webDecoderAdmitAt;
+        private float webDecoderDrainAt;
         private float webIrrelevantSince = -1f;
         private float webPrepareSuspendedAt = -1f;
         private bool webAwaitingFirstPicture, webHasPicture, webPumpingPicture;
@@ -150,9 +155,6 @@ namespace SlopCity
 
         public void Play(SlopCityMediaChannel channel)
         {
-#if UNITY_WEBGL && !UNITY_EDITOR
-            if (MobileWebBudget && player) webDecoderAdmitAt = Time.unscaledTime + .25f;
-#endif
             Stop();
 #if UNITY_WEBGL && !UNITY_EDITOR
             if (MobileWebBudget && webHasPicture && screenTexture) SetDisplayVisible(true);
@@ -175,13 +177,15 @@ namespace SlopCity
             }
             if (MobileWebBudget)
             {
-                if (SlopCityCityMedia.Instance && SlopCityCityMedia.Instance.ReleaseMobileDecodersForLounge())
-                    webDecoderAdmitAt = Time.unscaledTime + .25f;
+                if (SlopCityCityMedia.Instance)
+                    SlopCityCityMedia.Instance.ReleaseMobileDecodersForLounge();
                 mobileDecoderOwner = this;
-                if (Time.unscaledTime < webDecoderAdmitAt)
+                webDecoderDrainAt = Time.unscaledTime + MobileDecoderDrainSeconds;
+                if (!MobileDecoderAdmissionReady())
                 {
-                    // City Destroy completes at end of frame. Reserve its sole slot
-                    // while waiting, without constructing a second native decoder.
+                    // Reserve the phone's sole slot until city/lounge Destroy
+                    // completes, without constructing a second native decoder.
+                    webDecoderAdmitAt = Time.unscaledTime + MobileDecoderReleaseTimeoutSeconds;
                     webAwaitingAdmission = true;
                     return;
                 }
@@ -202,13 +206,19 @@ namespace SlopCity
                 return;
             }
 #if UNITY_WEBGL && !UNITY_EDITOR
-            if (MobileWebBudget && SlopCityCityMedia.Instance && SlopCityCityMedia.Instance.ReleaseMobileDecodersForLounge())
+            if (MobileWebBudget)
             {
-                // A previously refused city Destroy may still own the one phone
-                // decoder. Retry it and allow accepted destruction to finish.
-                webAwaitingAdmission = true;
-                webDecoderAdmitAt = Time.unscaledTime + .25f;
-                return;
+                if (SlopCityCityMedia.Instance)
+                    SlopCityCityMedia.Instance.ReleaseMobileDecodersForLounge();
+                if (!MobileDecoderAdmissionReady())
+                {
+                    // A previously refused city Destroy may still own the one phone
+                    // decoder. Retry it and wait for actual retirement.
+                    if (!webAwaitingAdmission)
+                        webDecoderAdmitAt = Time.unscaledTime + MobileDecoderReleaseTimeoutSeconds;
+                    webAwaitingAdmission = true;
+                    return;
+                }
             }
 #endif
             prepareStartedAt = Time.unscaledTime;
@@ -580,6 +590,29 @@ namespace SlopCity
             }
         }
 
+        private bool CityMobileDecoderLive()
+        {
+            SlopCityCityMedia city = SlopCityCityMedia.Instance;
+            if (!city) return false;
+            VideoPlayer[] candidates = city.GetComponentsInChildren<VideoPlayer>(true);
+            for (int index = 0; index < candidates.Length; index++)
+            {
+                VideoPlayer candidate = candidates[index];
+                if (candidate && candidate != player) return true;
+            }
+            return false;
+        }
+
+        private bool LoungeMobileDecoderRetiring() => player || playbackObject || audioSource;
+
+        private bool MobileDecoderAdmissionReady()
+        {
+            if (webAwaitingAdmission && Time.unscaledTime >= webDecoderAdmitAt) return true;
+            if (CityMobileDecoderLive() || LoungeMobileDecoderRetiring()) return false;
+            // The city player object can drop before the phone's one decoder element is empty.
+            return webDecoderDrainAt <= 0f || Time.unscaledTime >= webDecoderDrainAt;
+        }
+
         private void RefreshMobileDecoderOwnership()
         {
             if (!MobileWebBudget || !HasSelection) return;
@@ -588,7 +621,7 @@ namespace SlopCity
             {
                 if (!wantsPlayback || menuSuspended || focusSuspended || applicationSuspended || !webRelevant)
                     CancelPendingAdmission();
-                else if (Time.unscaledTime >= webDecoderAdmitAt)
+                else if (MobileDecoderAdmissionReady())
                 {
                     webAwaitingAdmission = false;
                     BeginPlayback(selectedChannel);

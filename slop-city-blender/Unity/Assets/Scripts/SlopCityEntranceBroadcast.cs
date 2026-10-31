@@ -17,7 +17,12 @@ namespace SlopCity
         {
             if (!entrance || float.IsNaN(depth) || float.IsInfinity(depth) || depth <= 0f) return null;
             Transform existing = entrance.Find(RootName);
-            if (existing) return existing.GetComponent<SlopCityEntranceBroadcast>();
+            if (existing)
+            {
+                SlopCityEntranceBroadcast retained = existing.GetComponent<SlopCityEntranceBroadcast>();
+                if (retained) retained.Admit();
+                return retained;
+            }
             Transform root = SlopCityInteriorGeometry.Root(entrance, RootName,
                 new Vector3(0f, PictureBottom + Height * .5f, -depth * .5f - .15f));
             var broadcast = root.gameObject.AddComponent<SlopCityEntranceBroadcast>();
@@ -43,19 +48,39 @@ namespace SlopCity
             return broadcast;
         }
 
-        private void Start()
+        private void Start() { Admit(); }
+
+        /// <summary>Admit the persistent entrance picture to the shared city media pool.</summary>
+        public void Admit()
         {
             // Before media Start, discovery picks up this screen once its channels
             // exist. After media Start, registration admits it immediately. The
             // manager's duplicate guard makes both initialization orders safe.
             registeredMedia = SlopCityCityMedia.Instance;
-            if (registeredMedia) registeredMedia.RegisterScreen(screen);
+            if (registeredMedia && screen) registeredMedia.RegisterScreen(screen);
         }
 
-        private void OnDestroy()
+        /// <summary>Retire decoder ownership while keeping the physical entrance broadcast.</summary>
+        public void Release()
         {
             SlopCityCityMedia media = registeredMedia ? registeredMedia : SlopCityCityMedia.Instance;
-            if (media) media.UnregisterScreen(screen);
+            if (media && screen) media.UnregisterScreen(screen);
+            registeredMedia = null;
         }
+
+        public static void ReleaseEntrance(Transform entrance)
+        {
+            if (!entrance) return;
+            Transform root = entrance.Find(RootName);
+            root?.GetComponent<SlopCityEntranceBroadcast>()?.Release();
+        }
+
+        public static void ReleasePersistentEntrance(Transform tower)
+        {
+            if (!tower) return;
+            ReleaseEntrance(tower.Find("Runtime_Persistent_Building_Entrance"));
+        }
+
+        private void OnDestroy() { Release(); }
     }
 }

@@ -22,6 +22,7 @@ namespace SlopCity
         private const int MaximumScreenLoop = 5;
         private const float PrepareTimeout = 25f;
         private const float ResolveTimeout = 120f;
+        private const float ProgressSaveInterval = 5f;
         private const string AnchorPrefix = "SlopCityMediaScreenAnchor_";
         private static readonly string[] Profiles = { "1984drh", "machine_publishers" };
         [SerializeField] private Transform cityRoot;
@@ -64,6 +65,8 @@ namespace SlopCity
         private string feedUrl = "";
         private float refreshSeconds = 300f;
         private float nextRefresh;
+        private bool progressSavePending;
+        private float progressSaveDue;
         private string feedMessage = "Bundled clips. Open creator feeds for current TikTok posts.";
 
         public static SlopCityCityMedia Instance { get; private set; }
@@ -698,6 +701,7 @@ namespace SlopCity
             UpdateFeaturedLoops();
             UpdateAudio();
             PumpThumbnails();
+            FlushPendingProgressSave();
         }
 
         private void PruneScreens()
@@ -1887,7 +1891,8 @@ namespace SlopCity
                 ScreenState owner = signal.owner;
                 VideoPlayer source = signal.player;
                 if (owner == null || owner.slot != signal || !owner.screen || owner.paused || !source) continue;
-                if (signal.hasScreen && source.isPrepared && !source.isPlaying)
+                if (!Suspended && !manuallyPaused && signal.hasScreen && !signal.featuredHolding
+                    && source.isPrepared && !source.isPlaying)
                     source.Play();
                 int operation = signal.operation;
                 int publication = signal.webPublishedFrameSerial;
@@ -2146,6 +2151,16 @@ namespace SlopCity
         {
             retries.Remove(key);
             progress.lastVideoKeys[signal.index] = key;
+            progressSavePending = true;
+            if (progressSaveDue <= 0f) progressSaveDue = Time.unscaledTime + ProgressSaveInterval;
+        }
+
+        private void FlushPendingProgressSave(bool force = false)
+        {
+            if (!progressSavePending) return;
+            if (!force && Time.unscaledTime < progressSaveDue) return;
+            progressSavePending = false;
+            progressSaveDue = 0f;
             SaveProgress();
         }
 
@@ -2279,6 +2294,7 @@ namespace SlopCity
 #if UNITY_WEBGL && !UNITY_EDITOR
             RefreshMobilePreparationClocks();
 #endif
+            FlushPendingProgressSave(true);
             CleanupMedia(() => RefreshMobileLoungePriority(false, true));
             CleanupMedia(ApplyPlayback);
             CleanupMedia(UpdateAudio);

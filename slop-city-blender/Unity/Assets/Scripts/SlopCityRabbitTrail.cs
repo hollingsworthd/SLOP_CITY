@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace SlopCity
@@ -19,6 +20,8 @@ namespace SlopCity
         private object hintedAssignment;
         private bool instructionBeamActive;
         private SlopCityInteractable levelEntrance;
+        private readonly List<SlopCityInteractable> entranceCandidates = new List<SlopCityInteractable>();
+        private float nextEntranceScanAt;
         private int proximity = -1;
         private SlopCityDoor messageDoor;
         public string TransmissionText => (Time.time < transmissionUntil ? "[ CITY DISPATCH ]" : "[ CURRENT JOB ]") + "\n" + transmission;
@@ -151,9 +154,16 @@ namespace SlopCity
             district = block ? block.DisplayName : "the neighborhood";
             landmark = target.DisplayName;
             levelEntrance = null; float nearestLanding = float.PositiveInfinity;
-            foreach (SlopCityInteractable entrance in FindObjectsByType<SlopCityInteractable>(FindObjectsSortMode.None))
+            if (entranceCandidates.Count == 0 || Time.unscaledTime >= nextEntranceScanAt)
             {
-                if (!entrance.Destination || Mathf.Abs(entrance.Destination.position.y - target.InteractionPoint.y) > 3f) continue;
+                entranceCandidates.Clear();
+                foreach (SlopCityInteractable entrance in FindObjectsByType<SlopCityInteractable>(FindObjectsSortMode.None))
+                    if (entrance) entranceCandidates.Add(entrance);
+                nextEntranceScanAt = Time.unscaledTime + 10f;
+            }
+            foreach (SlopCityInteractable entrance in entranceCandidates)
+            {
+                if (!entrance || !entrance.Destination || Mathf.Abs(entrance.Destination.position.y - target.InteractionPoint.y) > 3f) continue;
                 float score = (entrance.Destination.position - target.InteractionPoint).sqrMagnitude;
                 if (score < nearestLanding) { nearestLanding = score; levelEntrance = entrance; }
             }

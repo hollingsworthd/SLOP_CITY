@@ -37,6 +37,8 @@ namespace SlopCity
         private UnityWebRequest retiringRequest;
         private DownloadHandler retiringHandler;
         private bool cleaningRequest;
+        private int retiringDisposeFailures;
+        private bool retiringDisposeAbandonedWarned;
 
         [Serializable] private sealed class Entry
         {
@@ -155,7 +157,34 @@ namespace SlopCity
             }
         }
 
-        private void Update() { if (overlay && overlay.activeInHierarchy) ApplySafeArea(); }
+        private void Update()
+        {
+            if (overlay && overlay.activeInHierarchy) ApplySafeArea();
+            if (retiringRequest == null && retiringHandler == null)
+            {
+                retiringDisposeFailures = 0;
+                return;
+            }
+            DisposeRequest(null, null);
+            if (retiringRequest != null || retiringHandler != null)
+            {
+                retiringDisposeFailures++;
+                if (retiringDisposeFailures >= 120)
+                {
+                    if (!retiringDisposeAbandonedWarned)
+                    {
+                        Debug.LogWarning(
+                            "Source download cleanup was abandoned after repeated failures; one native request may remain.",
+                            this);
+                        retiringDisposeAbandonedWarned = true;
+                    }
+                    retiringRequest = null;
+                    retiringHandler = null;
+                    retiringDisposeFailures = 0;
+                }
+            }
+            else retiringDisposeFailures = 0;
+        }
         private void OnDisable() { CancelPending(); }
         private void OnDestroy()
         {

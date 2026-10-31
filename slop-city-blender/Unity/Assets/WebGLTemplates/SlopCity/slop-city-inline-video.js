@@ -250,6 +250,7 @@
       });
     });
     observer.observe(document.documentElement, { childList: true, subtree: true });
+    window.slopCityDisconnectInlineVideo = function () { observer.disconnect(); };
   }
   ["fullscreenchange", "webkitfullscreenchange"].forEach(function (name) {
     document.addEventListener(name, function () {

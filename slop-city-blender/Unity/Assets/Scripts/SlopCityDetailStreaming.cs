@@ -29,7 +29,7 @@ namespace SlopCity
         private sealed class Lease
         {
             public Mesh mesh;
-            public int generation, failures;
+            public int generation, failures, destroyRefusals;
             public float retryAt, lastVisibleAt;
         }
         [SerializeField] private DetailEntry[] entries = Array.Empty<DetailEntry>();
@@ -39,7 +39,7 @@ namespace SlopCity
         private UnityWebRequest pendingRequest;
         private BoundedDownload pendingDownload;
         private Coroutine pendingRoutine;
-        private int requestIndex = -1, requestGeneration, retirementFrame = -1;
+        private int requestIndex = -1, requestGeneration, retirementFrame = -1, pendingDisposeRefusals;
         private bool cleanupWarning;
 #if UNITY_WEBGL && !UNITY_EDITOR
         private Camera view;
@@ -271,13 +271,33 @@ namespace SlopCity
         private void ClearRequest()
         {
             UnityWebRequest request = pendingRequest; BoundedDownload download = pendingDownload;
-            requestIndex = -1; pendingRequest = null; pendingDownload = null;
+            if (request == null && download == null) { requestIndex = -1; return; }
             // A failed native Dispose cannot be advertised as reclamation. Keep
             // that exact handle and block admission until a later cleanup succeeds.
-            try { if (request != null) request.Dispose(); }
-            catch (Exception) { pendingRequest = request; WarnCleanup(); }
-            try { if (download != null) download.Dispose(); }
-            catch (Exception) { pendingDownload = download; WarnCleanup(); }
+            // Do not clear live refs before Dispose; restoring after an early null
+            // would overwrite a later generation's request/handler.
+            if (request != null)
+            {
+                try { request.Dispose(); pendingRequest = null; }
+                catch (Exception)
+                {
+                    pendingDisposeRefusals++;
+                    WarnCleanup();
+                    if (pendingDisposeRefusals >= 120) pendingRequest = null;
+                }
+            }
+            if (download != null)
+            {
+                try { download.Dispose(); pendingDownload = null; }
+                catch (Exception)
+                {
+                    pendingDisposeRefusals++;
+                    WarnCleanup();
+                    if (pendingDisposeRefusals >= 120) pendingDownload = null;
+                }
+            }
+            if (pendingRequest == null && pendingDownload == null)
+            { requestIndex = -1; pendingDisposeRefusals = 0; }
         }
         private void CancelPending()
         {
@@ -301,11 +321,29 @@ namespace SlopCity
             DetailEntry entry = entries[index];
             try { if (entry.target && entry.target.sharedMesh == mesh) entry.target.sharedMesh = entry.farProxy; }
             catch (Exception) { WarnCleanup(); }
-            // Proxy restoration failure must not skip destruction, and a refused
-            // Destroy must retain both the native handle and resident accounting.
+            // Proxy restoration failure must not skip destruction. A refused
+            // Destroy keeps the native mesh and its resident bytes so a later
+            // tick can retry. After repeated refusal, force the teardown. If
+            // that also fails, keep the handle and the budget charge.
             try { if (mesh) DestroyOwned(mesh); }
-            catch (Exception) { WarnCleanup(); return; }
+            catch (Exception)
+            {
+                lease.destroyRefusals++;
+                WarnCleanup();
+                if (lease.destroyRefusals < 120) return;
+                try
+                {
+                    if (Application.isEditor && !Application.isPlaying) DestroyImmediate(mesh);
+                    else DestroyImmediate(mesh, true);
+                }
+                catch (Exception)
+                {
+                    WarnCleanup();
+                    return;
+                }
+            }
             lease.mesh = null;
+            lease.destroyRefusals = 0;
             residentBytes -= entry.geometryBytes;
 #if UNITY_EDITOR
             if (Application.isPlaying) retirementFrame = Time.frameCount;

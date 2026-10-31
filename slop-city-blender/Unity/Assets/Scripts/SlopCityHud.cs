@@ -390,9 +390,12 @@ namespace SlopCity
             }
             mapPointer.anchoredPosition = new Vector2(Mathf.Clamp(position.x,-111,111)*.535f,Mathf.Clamp(position.z-8,-75,75)*.792f);
             mapPointer.localRotation = Quaternion.Euler(0,0,-player.transform.eulerAngles.y);
-            cityProgress.text = player.VisitedBlockCount + " / 9 BLOCKS EXPLORED";
-            districtName.text = player.CurrentDistrictName;
-            homeDistance.text = player.IsOutside ? Mathf.RoundToInt(player.HomeDistance) + "m FROM HOME  /  R TO RETURN\nE  OPEN DOORS   /   SHIFT  RUN" : "E  OPEN THE CITY DOOR\nUSE THE TV TO CHOOSE MEDIA";
+            string progress = player.VisitedBlockCount + " / 9 BLOCKS EXPLORED";
+            if (cityProgress.text != progress) cityProgress.text = progress;
+            string district = player.CurrentDistrictName;
+            if (districtName.text != district) districtName.text = district;
+            string distance = player.IsOutside ? Mathf.RoundToInt(player.HomeDistance) + "m FROM HOME  /  R TO RETURN\nE  OPEN DOORS   /   SHIFT  RUN" : "E  OPEN THE CITY DOOR\nUSE THE TV TO CHOOSE MEDIA";
+            if (homeDistance.text != distance) homeDistance.text = distance;
         }
 
         private static string Objective(bool complete, string label)

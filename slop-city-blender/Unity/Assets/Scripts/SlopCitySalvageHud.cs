@@ -71,7 +71,7 @@ namespace SlopCity
             var mode = Button(panel.transform, "BUY BACK", new Vector2(.31f,.035f), new Vector2(.68f,.12f), () => { if (sandbox.CanSellAt(pawn)) { showStock = !showStock; page = 0; Refresh(); } });
             pageLabel = mode.GetComponentInChildren<Text>();
             next = Button(panel.transform, "NEXT", new Vector2(.71f,.035f), new Vector2(.96f,.12f), () => { page++; Refresh(); });
-            sandbox.InventoryRequested += Open; sandbox.InventoryChanged += Refresh;
+            SubscribeSandboxEvents();
             Layout();
             panel.SetActive(false);
         }
@@ -167,10 +167,29 @@ namespace SlopCity
             var button=rect.gameObject.AddComponent<Button>();button.navigation=new Navigation {mode=Navigation.Mode.None}; button.onClick.AddListener(click);
             var text=Label(rect,label,new Vector2(.02f,0),new Vector2(.98f,1),20);text.alignment=TextAnchor.MiddleCenter;return button;
         }
+        private void SubscribeSandboxEvents()
+        {
+            if (!sandbox) return;
+            sandbox.InventoryRequested -= Open;
+            sandbox.InventoryRequested += Open;
+            sandbox.InventoryChanged -= Refresh;
+            sandbox.InventoryChanged += Refresh;
+        }
+        private void UnsubscribeSandboxEvents()
+        {
+            if (!sandbox) return;
+            sandbox.InventoryRequested -= Open;
+            sandbox.InventoryChanged -= Refresh;
+        }
+        private void OnEnable()
+        {
+            if (initialized) SubscribeSandboxEvents();
+        }
+        private void OnDisable() => UnsubscribeSandboxEvents();
         private void ReleaseUi()
         {
             initialized = false;
-            if (sandbox) { sandbox.InventoryRequested -= Open; sandbox.InventoryChanged -= Refresh; }
+            UnsubscribeSandboxEvents();
             if (canvasObject)
             {
                 try { canvasObject.SetActive(false); }
@@ -178,6 +197,10 @@ namespace SlopCity
                 canvasObject = null;
             }
         }
-        private void OnDestroy() { ReleaseUi(); }
+        private void OnDestroy()
+        {
+            UnsubscribeSandboxEvents();
+            ReleaseUi();
+        }
     }
 }
