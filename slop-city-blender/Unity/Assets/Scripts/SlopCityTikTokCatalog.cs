@@ -51,7 +51,11 @@ namespace SlopCity
 
         private static UnityWebRequest constructionRequest;
         private static DownloadHandler constructionDownload;
+        private static int constructionDisposeRefusals;
         private static bool cleaningConstruction, warnedConstruction;
+        internal const int MobileWebVideoEdge = 480;
+        private static readonly Dictionary<string, Vector2Int> bundledVideoDimensions =
+            new Dictionary<string, Vector2Int>(StringComparer.Ordinal);
 
         internal static void PumpConstructionLedger()
         {
@@ -67,15 +71,25 @@ namespace SlopCity
                 if (constructionRequest != null)
                 {
                     try { constructionRequest.Dispose(); constructionRequest = null; }
-                    catch (Exception) { WarnConstructionCleanup(); }
+                    catch (Exception)
+                    {
+                        constructionDisposeRefusals++;
+                        WarnConstructionCleanup();
+                        if (constructionDisposeRefusals >= 120) constructionRequest = null;
+                    }
                 }
                 if (constructionDownload != null)
                 {
                     try { constructionDownload.Dispose(); constructionDownload = null; }
-                    catch (Exception) { WarnConstructionCleanup(); }
+                    catch (Exception)
+                    {
+                        constructionDisposeRefusals++;
+                        WarnConstructionCleanup();
+                        if (constructionDisposeRefusals >= 120) constructionDownload = null;
+                    }
                 }
                 bool cleared = constructionRequest == null && constructionDownload == null;
-                if (cleared) warnedConstruction = false;
+                if (cleared) { warnedConstruction = false; constructionDisposeRefusals = 0; }
                 return cleared;
             }
             finally { cleaningConstruction = false; }
@@ -97,6 +111,34 @@ namespace SlopCity
                 Debug.LogWarning("Media request could not start: " + error.GetType().Name);
                 return null;
             }
+        }
+
+        internal static void RememberBundledVideoDimensions(string creator, string id, int width, int height)
+        {
+            if (string.IsNullOrEmpty(creator) || string.IsNullOrEmpty(id) || width < 1 || height < 1) return;
+            bundledVideoDimensions[creator + "/" + id] = new Vector2Int(width, height);
+        }
+
+        internal static bool TryGetKnownVideoDimensions(SlopCityTikTokVideo video, out int width, out int height)
+        {
+            width = height = 0;
+            if (video == null || string.IsNullOrEmpty(video.creator) || string.IsNullOrEmpty(video.id)) return false;
+            if (!bundledVideoDimensions.TryGetValue(video.creator + "/" + video.id, out Vector2Int size)) return false;
+            width = size.x; height = size.y;
+            return width > 0 && height > 0;
+        }
+
+        internal static bool PrepareDimensionsAllowed(SlopCityTikTokVideo video, bool mobileWebBudget, out string message)
+        {
+            message = null;
+#if UNITY_WEBGL && !UNITY_EDITOR
+            if (!mobileWebBudget || !TryGetKnownVideoDimensions(video, out int width, out int height)) return true;
+            if (width <= MobileWebVideoEdge && height <= MobileWebVideoEdge) return true;
+            message = "Clip resolution exceeds this browser's safe decode limit.";
+            return false;
+#else
+            return true;
+#endif
         }
 
         private sealed class BoundedDownload : DownloadHandlerScript

@@ -89,6 +89,7 @@ namespace SlopCity
             // StreamingAssets uses HTTP in browsers and jar URLs on Android;
             // UnityWebRequest handles those and normal desktop file URLs alike.
             yield return LoadBundledCatalog();
+            yield return LoadBundledVideoDimensions();
             initializationComplete = true;
         }
 
@@ -145,6 +146,46 @@ namespace SlopCity
                 }
             }
         }
+
+        private IEnumerator LoadBundledVideoDimensions()
+        {
+            using (UnityWebRequest request = SlopCityMediaTransfer.Get(StreamingAssetUri("TikTok/bundle-receipt.json"), 8 * 1024 * 1024, 30))
+            {
+                var operation = SlopCityMediaTransfer.Send(request);
+                if (operation == null) yield break;
+                while (!operation.isDone)
+                {
+                    if (request.downloadedBytes > 8UL * 1024 * 1024) { request.Abort(); yield break; }
+                    yield return null;
+                }
+                if (request.result != UnityWebRequest.Result.Success) yield break;
+                try
+                {
+                    BundleReceipt receipt = JsonUtility.FromJson<BundleReceipt>(request.downloadHandler.text);
+                    if (receipt?.posts == null) yield break;
+                    foreach (BundleReceiptPost post in receipt.posts)
+                    {
+                        if (post?.assets == null || string.IsNullOrEmpty(post.creator) || string.IsNullOrEmpty(post.id)) continue;
+                        foreach (BundleReceiptAsset asset in post.assets)
+                        {
+                            if (asset == null || asset.kind != "video" || asset.streams == null) continue;
+                            foreach (BundleReceiptStream stream in asset.streams)
+                            {
+                                if (stream == null || stream.codec_type != "video" || stream.width < 1 || stream.height < 1) continue;
+                                SlopCityMediaTransfer.RememberBundledVideoDimensions(post.creator, post.id, stream.width, stream.height);
+                                break;
+                            }
+                        }
+                    }
+                }
+                catch (Exception error) { Debug.LogWarning("SLOP CITY bundled video dimensions: " + error.Message); }
+            }
+        }
+
+        [Serializable] private sealed class BundleReceipt { public BundleReceiptPost[] posts; }
+        [Serializable] private sealed class BundleReceiptPost { public string id, creator; public BundleReceiptAsset[] assets; }
+        [Serializable] private sealed class BundleReceiptAsset { public string kind; public BundleReceiptStream[] streams; }
+        [Serializable] private sealed class BundleReceiptStream { public string codec_type; public int width, height; }
 
         private bool ValidBundledPost(SlopCityTikTokVideo post)
         {

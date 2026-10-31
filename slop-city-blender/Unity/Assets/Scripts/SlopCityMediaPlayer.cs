@@ -33,6 +33,7 @@ namespace SlopCity
         private Material screenMaterial;
         private Material failedDisplayMaterial;
         private RenderTexture failedDisplayTexture;
+        private int displayTextureDestroyRefusals;
         private Material originalScreenMaterial;
         private bool originalScreenEnabled;
         private bool[] originalLetteringEnabled;
@@ -882,7 +883,22 @@ namespace SlopCity
             Material material = screenMaterial;
             RenderTexture texture = screenTexture;
             if (TryMediaCleanup(() => { if (material) Destroy(material); }) || !material) screenMaterial = null;
-            if (TryMediaCleanup(() => DisposeDisplayTexture(texture)) || !texture) screenTexture = null;
+            if (!texture) displayTextureDestroyRefusals = 0;
+            else if (TryMediaCleanup(() => DisposeDisplayTexture(texture)))
+            {
+                screenTexture = null;
+                displayTextureDestroyRefusals = 0;
+            }
+            else
+            {
+                displayTextureDestroyRefusals++;
+                if (displayTextureDestroyRefusals >= 120)
+                {
+                    TryMediaCleanup(() => ForceDisposeDisplayTexture(texture));
+                    screenTexture = null;
+                    displayTextureDestroyRefusals = 0;
+                }
+            }
             // Keep any handle whose destruction was refused available to retry.
             if (screenMaterial || screenTexture) return;
 #if UNITY_WEBGL && !UNITY_EDITOR
@@ -897,7 +913,20 @@ namespace SlopCity
             Material material = failedDisplayMaterial;
             RenderTexture texture = failedDisplayTexture;
             if (TryMediaCleanup(() => { if (material) Destroy(material); }) || !material) failedDisplayMaterial = null;
-            if (TryMediaCleanup(() => DisposeDisplayTexture(texture)) || !texture) failedDisplayTexture = null;
+            if (texture)
+            {
+                if (TryMediaCleanup(() => DisposeDisplayTexture(texture))) failedDisplayTexture = null;
+                else
+                {
+                    displayTextureDestroyRefusals++;
+                    if (displayTextureDestroyRefusals >= 120)
+                    {
+                        TryMediaCleanup(() => ForceDisposeDisplayTexture(texture));
+                        failedDisplayTexture = null;
+                        displayTextureDestroyRefusals = 0;
+                    }
+                }
+            }
             return !failedDisplayMaterial && !failedDisplayTexture;
         }
 
@@ -917,6 +946,15 @@ namespace SlopCity
             try { texture.Release(); }
             catch (Exception error) { Debug.LogWarning("SLOP CITY: Television texture release: " + error.GetType().Name); }
             finally { Destroy(texture); }
+        }
+
+        private static void ForceDisposeDisplayTexture(RenderTexture texture)
+        {
+            if (!texture) return;
+            try { texture.Release(); }
+            catch (Exception error) { Debug.LogWarning("SLOP CITY: Television texture force release: " + error.GetType().Name); }
+            if (Application.isEditor && !Application.isPlaying) DestroyImmediate(texture);
+            else DestroyImmediate(texture, true);
         }
 
         private static double FiniteSeconds(double value)

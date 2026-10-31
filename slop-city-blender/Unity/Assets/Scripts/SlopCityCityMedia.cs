@@ -512,12 +512,47 @@ namespace SlopCity
                     warnedRetiredScreenAbandon = true;
                     Debug.LogWarning("City screen GPU cleanup is still pending; continuing without blocking new screens.");
                 }
+                ForceDestroyScreenResources(display);
                 display.texture = null;
                 display.material = null;
                 display.retiredReleaseAttempts = 0;
                 retiredScreenResources.RemoveAt(i);
             }
             return retiredScreenResources.Count == 0;
+        }
+
+        private static void ForceDestroyScreenResources(ScreenState display)
+        {
+            RenderTexture texture = display.texture;
+            if (texture)
+            {
+                try { DisposeScreenTexture(texture); }
+                catch (Exception error) { Debug.LogWarning("City texture force release: " + error.GetType().Name); }
+                try
+                {
+                    if (texture)
+                    {
+                        if (Application.isEditor && !Application.isPlaying) DestroyImmediate(texture);
+                        else DestroyImmediate(texture, true);
+                    }
+                }
+                catch (Exception error) { Debug.LogWarning("City texture force destroy: " + error.GetType().Name); }
+            }
+            Material material = display.material;
+            if (material)
+            {
+                try { Destroy(material); }
+                catch (Exception error) { Debug.LogWarning("City material force destroy: " + error.GetType().Name); }
+                try
+                {
+                    if (material)
+                    {
+                        if (Application.isEditor && !Application.isPlaying) DestroyImmediate(material);
+                        else DestroyImmediate(material, true);
+                    }
+                }
+                catch (Exception error) { Debug.LogWarning("City material force destroy: " + error.GetType().Name); }
+            }
         }
 
         private void RefreshMobileScreenTextures()
@@ -1616,6 +1651,10 @@ namespace SlopCity
                 player.prepareCompleted += signal.preparedHandler;
                 player.errorReceived += signal.errorHandler;
                 player.loopPointReached += signal.endedHandler;
+#if UNITY_WEBGL && !UNITY_EDITOR
+                if (!SlopCityMediaTransfer.PrepareDimensionsAllowed(signal.pendingVideo, MobileWebBudget, out string dimensionMessage))
+                { FailChannel(signal, dimensionMessage); return; }
+#endif
                 player.Prepare();
             }
             catch (Exception exception) { FailChannel(signal, exception.Message); }
@@ -2246,12 +2285,67 @@ namespace SlopCity
             bool retired = TryMediaCleanup(() => { if (session) Destroy(session); });
             // A refused Destroy still occupies its exact channel. Keep ownership
             // until a later release succeeds instead of admitting another decoder.
-            if (!retired && session) return;
+            if (!retired && session)
+            {
+                signal.releaseRefusals++;
+                if (signal.releaseRefusals < 120) return;
+                ForceDestroyPlayback(signal);
+                signal.releaseRefusals = 0;
+            }
+            else signal.releaseRefusals = 0;
             signal.player = null;
             signal.audio = null;
             signal.session = null;
             signal.ready = false;
             signal.loading = false;
+        }
+
+        private static void ForceDestroyPlayback(Channel signal)
+        {
+            VideoPlayer player = signal.player;
+            AudioSource audio = signal.audio;
+            GameObject session = signal.session;
+            try
+            {
+                if (player)
+                {
+                    try { player.Stop(); }
+                    catch (Exception error) { Debug.LogWarning("City playback force stop: " + error.GetType().Name); }
+                    try
+                    {
+                        if (Application.isEditor && !Application.isPlaying) DestroyImmediate(player);
+                        else DestroyImmediate(player, true);
+                    }
+                    catch (Exception error) { Debug.LogWarning("City playback force destroy: " + error.GetType().Name); }
+                }
+                if (audio)
+                {
+                    try
+                    {
+                        if (Application.isEditor && !Application.isPlaying) DestroyImmediate(audio);
+                        else DestroyImmediate(audio, true);
+                    }
+                    catch (Exception error) { Debug.LogWarning("City audio force destroy: " + error.GetType().Name); }
+                }
+                if (session)
+                {
+                    try
+                    {
+                        if (Application.isEditor && !Application.isPlaying) DestroyImmediate(session);
+                        else DestroyImmediate(session, true);
+                    }
+                    catch (Exception error) { Debug.LogWarning("City session force destroy: " + error.GetType().Name); }
+                }
+            }
+            catch (Exception error) { Debug.LogWarning("City playback force teardown: " + error.GetType().Name); }
+#if UNITY_WEBGL && !UNITY_EDITOR
+            SlopCityCityMedia city = Instance;
+            if (city != null && city.MobileWebBudget)
+            {
+                if (signal.owner != null && city.mobilePendingOwner == signal.owner) city.mobilePendingOwner = null;
+                if (signal.owner != null && signal.owner.slot == signal) signal.owner.slot = null;
+            }
+#endif
         }
 
         private void OnApplicationFocus(bool focused)
@@ -2447,6 +2541,7 @@ namespace SlopCity
 #endif
             public bool featuredHolding, featuredHeldThisLoop;
             public float featuredHoldRemaining;
+            public int releaseRefusals;
         }
 
         private sealed class Retry { public int failures; public float after; }

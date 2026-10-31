@@ -415,12 +415,12 @@ namespace SlopCity
 
         internal void NoteFloorRetirement(int frame, bool deferredDestruction)
         {
-            if (world && world.DeferTowerArchitecture && deferredDestruction)
+            if (deferredDestruction)
                 floorAdmissionAfterFrame = Mathf.Max(floorAdmissionAfterFrame, frame + 1);
         }
 
         internal bool CanAdmitFloorDetail(int frame)
-            => !world || !world.DeferTowerArchitecture || frame >= floorAdmissionAfterFrame;
+            => !Application.isPlaying || frame >= floorAdmissionAfterFrame;
 
         private bool PrepareFloor(int destination)
         {

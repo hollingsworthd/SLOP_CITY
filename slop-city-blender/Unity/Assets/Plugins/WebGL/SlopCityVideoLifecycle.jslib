@@ -137,7 +137,14 @@ mergeInto(LibraryManager.library, {
   $slopCityDrainRetiredVideoDecoders: function () {
     Object.keys(slopCityRetiredVideoDecoders).forEach(function (id) {
       var video = slopCityRetiredVideoDecoders[id];
-      if (!slopCityRetireVideoDecoder(id, video)) return;
+      video.slopCityRetireAttempts = (video.slopCityRetireAttempts || 0) + 1;
+      if (!slopCityRetireVideoDecoder(id, video)) {
+        if (video.slopCityRetireAttempts >= 120) {
+          try { if (video.parentNode) video.parentNode.removeChild(video); } catch (_) {}
+          delete slopCityRetiredVideoDecoders[id];
+        }
+        return;
+      }
       delete slopCityRetiredVideoDecoders[id];
       if (!slopCityDisposingVideoDecoders && !slopCityReusableIOSVideo && slopCityUsesIOSVideo()
         && slopCityCanReuseVideoElement(video))
@@ -249,7 +256,8 @@ mergeInto(LibraryManager.library, {
       // load() aborts the old source asynchronously. Wait for its observable
       // empty state and a quiet interval before attaching the replacement.
       if (!slopCityDrainRetiredVideoDecoders() || (ios && retiredAt && (Date.now() - retiredAt < 250
-        || video.readyState !== 0 || video.currentSrc))) {
+        || video.readyState !== 0
+        || (video.currentSrc && !(video.readyState === 0 || video.slopCitySourceClearRequested || video.slopCityDestroyed))))) {
         if (Date.now() - admissionStartedAt >= 30000) {
           delete video.slopCitySourceAdmissionTimer;
           slopCityFailVideoPlayback(id, video, video.slopCityPlaybackIntent);

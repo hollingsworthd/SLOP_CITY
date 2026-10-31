@@ -10,6 +10,7 @@ namespace SlopCity
     {
         private readonly Dictionary<Material, List<CombineInstance>> groups = new Dictionary<Material, List<CombineInstance>>();
         private readonly List<Mesh> meshes = new List<Mesh>();
+        private readonly Dictionary<Mesh, int> meshDestroyRefusals = new Dictionary<Mesh, int>();
         private readonly Dictionary<string, int> propOrdinals = new Dictionary<string, int>();
         private readonly List<GameObject> cleanProps = new List<GameObject>();
         private Transform cleanProp;
@@ -257,16 +258,40 @@ namespace SlopCity
         // Release native batch ownership explicitly at that same disposal boundary.
         internal void Release()
         {
+            bool meshPendingAfterImmediate = false;
             // Native cleanup of one batch must not skip every remaining room owner.
             for (int index = meshes.Count - 1; index >= 0; index--)
             {
+                Mesh mesh = meshes[index];
+                if (!mesh) { meshes.RemoveAt(index); meshDestroyRefusals.Remove(mesh); continue; }
                 try
                 {
-                    Mesh mesh = meshes[index];
-                    if (mesh) { if (Application.isPlaying) Destroy(mesh); else DestroyImmediate(mesh); }
+                    if (Application.isPlaying) Destroy(mesh);
+                    else DestroyImmediate(mesh);
                     meshes.RemoveAt(index);
+                    meshDestroyRefusals.Remove(mesh);
+                    continue;
                 }
-                catch (Exception error) { WarnCleanup(error); }
+                catch (Exception error)
+                {
+                    int refusals = 1;
+                    if (meshDestroyRefusals.TryGetValue(mesh, out int previous)) refusals = previous + 1;
+                    meshDestroyRefusals[mesh] = refusals;
+                    WarnCleanup(error);
+                    if (refusals < 120) continue;
+                    try
+                    {
+                        if (Application.isEditor && !Application.isPlaying) DestroyImmediate(mesh);
+                        else DestroyImmediate(mesh, true);
+                        meshes.RemoveAt(index);
+                        meshDestroyRefusals.Remove(mesh);
+                    }
+                    catch (Exception immediateError)
+                    {
+                        WarnCleanup(immediateError);
+                        meshPendingAfterImmediate = true;
+                    }
+                }
             }
             groups.Clear();
             for (int index = cleanProps.Count - 1; index >= 0; index--)
@@ -281,7 +306,7 @@ namespace SlopCity
             propOrdinals.Clear(); cleanProp = null; cleanLabel = null;
             // Floor retirement retains this component/root when native disposal
             // is refused, instead of destroying its last handle and admitting more.
-            if (meshes.Count != 0 || cleanProps.Count != 0)
+            if (meshPendingAfterImmediate || cleanProps.Count != 0)
                 throw new InvalidOperationException("Room content cleanup is still pending.");
         }
 

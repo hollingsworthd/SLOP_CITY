@@ -39,7 +39,7 @@ namespace SlopCity
         private UnityWebRequest pendingRequest;
         private BoundedDownload pendingDownload;
         private Coroutine pendingRoutine;
-        private int requestIndex = -1, requestGeneration, retirementFrame = -1, pendingDisposeRefusals;
+        private int requestIndex = -1, requestGeneration, retirementFrame = -1, pendingRequestDisposeRefusals, pendingDownloadDisposeRefusals;
         private bool cleanupWarning;
 #if UNITY_WEBGL && !UNITY_EDITOR
         private Camera view;
@@ -278,26 +278,26 @@ namespace SlopCity
             // would overwrite a later generation's request/handler.
             if (request != null)
             {
-                try { request.Dispose(); pendingRequest = null; }
+                try { request.Dispose(); pendingRequest = null; pendingRequestDisposeRefusals = 0; }
                 catch (Exception)
                 {
-                    pendingDisposeRefusals++;
+                    pendingRequestDisposeRefusals++;
                     WarnCleanup();
-                    if (pendingDisposeRefusals >= 120) pendingRequest = null;
+                    if (pendingRequestDisposeRefusals >= 120) pendingRequest = null;
                 }
             }
             if (download != null)
             {
-                try { download.Dispose(); pendingDownload = null; }
+                try { download.Dispose(); pendingDownload = null; pendingDownloadDisposeRefusals = 0; }
                 catch (Exception)
                 {
-                    pendingDisposeRefusals++;
+                    pendingDownloadDisposeRefusals++;
                     WarnCleanup();
-                    if (pendingDisposeRefusals >= 120) pendingDownload = null;
+                    if (pendingDownloadDisposeRefusals >= 120) pendingDownload = null;
                 }
             }
             if (pendingRequest == null && pendingDownload == null)
-            { requestIndex = -1; pendingDisposeRefusals = 0; }
+            { requestIndex = -1; pendingRequestDisposeRefusals = 0; pendingDownloadDisposeRefusals = 0; }
         }
         private void CancelPending()
         {

@@ -11,10 +11,13 @@ mergeInto(LibraryManager.library, {
   $slopCityReleaseVideoTexture__deps: ['$slopCityDetachVideoDestination', '$slopCityFailedVideoTextures'],
   $slopCityReleaseVideoTexture: function (decoder) {
     slopCityDetachVideoDestination();
-    if (decoder.slopCityLinearVideoTexture && typeof GLctx !== 'undefined' && GLctx && !GLctx.isContextLost()) {
+    if (decoder.slopCityLinearVideoTexture && typeof GLctx !== 'undefined' && GLctx) {
       // Retain this exact owner if deletion fails; decoder retirement retries it.
-      try { GLctx.deleteTexture(decoder.slopCityLinearVideoTexture); }
-      catch (_) { slopCityFailedVideoTextures.push(decoder.slopCityLinearVideoTexture); }
+      var contextLost = GLctx.isContextLost && GLctx.isContextLost();
+      if (!contextLost) {
+        try { GLctx.deleteTexture(decoder.slopCityLinearVideoTexture); }
+        catch (_) { slopCityFailedVideoTextures.push(decoder.slopCityLinearVideoTexture); }
+      } else slopCityFailedVideoTextures.push(decoder.slopCityLinearVideoTexture);
     }
     delete decoder.slopCityLinearVideoTexture;
     delete decoder.slopCityUploadedDecodedFrame;
@@ -148,12 +151,22 @@ mergeInto(LibraryManager.library, {
     } finally { GLctx.bindFramebuffer(GLctx.DRAW_FRAMEBUFFER, previous); }
   },
 
-  $slopCityReleaseVideoGraphics__deps: ['$s2lProgram', '$s2lVBO', '$s2lFBO', '$s2lTexture', '$slopCityVideoVertexArray', '$slopCityDetachVideoDestination', '$slopCityDrainFailedVideoTextures', '$slopCityDrainPendingVideoGraphics'],
+  $slopCityReleaseVideoGraphics__deps: ['$s2lProgram', '$s2lVBO', '$s2lFBO', '$s2lTexture', '$slopCityVideoVertexArray', '$slopCityDetachVideoDestination', '$slopCityFailedVideoTextures', '$slopCityDrainFailedVideoTextures', '$slopCityDrainPendingVideoGraphics'],
   $slopCityReleaseVideoGraphics: function () {
     var firstError;
     function clean(action) { try { action(); } catch (error) { if (!firstError) firstError = error; } }
     clean(function () { slopCityDetachVideoDestination(); });
-    clean(function () { if (s2lTexture && GLctx && !GLctx.isContextLost()) GLctx.deleteTexture(s2lTexture); s2lTexture = null; });
+    clean(function () {
+      if (!s2lTexture) return;
+      if (typeof GLctx !== 'undefined' && GLctx) {
+        var contextLost = GLctx.isContextLost && GLctx.isContextLost();
+        if (!contextLost) {
+          try { GLctx.deleteTexture(s2lTexture); }
+          catch (_) { slopCityFailedVideoTextures.push(s2lTexture); }
+        } else slopCityFailedVideoTextures.push(s2lTexture);
+      }
+      s2lTexture = null;
+    });
     clean(function () { if (s2lFBO && GLctx && !GLctx.isContextLost()) GLctx.deleteFramebuffer(s2lFBO); s2lFBO = null; });
     clean(function () { if (s2lVBO && GLctx && !GLctx.isContextLost()) GLctx.deleteBuffer(s2lVBO); s2lVBO = null; });
     clean(function () { if (s2lProgram && GLctx && !GLctx.isContextLost()) GLctx.deleteProgram(s2lProgram); s2lProgram = null; });
@@ -227,7 +240,7 @@ mergeInto(LibraryManager.library, {
 
   // Retain Unity's linear conversion. Desktop WebKit can reuse same-size
   // storage; mobile must let the video source define its upload dimensions.
-  $slopCityWebkitVideoUpload__deps: ['$videoInstances', '$jsVideoCreateTexture2D', '$hasSRGBATextures', '$s2lTexture', '$s2lFBO', '$s2lVBO', '$s2lProgram', '$s2lVertexPositionNDC', '$slopCityUsesMobileVideo'],
+  $slopCityWebkitVideoUpload__deps: ['$videoInstances', '$jsVideoCreateTexture2D', '$hasSRGBATextures', '$s2lTexture', '$s2lFBO', '$s2lVBO', '$s2lProgram', '$s2lVertexPositionNDC', '$slopCityUsesMobileVideo', '$slopCityDetachVideoDestination', '$slopCityFailedVideoTextures'],
   $slopCityWebkitVideoUpload: function (video, texture, linear) {
     var v = videoInstances[video];
     var mobile = slopCityUsesMobileVideo(v);
@@ -246,7 +259,10 @@ mergeInto(LibraryManager.library, {
     var format = linear && !hasSRGBATextures ? GLctx.RGB : GLctx.RGBA;
     var resized = v.previousUploadedWidth != v.videoWidth || v.previousUploadedHeight != v.videoHeight;
     if (resized) {
-      GLctx.deleteTexture(GL.textures[texture]);
+      if (linear) slopCityDetachVideoDestination();
+      var previousDestination = GL.textures[texture];
+      try { GLctx.deleteTexture(previousDestination); }
+      catch (_) { if (previousDestination) slopCityFailedVideoTextures.push(previousDestination); }
       var destination = jsVideoCreateTexture2D();
       destination.name = texture;
       GL.textures[texture] = destination;
@@ -316,7 +332,7 @@ mergeInto(LibraryManager.library, {
 
   JS_Video_UpdateToTexture__proxy: 'sync',
   JS_Video_UpdateToTexture__sig: 'iiii',
-  JS_Video_UpdateToTexture__deps: ['$videoInstances', '$s2lTexture', '$jsIsWebkit', '$slopCityWebkitVideoUpload', '$slopCityNativeVideoUpdateToTexture', '$slopCityPauseVideoForGraphicsLoss', '$slopCityPrepareLinearVideo', '$slopCityUsesMobileVideo', '$slopCityVideoVertexArray', '$slopCityCaptureVideoGraphicsState', '$slopCityRestoreVideoGraphicsState', '$slopCityDetachVideoDestination', '$slopCityWatchVideoPicture', '$slopCityHasCurrentVideoPicture', 'JS_Video_Pause'],
+  JS_Video_UpdateToTexture__deps: ['$videoInstances', '$s2lTexture', '$jsIsWebkit', '$slopCityWebkitVideoUpload', '$slopCityNativeVideoUpdateToTexture', '$slopCityPauseVideoForGraphicsLoss', '$slopCityPrepareLinearVideo', '$slopCityUsesMobileVideo', '$slopCityVideoVertexArray', '$slopCityCaptureVideoGraphicsState', '$slopCityRestoreVideoGraphicsState', '$slopCityDetachVideoDestination', '$slopCityFailedVideoTextures', '$slopCityWatchVideoPicture', '$slopCityHasCurrentVideoPicture', 'JS_Video_Pause'],
   JS_Video_UpdateToTexture: function (video, texture, adjustToLinearspace) {
     var decoder = videoInstances[video];
     if (!decoder || decoder.slopCityDestroyed || typeof GLctx === 'undefined' || !GLctx || GLctx.isContextLost()) return false;
@@ -433,6 +449,8 @@ mergeInto(LibraryManager.library, {
         // Keep the FBO and decoder owners for retirement/retry. A temporary
         // detach failure cannot skip restoring Unity's render state.
         decoder.slopCityTextureRetryAfter = Date.now() + 5000;
+        var attachedDestination = GL.textures[texture];
+        if (attachedDestination) slopCityFailedVideoTextures.push(attachedDestination);
       } finally { slopCityRestoreVideoGraphicsState(graphicsState, previousTexture, texture); }
     }
   }
