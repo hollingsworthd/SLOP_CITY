@@ -392,8 +392,8 @@ namespace SlopCity
             mapPointer.localRotation = Quaternion.Euler(0,0,-player.transform.eulerAngles.y);
             string progress = player.VisitedBlockCount + " / 9 BLOCKS EXPLORED";
             if (cityProgress.text != progress) cityProgress.text = progress;
-            string district = player.CurrentDistrictName;
-            if (districtName.text != district) districtName.text = district;
+            string blockName = player.CurrentDistrictName;
+            if (districtName.text != blockName) districtName.text = blockName;
             string distance = player.IsOutside ? Mathf.RoundToInt(player.HomeDistance) + "m FROM HOME  /  R TO RETURN\nE  OPEN DOORS   /   SHIFT  RUN" : "E  OPEN THE CITY DOOR\nUSE THE TV TO CHOOSE MEDIA";
             if (homeDistance.text != distance) homeDistance.text = distance;
         }
