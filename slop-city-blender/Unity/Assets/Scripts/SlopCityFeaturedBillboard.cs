@@ -14,6 +14,14 @@ namespace SlopCity
         private Material frameMaterial;
         public SlopCityCityScreen Screen { get; private set; }
 
+        private static void StripDecorativeCollider(GameObject shape)
+        {
+            Collider collider = shape.GetComponent<Collider>();
+            if (!collider) return;
+            if (Application.isPlaying) Destroy(collider);
+            else DestroyImmediate(collider);
+        }
+
         public static SlopCityFeaturedBillboard Ensure(Transform city)
         {
             if (!city || city.name != "SlopCity_NineBlocks") return null;
@@ -39,6 +47,7 @@ namespace SlopCity
             billboard.Box("Featured_Left_Support", new Vector3(-Width * .5f - .22f, -3.45f, .12f), new Vector3(.20f, 6.9f, .26f));
             billboard.Box("Featured_Right_Support", new Vector3(Width * .5f + .22f, -3.45f, .12f), new Vector3(.20f, 6.9f, .26f));
             GameObject picture = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            StripDecorativeCollider(picture);
             picture.name = "Featured_Creator_Portrait";
             picture.transform.SetParent(owner.transform, false);
             picture.transform.localPosition = new Vector3(0, 0, -.012f);
@@ -57,6 +66,7 @@ namespace SlopCity
         private void Box(string label, Vector3 position, Vector3 size)
         {
             GameObject box = GameObject.CreatePrimitive(PrimitiveType.Cube); box.name = label;
+            StripDecorativeCollider(box);
             box.transform.SetParent(transform, false); box.transform.localPosition = position; box.transform.localScale = size;
             Renderer renderer = box.GetComponent<Renderer>(); renderer.sharedMaterial = frameMaterial;
             renderer.shadowCastingMode = ShadowCastingMode.Off;

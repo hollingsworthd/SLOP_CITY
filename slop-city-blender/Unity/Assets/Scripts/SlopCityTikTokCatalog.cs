@@ -57,40 +57,63 @@ namespace SlopCity
         private static readonly Dictionary<string, Vector2Int> bundledVideoDimensions =
             new Dictionary<string, Vector2Int>(StringComparer.Ordinal);
 
+        private static float nextConstructionLedgerPump;
+        private const float ConstructionLedgerPumpInterval = 0.5f;
+
         internal static void PumpConstructionLedger()
         {
+            float now = Time.unscaledTime;
+            if (now < nextConstructionLedgerPump) return;
+            nextConstructionLedgerPump = now + ConstructionLedgerPumpInterval;
             RetryConstructionCleanup();
         }
 
         private static bool RetryConstructionCleanup()
         {
+            if (constructionRequest == null && constructionDownload == null)
+            {
+                warnedConstruction = false;
+                constructionDisposeRefusals = 0;
+                return true;
+            }
             if (cleaningConstruction) return false;
+            TryDisposeConstructionRequest();
+            TryDisposeConstructionDownload();
+            bool cleared = constructionRequest == null && constructionDownload == null;
+            if (cleared) { warnedConstruction = false; constructionDisposeRefusals = 0; }
+            return cleared;
+        }
+
+        private static void TryDisposeConstructionRequest()
+        {
+            if (constructionRequest == null) return;
             cleaningConstruction = true;
             try
             {
-                if (constructionRequest != null)
+                try { constructionRequest.Dispose(); constructionRequest = null; }
+                catch (Exception)
                 {
-                    try { constructionRequest.Dispose(); constructionRequest = null; }
-                    catch (Exception)
-                    {
-                        constructionDisposeRefusals++;
-                        WarnConstructionCleanup();
-                        if (constructionDisposeRefusals >= 120) constructionRequest = null;
-                    }
+                    constructionDisposeRefusals++;
+                    WarnConstructionCleanup();
+                    if (constructionDisposeRefusals >= 120) constructionRequest = null;
                 }
-                if (constructionDownload != null)
+            }
+            finally { cleaningConstruction = false; }
+        }
+
+        private static void TryDisposeConstructionDownload()
+        {
+            if (constructionDownload == null) return;
+            cleaningConstruction = true;
+            try
+            {
+                try { constructionDownload.Dispose(); constructionDownload = null; }
+                catch (Exception)
                 {
-                    try { constructionDownload.Dispose(); constructionDownload = null; }
-                    catch (Exception)
-                    {
-                        constructionDisposeRefusals++;
-                        WarnConstructionCleanup();
-                        if (constructionDisposeRefusals >= 120) constructionDownload = null;
-                    }
+                    constructionDisposeRefusals++;
+                    WarnConstructionCleanup();
+                    if (constructionDisposeRefusals >= 120) constructionDownload = null;
                 }
-                bool cleared = constructionRequest == null && constructionDownload == null;
-                if (cleared) { warnedConstruction = false; constructionDisposeRefusals = 0; }
-                return cleared;
             }
             finally { cleaningConstruction = false; }
         }
@@ -132,7 +155,12 @@ namespace SlopCity
         {
             message = null;
 #if UNITY_WEBGL && !UNITY_EDITOR
-            if (!mobileWebBudget || !TryGetKnownVideoDimensions(video, out int width, out int height)) return true;
+            if (!mobileWebBudget) return true;
+            if (!TryGetKnownVideoDimensions(video, out int width, out int height))
+            {
+                message = "Clip dimensions are not verified for this browser's safe decode limit.";
+                return false;
+            }
             if (width <= MobileWebVideoEdge && height <= MobileWebVideoEdge) return true;
             message = "Clip resolution exceeds this browser's safe decode limit.";
             return false;
@@ -157,11 +185,21 @@ namespace SlopCity
             }
             protected override byte[] GetData()
             {
-                if (result == null)
+                if (result != null) return result;
+                int length = (int)bytes.Length;
+                if (length <= 0) return result = Array.Empty<byte>();
+                if (bytes.TryGetBuffer(out ArraySegment<byte> segment) && segment.Count == length && segment.Array != null)
                 {
-                    result = bytes.ToArray();
-                    bytes.SetLength(0); bytes.Capacity = 0;
+                    if (segment.Offset == 0 && segment.Array.Length == length) result = segment.Array;
+                    else
+                    {
+                        result = new byte[length];
+                        Buffer.BlockCopy(segment.Array, segment.Offset, result, 0, length);
+                    }
                 }
+                else result = bytes.ToArray();
+                bytes.SetLength(0);
+                bytes.Capacity = 0;
                 return result;
             }
             protected override string GetText() => Encoding.UTF8.GetString(GetData());

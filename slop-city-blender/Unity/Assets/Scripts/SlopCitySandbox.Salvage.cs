@@ -33,6 +33,16 @@ namespace SlopCity
         private readonly List<string> deadSalvageIds = new List<string>();
         private readonly RaycastHit[] salvageHits = new RaycastHit[64];
         private readonly Collider[] placementHits = new Collider[64];
+        private readonly List<InventoryEntry> transactionInventory = new List<InventoryEntry>(InventoryCapacity);
+        private readonly List<InventoryEntry> transactionPawnStock = new List<InventoryEntry>(PawnStockCapacity);
+        private readonly Dictionary<string, SalvageRecord> transactionRecords = new Dictionary<string, SalvageRecord>();
+        private InventoryEntry[] savedInventory = Array.Empty<InventoryEntry>();
+        private InventoryEntry[] savedPawnStock = Array.Empty<InventoryEntry>();
+        private SalvageRecord[] savedObjects = Array.Empty<SalvageRecord>();
+        private int salvageAimFrame = -1;
+        private Camera salvageAimCamera;
+        private SalvageTarget salvageAimTarget;
+        private bool salvageAimFound;
         public event Action<SlopCityPawnCounter> InventoryRequested;
         public event Action InventoryChanged;
         public int InventorySlotsUsed => inventory.Count;
@@ -95,9 +105,20 @@ namespace SlopCity
         private static bool ValidObjectId(string id) => !string.IsNullOrEmpty(id) && id.Length < 2048;
         private void CaptureSalvageProgress()
         {
-            progress.inventory = inventory.ToArray();
-            progress.pawnStock = pawnStock.ToArray();
-            progress.objects = new SalvageRecord[objectRecords.Count]; objectRecords.Values.CopyTo(progress.objects, 0);
+            if (savedInventory.Length != inventory.Count) Array.Resize(ref savedInventory, inventory.Count);
+            for (int index = 0; index < inventory.Count; index++) savedInventory[index] = inventory[index].Copy();
+            progress.inventory = savedInventory;
+            if (savedPawnStock.Length != pawnStock.Count) Array.Resize(ref savedPawnStock, pawnStock.Count);
+            for (int index = 0; index < pawnStock.Count; index++) savedPawnStock[index] = pawnStock[index].Copy();
+            progress.pawnStock = savedPawnStock;
+            if (savedObjects.Length != objectRecords.Count) Array.Resize(ref savedObjects, objectRecords.Count);
+            objectRecords.Values.CopyTo(savedObjects, 0);
+            progress.objects = savedObjects;
+        }
+        private void InvalidateSalvageAimCache()
+        {
+            salvageAimFrame = -1;
+            salvageAimCamera = null;
         }
         private void RefreshSalvage() => RefreshSalvage(true);
 
@@ -121,6 +142,7 @@ namespace SlopCity
             foreach (string id in deadSalvageIds) salvageObjects.Remove(id);
             if (!fullScan) return;
             foreach (SlopCitySalvageItem item in FindObjectsByType<SlopCitySalvageItem>(FindObjectsInactive.Include, FindObjectsSortMode.None)) AdmitSalvage(item);
+            InvalidateSalvageAimCache();
         }
         private void AdmitSalvage(SlopCitySalvageItem item)
         {
@@ -203,11 +225,17 @@ namespace SlopCity
         { HandleUniqueWorldItemEvent(action, id, category, amount); }
         private bool FindSalvage(Camera camera, out SalvageTarget target)
         {
+            if (salvageAimFrame == Time.frameCount && ReferenceEquals(camera, salvageAimCamera))
+            {
+                target = salvageAimTarget;
+                return salvageAimFound;
+            }
             target = default;
-            if (!camera || !user || IsDriving || IsTravelling) return false;
+            if (!camera || !user || IsDriving || IsTravelling)
+                return StoreSalvageAim(camera, target, false);
             Ray ray = new Ray(camera.transform.position, camera.transform.forward);
             int count = Physics.RaycastNonAlloc(ray, salvageHits, Reach, ~0, QueryTriggerInteraction.Ignore);
-            if (count == salvageHits.Length) return false; // Never pick through unknown truncated blockers.
+            if (count == salvageHits.Length) return StoreSalvageAim(camera, target, false); // Never pick through unknown truncated blockers.
             float nearest = Reach; SlopCitySalvageItem solid = null;
             for (int index = 0; index < count; index++)
             {
@@ -236,7 +264,15 @@ namespace SlopCity
                 if (distance > best) continue;
                 best = distance; target = new SalvageTarget { item = item, surface = surface, part = part, id = id, distance = distance };
             }
-            return target.item;
+            return StoreSalvageAim(camera, target, target.item);
+        }
+        private bool StoreSalvageAim(Camera camera, SalvageTarget target, bool found)
+        {
+            salvageAimFrame = Time.frameCount;
+            salvageAimCamera = camera;
+            salvageAimTarget = target;
+            salvageAimFound = found;
+            return found;
         }
         public void SalvageOptions(Camera camera, out bool clean, out bool take)
             => SalvageOptions(camera, out clean, out take, out _);
@@ -314,9 +350,12 @@ namespace SlopCity
         }
         private bool ObjectTransaction(Func<bool> mutation, Action restoreWorld = null)
         {
-            var oldInventory = new List<InventoryEntry>(inventory.Count); foreach (var entry in inventory) oldInventory.Add(entry.Copy());
-            var oldRecords = new Dictionary<string, SalvageRecord>(); foreach (var pair in objectRecords) oldRecords[pair.Key] = pair.Value.Copy();
-            var oldStock = new List<InventoryEntry>(pawnStock.Count); foreach (var entry in pawnStock) oldStock.Add(entry.Copy());
+            transactionInventory.Clear();
+            foreach (InventoryEntry entry in inventory) transactionInventory.Add(entry.Copy());
+            transactionRecords.Clear();
+            foreach (KeyValuePair<string, SalvageRecord> pair in objectRecords) transactionRecords[pair.Key] = pair.Value.Copy();
+            transactionPawnStock.Clear();
+            foreach (InventoryEntry entry in pawnStock) transactionPawnStock.Add(entry.Copy());
             UniqueJobState oldJobs = CaptureUniqueJobState(); int oldCredits = progress.credits;
             string key = recoverySave ? SaveKey + ".recovery" : SaveKey;
             string previousJson; bool existed;
@@ -329,8 +368,10 @@ namespace SlopCity
             {
                 if (!committed)
                 {
-                    inventory.Clear(); inventory.AddRange(oldInventory); pawnStock.Clear(); pawnStock.AddRange(oldStock); objectRecords.Clear(); foreach (var pair in oldRecords) objectRecords[pair.Key] = pair.Value;
+                    inventory.Clear(); inventory.AddRange(transactionInventory); pawnStock.Clear(); pawnStock.AddRange(transactionPawnStock);
+                    objectRecords.Clear(); foreach (KeyValuePair<string, SalvageRecord> pair in transactionRecords) objectRecords[pair.Key] = pair.Value;
                     progress.credits = oldCredits; RestoreUniqueJobState(oldJobs); CaptureSalvageProgress();
+                    InvalidateSalvageAimCache();
                     try { restoreWorld?.Invoke(); } catch (Exception exception) { Debug.LogWarning("SLOP CITY: Visual rollback will retry on admission: " + exception.Message); }
                     // A platform Save exception can follow SetString; restore the pending cache too.
                     try { if (existed) PlayerPrefs.SetString(key, previousJson); else PlayerPrefs.DeleteKey(key); PlayerPrefs.Save(); } catch (Exception exception) { Debug.LogWarning("SLOP CITY: Storage cache rollback unavailable: " + exception.Message); }

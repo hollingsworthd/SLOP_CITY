@@ -158,7 +158,7 @@ namespace SlopCity
             {
                 entranceCandidates.Clear();
                 foreach (SlopCityInteractable entrance in FindObjectsByType<SlopCityInteractable>(FindObjectsSortMode.None))
-                    if (entrance) entranceCandidates.Add(entrance);
+                    if (entrance && entrance.Destination) entranceCandidates.Add(entrance);
                 nextEntranceScanAt = Time.unscaledTime + 10f;
             }
             foreach (SlopCityInteractable entrance in entranceCandidates)

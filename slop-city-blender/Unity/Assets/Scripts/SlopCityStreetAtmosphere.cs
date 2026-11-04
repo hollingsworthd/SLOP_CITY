@@ -29,9 +29,25 @@ namespace SlopCity
         private void Build()
         {
             SlopCityInteriorGeometry.Initialize();
-            Material iron = FindMaterial("BrushedSteel") ?? SlopCityInteriorGeometry.Metal;
-            Material enamel = FindMaterial("TransitEnamel") ?? SlopCityInteriorGeometry.Floor;
-            Material dark = FindMaterial("Rubber") ?? iron;
+            Material iron = null, enamel = null, dark = null;
+            foreach (Renderer renderer in GetComponentsInChildren<Renderer>(true))
+            {
+                Material[] materials = renderer.sharedMaterials;
+                for (int index = 0; index < materials.Length; index++)
+                {
+                    Material material = materials[index];
+                    if (!material) continue;
+                    string label = material.name;
+                    if (label.EndsWith(" [Luminous City]", StringComparison.Ordinal))
+                        label = label.Substring(0, label.Length - " [Luminous City]".Length);
+                    if (iron == null && label == "BrushedSteel") iron = material;
+                    else if (enamel == null && label == "TransitEnamel") enamel = material;
+                    else if (dark == null && label == "Rubber") dark = material;
+                }
+            }
+            iron ??= SlopCityInteriorGeometry.Metal;
+            enamel ??= SlopCityInteriorGeometry.Floor;
+            dark ??= iron;
             // Snapshot before adding children. All detail belongs to the metric building,
             // so final street replotting carries it along with its real entrance and floors.
             SlopCityMetricFacade[] buildings = GetComponentsInChildren<SlopCityMetricFacade>(true);
@@ -106,15 +122,20 @@ namespace SlopCity
                 throw;
             }
             prepared = true;
+#if !UNITY_EDITOR
+            RetireDetailMeshCpu();
+#endif
         }
 
-        private Material FindMaterial(string name)
+#if !UNITY_EDITOR
+        private void Awake() { if (prepared) RetireDetailMeshCpu(); }
+
+        private void RetireDetailMeshCpu()
         {
-            foreach (Renderer renderer in GetComponentsInChildren<Renderer>(true))
-                foreach (Material material in renderer.sharedMaterials)
-                    if (material && (material.name == name || material.name == name + " [Luminous City]")) return material;
-            return null;
+            foreach (Mesh mesh in ownedMeshes)
+                if (mesh && mesh.isReadable) mesh.UploadMeshData(true);
         }
+#endif
 
         private void OnDestroy()
         {

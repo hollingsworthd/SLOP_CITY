@@ -24,8 +24,9 @@ namespace SlopCity
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Install()
         {
+            // Retain the sampler for this scene only; production play does not
+            // need a cross-load DontDestroyOnLoad monitor outside explicit QA.
             var monitor = new GameObject("SlopCityBrowserPerformance");
-            DontDestroyOnLoad(monitor);
             monitor.AddComponent<SlopCityWebPerformance>();
         }
 

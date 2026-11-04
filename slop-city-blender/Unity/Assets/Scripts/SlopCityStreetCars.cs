@@ -15,6 +15,7 @@ namespace SlopCity
         private readonly List<SlopCityInteractable> cars = new List<SlopCityInteractable>(MaximumAdditionalCars);
         private readonly Collider[] overlaps = new Collider[128];
         private readonly RaycastHit[] groundHits = new RaycastHit[32];
+        private SlopCityDoor[] cachedDoors;
         private bool initialized;
         public int AddedCarCount => cars.Count;
         public IReadOnlyList<SlopCityInteractable> Cars => cars;
@@ -57,13 +58,15 @@ namespace SlopCity
                     && !item.transform.IsChildOf(transform) && SafeTemplate(item.transform)) templates.Add(item);
             if (templates.Count == 0) return;
             templates.Sort((a, b) => string.CompareOrdinal(TemplateKey(a.transform), TemplateKey(b.transform)));
-            SlopCityDoor[] doors = city.GetComponentsInChildren<SlopCityDoor>();
+            if (cachedDoors == null) cachedDoors = city.GetComponentsInChildren<SlopCityDoor>();
             SlopCityCrowd crowd = city.GetComponentInChildren<SlopCityCrowd>();
             Physics.SyncTransforms();
             foreach (int districtIndex in Districts)
             {
-                SlopCityDistrict district = Array.Find(districts,
-                    item => item.transform.parent == city && item.Index == districtIndex);
+                SlopCityDistrict district = null;
+                foreach (SlopCityDistrict item in districts)
+                    if (item.transform.parent == city && item.Index == districtIndex)
+                    { district = item; break; }
                 if (!district) continue;
                 SlopCityInteractable source = templates[cars.Count % templates.Count];
                 Bounds envelope = CarBounds(source.transform);
@@ -76,7 +79,7 @@ namespace SlopCity
                     if (!TryGround(candidate, out Vector3 ground) || Mathf.Abs(ground.y - district.transform.position.y) > .35f) continue;
                     Vector3 position = ground + Vector3.up * .02f;
                     if (!ClearBody(position, rotation, envelope) || !Supported(position, rotation, envelope)
-                        || !ClearDoors(position, rotation, envelope, doors)
+                        || !ClearDoors(position, rotation, envelope, cachedDoors)
                         || !ClearRoutes(position, rotation, envelope, crowd)
                         || !ClearExit(position, rotation)
                         || !ClearDeparture(position, rotation, envelope)) continue;
@@ -244,6 +247,7 @@ namespace SlopCity
 
         private static bool ClearDoors(Vector3 position, Quaternion rotation, Bounds envelope, SlopCityDoor[] doors)
         {
+            if (doors == null) return true;
             Quaternion inverse = Quaternion.Inverse(rotation);
             foreach (SlopCityDoor door in doors)
             {

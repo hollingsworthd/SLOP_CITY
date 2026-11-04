@@ -29,22 +29,43 @@ mergeInto(LibraryManager.library, {
     delete decoder.slopCityLinearVideoHeight;
   },
 
-  $slopCityPauseVideoForGraphicsLoss__deps: ['$videoInstances', 'JS_Video_Pause'],
+  $slopCityPauseVideoForGraphicsLoss__deps: ['$videoInstances', '$slopCityRetiredVideoDecoders', '$slopCityCancelCreatedVideoFrame', 'JS_Video_Pause'],
   $slopCityPauseVideoForGraphicsLoss__postset: "Module['slopCityPauseVideoForGraphicsLoss'] = slopCityPauseVideoForGraphicsLoss;",
   $slopCityPauseVideoForGraphicsLoss: function () {
     // Reuse the playback bridge: pause also cancels stale playback intent,
     // pending gesture retries and Unity's loop poll interval for each decoder.
     var firstError;
+    function pauseDecoder(id, video, active) {
+      try {
+        if (video.slopCitySourceAdmissionTimer) {
+          clearTimeout(video.slopCitySourceAdmissionTimer);
+          delete video.slopCitySourceAdmissionTimer;
+        }
+        try { slopCityCancelCreatedVideoFrame(video); } catch (_) {}
+        if (active) _JS_Video_Pause(id);
+        else {
+          try { video.pause(); } catch (_) {}
+          try { video.muted = true; } catch (_) {}
+        }
+      } catch (error) { if (!firstError) firstError = error; }
+    }
     Object.keys(videoInstances).forEach(function (video) {
-      try { _JS_Video_Pause(video); } catch (error) { if (!firstError) firstError = error; }
+      pauseDecoder(video, videoInstances[video], true);
+    });
+    Object.keys(slopCityRetiredVideoDecoders).forEach(function (id) {
+      pauseDecoder(id, slopCityRetiredVideoDecoders[id], false);
     });
     if (firstError) throw firstError;
   },
 
   $slopCityFailedVideoTextures: [],
   $slopCityDrainFailedVideoTextures__deps: ['$slopCityFailedVideoTextures'],
-  $slopCityDrainFailedVideoTextures: function () {
-    for (var i = slopCityFailedVideoTextures.length - 1; i >= 0; --i) {
+  $slopCityDrainFailedVideoTextures: function (budgetMs) {
+    if (typeof budgetMs !== 'number') budgetMs = 8;
+    var deadline = Date.now() + budgetMs;
+    var attempts = 0;
+    for (var i = slopCityFailedVideoTextures.length - 1; i >= 0 && attempts < 16 && Date.now() < deadline; --i) {
+      ++attempts;
       try {
         if (typeof GLctx !== 'undefined' && GLctx && !GLctx.isContextLost()) GLctx.deleteTexture(slopCityFailedVideoTextures[i]);
         slopCityFailedVideoTextures.splice(i, 1);
@@ -98,42 +119,48 @@ mergeInto(LibraryManager.library, {
   },
   $slopCityPrepareLinearVideo__deps: ['$s2lProgram', '$s2lVertexPositionNDC', '$s2lVBO', '$s2lFBO', '$slopCityVideoVertexArray', '$slopCityPendingVideoGraphics', '$slopCityDrainPendingVideoGraphics'],
   $slopCityPrepareLinearVideo: function () {
-    if (!slopCityDrainPendingVideoGraphics()) return false;
+    slopCityDrainPendingVideoGraphics();
     if (s2lProgram && s2lVBO && s2lFBO && slopCityVideoVertexArray) return true;
     var previousBuffer = GLctx.getParameter(GLctx.ARRAY_BUFFER_BINDING);
     var owner = {};
     slopCityPendingVideoGraphics.push(owner);
+    var failed = false;
+    var attribute = s2lVertexPositionNDC;
     try {
       if (!s2lProgram) {
         owner.vertex = GLctx.createShader(GLctx.VERTEX_SHADER);
         owner.fragment = GLctx.createShader(GLctx.FRAGMENT_SHADER);
         owner.program = GLctx.createProgram();
-        if (!owner.vertex || !owner.fragment || !owner.program) return false;
+        if (!owner.vertex || !owner.fragment || !owner.program) { failed = true; return false; }
         GLctx.shaderSource(owner.vertex, 'precision lowp float; attribute vec2 vertexPositionNDC; varying vec2 vTexCoords; void main(){vTexCoords=vertexPositionNDC*vec2(0.5)+vec2(0.5);gl_Position=vec4(vertexPositionNDC,0.0,1.0);}');
         GLctx.shaderSource(owner.fragment, 'precision mediump float; uniform sampler2D colorMap; varying vec2 vTexCoords; void main(){vec4 c=texture2D(colorMap,vTexCoords);gl_FragColor=vec4(c.rgb*(c.rgb*(c.rgb*0.305306011+0.682171111)+0.012522878),c.a);}');
         GLctx.compileShader(owner.vertex); GLctx.compileShader(owner.fragment);
-        if (!GLctx.getShaderParameter(owner.vertex, GLctx.COMPILE_STATUS) || !GLctx.getShaderParameter(owner.fragment, GLctx.COMPILE_STATUS)) return false;
+        if (!GLctx.getShaderParameter(owner.vertex, GLctx.COMPILE_STATUS) || !GLctx.getShaderParameter(owner.fragment, GLctx.COMPILE_STATUS)) { failed = true; return false; }
         GLctx.attachShader(owner.program, owner.vertex); GLctx.attachShader(owner.program, owner.fragment); GLctx.linkProgram(owner.program);
-        if (!GLctx.getProgramParameter(owner.program, GLctx.LINK_STATUS)) return false;
+        if (!GLctx.getProgramParameter(owner.program, GLctx.LINK_STATUS)) { failed = true; return false; }
         var attribute = GLctx.getAttribLocation(owner.program, 'vertexPositionNDC');
-        if (attribute < 0) return false;
+        if (attribute < 0) { failed = true; return false; }
       }
       if (!s2lVBO) {
         owner.buffer = GLctx.createBuffer();
-        if (!owner.buffer) return false;
+        if (!owner.buffer) { failed = true; return false; }
         GLctx.bindBuffer(GLctx.ARRAY_BUFFER, owner.buffer);
         GLctx.bufferData(GLctx.ARRAY_BUFFER, new Float32Array([1,1,-1,1,-1,-1,-1,-1,1,-1,1,1]), GLctx.STATIC_DRAW);
       }
-      if (!s2lFBO) { owner.framebuffer = GLctx.createFramebuffer(); if (!owner.framebuffer) return false; }
+      if (!s2lFBO) { owner.framebuffer = GLctx.createFramebuffer(); if (!owner.framebuffer) { failed = true; return false; } }
       // The Web build requires WebGL2. A private VAO keeps Unity's enabled
       // attributes, pointers and instancing divisors out of the conversion draw.
-      if (!slopCityVideoVertexArray) { owner.vertexArray = GLctx.createVertexArray(); if (!owner.vertexArray) return false; }
+      if (!slopCityVideoVertexArray) { owner.vertexArray = GLctx.createVertexArray(); if (!owner.vertexArray) { failed = true; return false; } }
       if (owner.program) { s2lProgram = owner.program; s2lVertexPositionNDC = attribute; owner.program = null; }
       if (owner.buffer) { s2lVBO = owner.buffer; owner.buffer = null; }
       if (owner.framebuffer) { s2lFBO = owner.framebuffer; owner.framebuffer = null; }
       if (owner.vertexArray) { slopCityVideoVertexArray = owner.vertexArray; owner.vertexArray = null; }
       return true;
-    } catch (_) { return false; } finally {
+    } catch (_) { failed = true; return false; } finally {
+      if (failed) {
+        var index = slopCityPendingVideoGraphics.indexOf(owner);
+        if (index >= 0) slopCityPendingVideoGraphics.splice(index, 1);
+      }
       // Cleanup candidates separately: a refused shader deletion must not lose
       // the remaining program/buffer/FBO owners or admit another allocation.
       slopCityDrainPendingVideoGraphics();
@@ -176,32 +203,57 @@ mergeInto(LibraryManager.library, {
     if (firstError) throw firstError;
   },
 
+  $slopCityVideoGraphicsScratch: {
+    unpackNames: null,
+    unpack: null,
+    capabilities: null,
+    enabled: null,
+    viewport: null,
+    colorMask: null
+  },
+
   $slopCityCaptureVideoGraphicsState: function (linear) {
+    var scratch = slopCityVideoGraphicsScratch;
+    if (!scratch.unpackNames) {
+      scratch.unpackNames = [GLctx.UNPACK_FLIP_Y_WEBGL, GLctx.UNPACK_PREMULTIPLY_ALPHA_WEBGL,
+        GLctx.UNPACK_COLORSPACE_CONVERSION_WEBGL, GLctx.UNPACK_ALIGNMENT,
+        GLctx.UNPACK_ROW_LENGTH, GLctx.UNPACK_IMAGE_HEIGHT, GLctx.UNPACK_SKIP_PIXELS,
+        GLctx.UNPACK_SKIP_ROWS, GLctx.UNPACK_SKIP_IMAGES];
+      scratch.unpack = new Array(scratch.unpackNames.length);
+      scratch.capabilities = [GLctx.BLEND, GLctx.CULL_FACE, GLctx.DEPTH_TEST, GLctx.STENCIL_TEST,
+        GLctx.SCISSOR_TEST, GLctx.RASTERIZER_DISCARD, GLctx.SAMPLE_COVERAGE, GLctx.SAMPLE_ALPHA_TO_COVERAGE];
+      scratch.enabled = new Array(scratch.capabilities.length);
+      scratch.viewport = new Array(4);
+      scratch.colorMask = new Array(4);
+    }
     var state = {
       activeTexture: GLctx.getParameter(GLctx.ACTIVE_TEXTURE),
       activeBinding: GLctx.getParameter(GLctx.TEXTURE_BINDING_2D),
       unpackBuffer: GLctx.getParameter(GLctx.PIXEL_UNPACK_BUFFER_BINDING),
-      unpackNames: [GLctx.UNPACK_FLIP_Y_WEBGL, GLctx.UNPACK_PREMULTIPLY_ALPHA_WEBGL,
-        GLctx.UNPACK_COLORSPACE_CONVERSION_WEBGL, GLctx.UNPACK_ALIGNMENT,
-        GLctx.UNPACK_ROW_LENGTH, GLctx.UNPACK_IMAGE_HEIGHT, GLctx.UNPACK_SKIP_PIXELS,
-        GLctx.UNPACK_SKIP_ROWS, GLctx.UNPACK_SKIP_IMAGES],
-      unpack: [], linear: !!linear
+      unpackNames: scratch.unpackNames,
+      unpack: scratch.unpack,
+      linear: !!linear
     };
     for (var i = 0; i < state.unpackNames.length; ++i)
-      state.unpack.push(GLctx.getParameter(state.unpackNames[i]));
+      state.unpack[i] = GLctx.getParameter(state.unpackNames[i]);
     if (linear) {
-      state.viewport = GLctx.getParameter(GLctx.VIEWPORT);
+      var viewport = GLctx.getParameter(GLctx.VIEWPORT);
+      state.viewport = scratch.viewport;
+      state.viewport[0] = viewport[0]; state.viewport[1] = viewport[1];
+      state.viewport[2] = viewport[2]; state.viewport[3] = viewport[3];
       state.drawFramebuffer = GLctx.getParameter(GLctx.DRAW_FRAMEBUFFER_BINDING);
       state.readFramebuffer = GLctx.getParameter(GLctx.READ_FRAMEBUFFER_BINDING);
       state.program = GLctx.getParameter(GLctx.CURRENT_PROGRAM);
       state.arrayBuffer = GLctx.getParameter(GLctx.ARRAY_BUFFER_BINDING);
       state.vertexArray = GLctx.getParameter(GLctx.VERTEX_ARRAY_BINDING);
-      state.colorMask = GLctx.getParameter(GLctx.COLOR_WRITEMASK);
-      state.capabilities = [GLctx.BLEND, GLctx.CULL_FACE, GLctx.DEPTH_TEST, GLctx.STENCIL_TEST,
-        GLctx.SCISSOR_TEST, GLctx.RASTERIZER_DISCARD, GLctx.SAMPLE_COVERAGE, GLctx.SAMPLE_ALPHA_TO_COVERAGE];
-      state.enabled = [];
+      var colorMask = GLctx.getParameter(GLctx.COLOR_WRITEMASK);
+      state.colorMask = scratch.colorMask;
+      state.colorMask[0] = colorMask[0]; state.colorMask[1] = colorMask[1];
+      state.colorMask[2] = colorMask[2]; state.colorMask[3] = colorMask[3];
+      state.capabilities = scratch.capabilities;
+      state.enabled = scratch.enabled;
       for (var j = 0; j < state.capabilities.length; ++j)
-        state.enabled.push(GLctx.isEnabled(state.capabilities[j]));
+        state.enabled[j] = GLctx.isEnabled(state.capabilities[j]);
     }
     GLctx.activeTexture(GLctx.TEXTURE0);
     state.texture0 = GLctx.getParameter(GLctx.TEXTURE_BINDING_2D);
@@ -291,10 +343,14 @@ mergeInto(LibraryManager.library, {
       // source-sized upload when Safari rejects the copy.
       if (defineStorage || resized) {
         GLctx.texImage2D(GLctx.TEXTURE_2D, 0, format, format, GLctx.UNSIGNED_BYTE, v);
+        v.slopCityWebkitFullUpload = true;
+      } else if (v.slopCityWebkitFullUpload) {
+        GLctx.texImage2D(GLctx.TEXTURE_2D, 0, format, format, GLctx.UNSIGNED_BYTE, v);
       } else {
         try {
           GLctx.texSubImage2D(GLctx.TEXTURE_2D, 0, 0, 0, format, GLctx.UNSIGNED_BYTE, v);
         } catch (subError) {
+          v.slopCityWebkitFullUpload = true;
           GLctx.texImage2D(GLctx.TEXTURE_2D, 0, format, format, GLctx.UNSIGNED_BYTE, v);
         }
       }
@@ -332,7 +388,7 @@ mergeInto(LibraryManager.library, {
 
   JS_Video_UpdateToTexture__proxy: 'sync',
   JS_Video_UpdateToTexture__sig: 'iiii',
-  JS_Video_UpdateToTexture__deps: ['$videoInstances', '$s2lTexture', '$jsIsWebkit', '$slopCityWebkitVideoUpload', '$slopCityNativeVideoUpdateToTexture', '$slopCityPauseVideoForGraphicsLoss', '$slopCityPrepareLinearVideo', '$slopCityUsesMobileVideo', '$slopCityVideoVertexArray', '$slopCityCaptureVideoGraphicsState', '$slopCityRestoreVideoGraphicsState', '$slopCityDetachVideoDestination', '$slopCityFailedVideoTextures', '$slopCityWatchVideoPicture', '$slopCityHasCurrentVideoPicture', 'JS_Video_Pause'],
+  JS_Video_UpdateToTexture__deps: ['$videoInstances', '$s2lTexture', '$jsIsWebkit', '$slopCityWebkitVideoUpload', '$slopCityNativeVideoUpdateToTexture', '$slopCityPauseVideoForGraphicsLoss', '$slopCityPrepareLinearVideo', '$slopCityUsesMobileVideo', '$slopCityVideoVertexArray', '$slopCityVideoGraphicsScratch', '$slopCityCaptureVideoGraphicsState', '$slopCityRestoreVideoGraphicsState', '$slopCityDetachVideoDestination', '$slopCityFailedVideoTextures', '$slopCityWatchVideoPicture', '$slopCityHasCurrentVideoPicture', '$slopCityFailVideoPlayback', 'JS_Video_Pause'],
   JS_Video_UpdateToTexture: function (video, texture, adjustToLinearspace) {
     var decoder = videoInstances[video];
     if (!decoder || decoder.slopCityDestroyed || typeof GLctx === 'undefined' || !GLctx || GLctx.isContextLost()) return false;
@@ -362,8 +418,7 @@ mergeInto(LibraryManager.library, {
       || (!destinationChanged && samePlaybackTime
         && (!mobileDecoder || decoder.paused || decoder.ended))) return false;
     if (decoder.videoWidth > (slopCityUsesMobileVideo(decoder) ? 480 : 4096) || decoder.videoHeight > (slopCityUsesMobileVideo(decoder) ? 480 : 4096) || decoder.videoWidth * decoder.videoHeight > 8388608) {
-      _JS_Video_Pause(video);
-      decoder.slopCityTextureRetryAfter = Date.now() + 30000;
+      slopCityFailVideoPlayback(video, decoder, decoder.slopCityPlaybackIntent);
       return false;
     }
     if (adjustToLinearspace && !slopCityPrepareLinearVideo()) {

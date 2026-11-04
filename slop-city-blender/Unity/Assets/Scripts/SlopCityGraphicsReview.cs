@@ -34,6 +34,10 @@ namespace SlopCity
         {
             bool audio = Array.IndexOf(Environment.GetCommandLineArgs(), AudioFlag) >= 0;
             if (!audio && Array.IndexOf(Environment.GetCommandLineArgs(), Flag) < 0) return;
+#if UNITY_WEBGL && !UNITY_EDITOR
+            // Unattended graphics/audio review requires the standalone player.
+            return;
+#endif
             var owner = new GameObject("SlopCity_ExplicitGraphicsReview");
             DontDestroyOnLoad(owner);
             var review = owner.AddComponent<SlopCityGraphicsReview>();

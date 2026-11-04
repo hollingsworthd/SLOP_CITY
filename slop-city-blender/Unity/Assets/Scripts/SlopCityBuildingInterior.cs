@@ -37,6 +37,7 @@ namespace SlopCity
         private const int MaximumRetainedUtilityFloors = 8;
         private readonly List<SlopCityElevatorButton> routeButtons = new List<SlopCityElevatorButton>();
         private readonly List<Mesh> ownedFacadeMeshes = new List<Mesh>();
+        private readonly Dictionary<Mesh, int> ownedFacadeMeshDestroyRefusals = new Dictionary<Mesh, int>();
         private readonly Dictionary<MeshFilter, Mesh> originalFacadeMeshes = new Dictionary<MeshFilter, Mesh>();
         private Vector3 preservedLanding;
         public string BuildingId { get; private set; }
@@ -261,7 +262,7 @@ namespace SlopCity
                 }
                 else BuildRoof(root, size);
                 foreach (SlopCityInteractable item in root.GetComponentsInChildren<SlopCityInteractable>())
-                    if (utilityState.TryGetValue(floor + "/" + item.name, out SlopCityInteractable.SessionState state)) item.RestoreSessionState(state);
+                    if (utilityState.TryGetValue(UtilitySessionKey(floor, item), out SlopCityInteractable.SessionState state)) item.RestoreSessionState(state);
                 world.GeometryChanged();
                 loaded[floor] = root;
                 TouchUtilityFloor(floor);
@@ -288,7 +289,7 @@ namespace SlopCity
                 // retirement actually finishes so a retry cannot duplicate this room.
                 if (root)
                     foreach (SlopCityInteractable item in root.GetComponentsInChildren<SlopCityInteractable>())
-                        utilityState[floor + "/" + item.name] = item.CaptureSessionState();
+                        utilityState[UtilitySessionKey(floor, item)] = item.CaptureSessionState();
                 SlopCityInteriorPopulation.RetireFloor(this, floor);
                 if (root)
                 {
@@ -303,7 +304,22 @@ namespace SlopCity
                 world.GeometryChanged();
                 TouchUtilityFloor(floor);
             }
-            catch (Exception error) { WarnFloorRetirement(error); }
+            catch (Exception error)
+            {
+                WarnFloorRetirement(error);
+                if (loaded.TryGetValue(floor, out Transform stuck) && stuck)
+                {
+                    loaded.Remove(floor);
+                    if (!failedFloorRoot)
+                    {
+                        failedFloorRoot = stuck;
+                        failedFloorIndex = floor;
+                    }
+                    DeferFloorAdmission();
+                    world.GeometryChanged();
+                }
+                ReleaseFailedFloor();
+            }
         }
 
         private void TouchUtilityFloor(int floor)
@@ -571,14 +587,21 @@ namespace SlopCity
         internal bool ContainsHorizontal(Vector3 point, float expansion)
         {
             Vector3 local = transform.InverseTransformPoint(point);
-            return Mathf.Abs(local.x) <= lowerSize.x / 2 + expansion && Mathf.Abs(local.z) <= lowerSize.y / 2 + expansion;
+            float hx = Mathf.Max(lowerSize.x, upperSize.x) / 2 + expansion;
+            float hz = Mathf.Max(lowerSize.y, upperSize.y) / 2 + expansion;
+            return Mathf.Abs(local.x) <= hx && Mathf.Abs(local.z) <= hz;
         }
         internal float HorizontalDistanceSquared(Vector3 point)
         {
             Vector3 local = transform.InverseTransformPoint(point);
-            float x = Mathf.Max(0, Mathf.Abs(local.x) - lowerSize.x / 2), z = Mathf.Max(0, Mathf.Abs(local.z) - lowerSize.y / 2);
+            float hx = Mathf.Max(lowerSize.x, upperSize.x) / 2f;
+            float hz = Mathf.Max(lowerSize.y, upperSize.y) / 2f;
+            float x = Mathf.Max(0, Mathf.Abs(local.x) - hx), z = Mathf.Max(0, Mathf.Abs(local.z) - hz);
             return x * x + z * z;
         }
+
+        private static string UtilitySessionKey(int floor, SlopCityInteractable item)
+            => floor + "/" + item.name + "#" + item.GetInstanceID();
 
         private void BuildShell()
         {
@@ -876,13 +899,38 @@ namespace SlopCity
             originalFacadeMeshes.Clear();
             for (int index = ownedFacadeMeshes.Count - 1; index >= 0; index--)
             {
+                Mesh mesh = ownedFacadeMeshes[index];
+                if (!mesh) { ownedFacadeMeshes.RemoveAt(index); ownedFacadeMeshDestroyRefusals.Remove(mesh); continue; }
+                if (TryDestroyOwnedFacadeMesh(mesh))
+                {
+                    ownedFacadeMeshes.RemoveAt(index);
+                    ownedFacadeMeshDestroyRefusals.Remove(mesh);
+                }
+            }
+        }
+
+        private bool TryDestroyOwnedFacadeMesh(Mesh mesh)
+        {
+            try
+            {
+                if (Application.isPlaying) Destroy(mesh);
+                else DestroyImmediate(mesh);
+                return true;
+            }
+            catch (Exception error)
+            {
+                WarnFloorRetirement(error);
+                int refusals = 1;
+                if (ownedFacadeMeshDestroyRefusals.TryGetValue(mesh, out int previous)) refusals = previous + 1;
+                ownedFacadeMeshDestroyRefusals[mesh] = refusals;
+                if (refusals < 120) return false;
                 try
                 {
-                    Mesh mesh = ownedFacadeMeshes[index];
-                    if (mesh) { if (Application.isPlaying) Destroy(mesh); else DestroyImmediate(mesh); }
-                    ownedFacadeMeshes.RemoveAt(index);
+                    if (Application.isEditor && !Application.isPlaying) DestroyImmediate(mesh);
+                    else DestroyImmediate(mesh, true);
+                    return true;
                 }
-                catch (Exception error) { WarnFloorRetirement(error); }
+                catch (Exception immediateError) { WarnFloorRetirement(immediateError); return false; }
             }
         }
 

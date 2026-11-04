@@ -121,8 +121,11 @@ namespace SlopCity
             EndCleanProp();
         }
 
+        private bool detailBatched;
         public void Decorate(string id, string role, string roomLabel, int side, float width, float south, float north, int variation)
         {
+            if (groups.Count > 0 || meshes.Count > 0 || cleanProps.Count > 0) Release();
+            detailBatched = false;
             roomId = id;
             propOrdinals.Clear();
             float x = side * (1.21f + width - 1.45f);
@@ -231,6 +234,7 @@ namespace SlopCity
 
         public void Complete()
         {
+            if (detailBatched) return;
             foreach (var group in groups)
             {
                 Mesh mesh = new Mesh();
@@ -251,6 +255,7 @@ namespace SlopCity
                 renderer.receiveShadows = true;
             }
             groups.Clear();
+            detailBatched = true;
         }
 
         // Floor retirement also runs in editor/build scenes, where this ordinary
@@ -258,6 +263,7 @@ namespace SlopCity
         // Release native batch ownership explicitly at that same disposal boundary.
         internal void Release()
         {
+            detailBatched = false;
             bool meshPendingAfterImmediate = false;
             // Native cleanup of one batch must not skip every remaining room owner.
             for (int index = meshes.Count - 1; index >= 0; index--)

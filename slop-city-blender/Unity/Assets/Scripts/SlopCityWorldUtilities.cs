@@ -26,19 +26,8 @@ namespace SlopCity
                 { city = district.transform.parent; break; }
             if (!city) { UtilityCount = RareCount = JunctionCount = MaintenancePanelCount = 0; return; }
 
-            JunctionCount = 0;
-            foreach (SlopCityInteractable item in city.GetComponentsInChildren<SlopCityInteractable>())
-            {
-                if (!item || item.name != "Utility_Junction") continue;
-                SlopCityDistrict district = item.GetComponentInParent<SlopCityDistrict>();
-                if (!district) continue;
-                // The builder's cabinet door faces south; its center is never a destination.
-                item.Configure(SlopCityInteractionKind.Terminal, district.DisplayName + " municipal signal junction");
-                item.ConfigureInteractionPoint(item.transform.TransformPoint(new Vector3(0, .9f, -.25f)));
-                JunctionCount++;
-            }
-
             Transform existing = city.Find(RootName);
+            TallyUtilityJunctions(city, configure: existing == null);
             if (existing) { Count(existing); return; }
             Physics.SyncTransforms();
             Transform root = new GameObject(RootName).transform;
@@ -103,6 +92,24 @@ namespace SlopCity
                 else UnityEngine.Object.DestroyImmediate(root.gameObject);
                 UtilityCount = RareCount = MaintenancePanelCount = 0;
                 Debug.LogWarning("City utilities could not fully initialize: " + error.Message);
+            }
+        }
+
+        private static void TallyUtilityJunctions(Transform city, bool configure)
+        {
+            JunctionCount = 0;
+            foreach (SlopCityInteractable item in city.GetComponentsInChildren<SlopCityInteractable>())
+            {
+                if (!item || item.name != "Utility_Junction") continue;
+                SlopCityDistrict district = item.GetComponentInParent<SlopCityDistrict>();
+                if (!district) continue;
+                if (configure)
+                {
+                    // The builder's cabinet door faces south; its center is never a destination.
+                    item.Configure(SlopCityInteractionKind.Terminal, district.DisplayName + " municipal signal junction");
+                    item.ConfigureInteractionPoint(item.transform.TransformPoint(new Vector3(0, .9f, -.25f)));
+                }
+                JunctionCount++;
             }
         }
 

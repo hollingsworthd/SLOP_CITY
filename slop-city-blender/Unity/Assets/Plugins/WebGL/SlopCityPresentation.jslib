@@ -11,13 +11,15 @@ mergeInto(LibraryManager.library, {
     return Math.max(1, value);
   },
   SlopCity_ReportPresentation: function (displayWidth, displayHeight, worldWidth, worldHeight, pixelRatio) {
-    window.slopCityPresentation = {
-      displayWidth: displayWidth,
-      displayHeight: displayHeight,
-      worldWidth: worldWidth,
-      worldHeight: worldHeight,
-      pixelRatio: pixelRatio,
-      worldScale: worldHeight / Math.max(1, displayHeight)
-    };
+    var presentation = window.slopCityPresentation;
+    if (!presentation) {
+      presentation = window.slopCityPresentation = {};
+    }
+    presentation.displayWidth = displayWidth;
+    presentation.displayHeight = displayHeight;
+    presentation.worldWidth = worldWidth;
+    presentation.worldHeight = worldHeight;
+    presentation.pixelRatio = pixelRatio;
+    presentation.worldScale = worldHeight / Math.max(1, displayHeight);
   }
 });

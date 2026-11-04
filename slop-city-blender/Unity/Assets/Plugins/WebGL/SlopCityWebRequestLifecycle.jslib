@@ -18,10 +18,26 @@ mergeInto(LibraryManager.library, {
   $slopCityWebRequestTokens: {},
   $slopCityWebRequestsDisposed: false,
   $slopCityRetiredWebRequests: [],
+  $slopCityRetiredWebRequestCap: 64,
+
+  $slopCityEnforceRetiredWebRequestCap__deps: ['$slopCityRetiredWebRequests'],
+  $slopCityEnforceRetiredWebRequestCap: function () {
+    for (var i = slopCityRetiredWebRequests.length - 1; i >= 0; --i) {
+      if (slopCityRetiredWebRequests[i].cleanupFailed) slopCityRetiredWebRequests.splice(i, 1);
+    }
+    while (slopCityRetiredWebRequests.length > slopCityRetiredWebRequestCap) slopCityRetiredWebRequests.shift();
+  },
+
+  $slopCityClearWebRequestTimer__deps: ['$wr'],
+  $slopCityClearWebRequestTimer: function (id) {
+    if (wr.timer[id]) { clearTimeout(wr.timer[id]); delete wr.timer[id]; }
+  },
 
   $slopCityForgetRetiredWebRequest__deps: ['$slopCityRetiredWebRequests'],
-  $slopCityForgetRetiredWebRequest: function (token) {
-    if (!token.retired || !token.transportRetired || token.progressDepth || token.options.tempBuffer) return;
+  $slopCityForgetRetiredWebRequest: function (token, force) {
+    if (!token.retired || !token.transportRetired || token.progressDepth || token.options.tempBuffer) {
+      if (!(force && token.cleanupFailed)) return;
+    }
     var index = slopCityRetiredWebRequests.indexOf(token);
     if (index >= 0) slopCityRetiredWebRequests.splice(index, 1);
   },
@@ -37,6 +53,19 @@ mergeInto(LibraryManager.library, {
       var reader = response.body.getReader(), received = 0;
       var declared = Number(response.headers.get('Content-Length'));
       var total = Number.isSafeInteger(declared) && declared >= 0 && declared <= 2147483647 ? declared : 0;
+      var pendingLoaded = 0;
+      var pendingChunk = null;
+      var lastProgressAt = 0;
+      function flushProgress(force) {
+        if (!pendingLoaded && !force) return;
+        var now = Date.now();
+        if (!force && total === 0 && now - lastProgressAt < 100 && pendingLoaded < 65536) return;
+        lastProgressAt = now;
+        onProgress({type:'progress', response:response, total:Math.max(total, received), loaded:received,
+          lengthComputable:total > 0, chunk:pendingChunk});
+        pendingLoaded = 0;
+        pendingChunk = null;
+      }
       return (async function () {
         var complete = false;
         try {
@@ -46,9 +75,11 @@ mergeInto(LibraryManager.library, {
             if (!(next.value instanceof Uint8Array) || next.value.byteLength > 2147483647 - received)
               throw new Error('Invalid streaming response length.');
             received += next.value.byteLength;
-            onProgress({type:'progress', response:response, total:Math.max(total, received), loaded:received,
-              lengthComputable:total > 0, chunk:next.value});
+            pendingLoaded += next.value.byteLength;
+            pendingChunk = next.value;
+            flushProgress(false);
           }
+          flushProgress(true);
           onProgress({type:'load', response:response, total:received, loaded:received, lengthComputable:total > 0, chunk:null});
           response.parsedBody = new Uint8Array(0);
           response.slopCityStreamedLength = received;
@@ -82,10 +113,11 @@ mergeInto(LibraryManager.library, {
 
   JS_WebRequest_Create__proxy: 'sync',
   JS_WebRequest_Create__sig: 'iii',
-  JS_WebRequest_Create__deps: ['$slopCityNativeWebRequestCreate', '$slopCityWebRequestsDisposed', '$slopCityRetiredWebRequests', '$slopCityAbortOwnedWebRequests'],
+  JS_WebRequest_Create__deps: ['$slopCityNativeWebRequestCreate', '$slopCityWebRequestsDisposed', '$slopCityEnforceRetiredWebRequestCap'],
   JS_WebRequest_Create: function (url, method) {
-    return slopCityWebRequestsDisposed || slopCityRetiredWebRequests.some(function (token) { return token.cleanupFailed; })
-      ? 0 : slopCityNativeWebRequestCreate(url, method);
+    if (slopCityWebRequestsDisposed) return 0;
+    slopCityEnforceRetiredWebRequestCap();
+    return slopCityNativeWebRequestCreate(url, method);
   },
 
   $slopCityAllocateRequestBytes__deps: ['malloc'],
@@ -122,10 +154,11 @@ mergeInto(LibraryManager.library, {
     slopCityForgetRetiredWebRequest(token);
   },
 
-  $slopCityRetireWebRequest__deps: ['$slopCityReleaseWebRequestBuffer', '$slopCityFinishWebRequestOptions', '$slopCityRetiredWebRequests', '$slopCityForgetRetiredWebRequest'],
+  $slopCityRetireWebRequest__deps: ['$slopCityReleaseWebRequestBuffer', '$slopCityFinishWebRequestOptions', '$slopCityRetiredWebRequests', '$slopCityForgetRetiredWebRequest', '$slopCityClearWebRequestTimer', '$slopCityEnforceRetiredWebRequestCap'],
   $slopCityRetireWebRequest: function (token) {
     if (slopCityRetiredWebRequests.indexOf(token) < 0) slopCityRetiredWebRequests.push(token);
     token.retired = true;
+    slopCityClearWebRequestTimer(token.id);
     try {
       if (!token.transportDone && token.controller && !token.controller.signal.aborted)
         token.controller.abort();
@@ -135,6 +168,7 @@ mergeInto(LibraryManager.library, {
       throw error;
     } finally { slopCityFinishWebRequestOptions(token); slopCityReleaseWebRequestBuffer(token); }
     slopCityForgetRetiredWebRequest(token);
+    slopCityEnforceRetiredWebRequestCap();
   },
 
   $slopCityStopRequestSession__deps: ['$slopCityAbortOwnedWebRequests'],
@@ -150,7 +184,7 @@ mergeInto(LibraryManager.library, {
 
   JS_WebRequest_Send__proxy: 'sync',
   JS_WebRequest_Send__sig: 'viiiiii',
-  JS_WebRequest_Send__deps: ['$wr', '$slopCityWebRequestTokens', '$slopCityWebRequestsDisposed', '$slopCityRetireWebRequest', '$slopCityOwnsWebRequest', '$slopCityReleaseWebRequestBuffer', '$slopCityAllocateRequestBytes', '$slopCityStopRequestSession', '$slopCityWebResponseMetadata', '$slopCityFinishWebRequestOptions', '$slopCityInstallStreamingRequestReader', '$getWasmTableEntry', '$lengthBytesUTF8', '$stringToUTF8', 'free', '$slopCityAbortOwnedWebRequests'],
+  JS_WebRequest_Send__deps: ['$wr', '$slopCityWebRequestTokens', '$slopCityWebRequestsDisposed', '$slopCityRetireWebRequest', '$slopCityOwnsWebRequest', '$slopCityReleaseWebRequestBuffer', '$slopCityAllocateRequestBytes', '$slopCityStopRequestSession', '$slopCityWebResponseMetadata', '$slopCityFinishWebRequestOptions', '$slopCityInstallStreamingRequestReader', '$getWasmTableEntry', '$lengthBytesUTF8', '$stringToUTF8', 'free', '$slopCityAbortOwnedWebRequests', '$slopCityClearWebRequestTimer'],
   JS_WebRequest_Send: function (id, ptr, length, arg, response, progress) {
     var options = wr.requests[id];
     if (!options || slopCityWebRequestsDisposed) return;
@@ -161,9 +195,7 @@ mergeInto(LibraryManager.library, {
     if (previous) slopCityRetireWebRequest(previous);
     // Aborting the previous transport may synchronously start another request.
     if (!slopCityOwnsWebRequest(token)) return;
-    function clearTimer() {
-      if (wr.timer[id]) { clearTimeout(wr.timer[id]); delete wr.timer[id]; }
-    }
+    function clearTimer() { slopCityClearWebRequestTimer(id); }
     function failed(error) {
       if (!slopCityOwnsWebRequest(token) || token.finished) return;
       token.finished = true; clearTimer(); slopCityFinishWebRequestOptions(token); slopCityReleaseWebRequestBuffer(token);
@@ -202,7 +234,10 @@ mergeInto(LibraryManager.library, {
             // Reentrant progress must not resize a pointer an outer callback
             // still borrows. That rare nested call gets its own temporary.
             local = token.progressDepth > 0;
-            if (local) pointer = slopCityAllocateRequestBytes(size);
+            if (local && options.tempBuffer && options.tempBufferSize >= size) {
+              pointer = options.tempBuffer;
+              local = false;
+            } else if (local) pointer = slopCityAllocateRequestBytes(size);
             else {
               if (!options.tempBuffer || options.tempBufferSize < size) {
                 var capacity = Math.max(1024, size);
@@ -237,7 +272,11 @@ mergeInto(LibraryManager.library, {
     try {
       if (!Number.isSafeInteger(length) || length < 0 || !Number.isSafeInteger(ptr) || ptr < 0
         || (length && (ptr === 0 || ptr > HEAPU8.byteLength - length))) throw new Error('Invalid request body range.');
-      if (length) options.init.body = new Blob([HEAPU8.subarray(ptr, ptr + length)]);
+      if (length) {
+        var bodyBytes = new Uint8Array(length);
+        bodyBytes.set(HEAPU8.subarray(ptr, ptr + length));
+        options.init.body = new Blob([bodyBytes]);
+      }
       if (options.timeout) wr.timer[id] = setTimeout(function () { options.isTimedOut = true; token.controller.abort(); }, options.timeout);
       var transport = Module.fetchWithProgress;
       if (Module.companyName && Module.productName && Module.cachedFetch) {
@@ -294,8 +333,9 @@ mergeInto(LibraryManager.library, {
 
   JS_WebRequest_Release__proxy: 'sync',
   JS_WebRequest_Release__sig: 'vi',
-  JS_WebRequest_Release__deps: ['$slopCityNativeWebRequestRelease', '$slopCityWebRequestTokens', '$slopCityRetireWebRequest'],
+  JS_WebRequest_Release__deps: ['$slopCityNativeWebRequestRelease', '$slopCityWebRequestTokens', '$slopCityRetireWebRequest', '$slopCityClearWebRequestTimer'],
   JS_WebRequest_Release: function (id) {
+    slopCityClearWebRequestTimer(id);
     var token = slopCityWebRequestTokens[id];
     // Remove the native identity before abort listeners can synchronously
     // create a new generation at this ID; never erase that replacement later.
@@ -303,5 +343,12 @@ mergeInto(LibraryManager.library, {
     if (slopCityWebRequestTokens[id] === token) delete slopCityWebRequestTokens[id];
     try { return slopCityNativeWebRequestRelease(id); }
     finally { if (token) slopCityRetireWebRequest(token); }
+  },
+
+  $slopCityDisposeOwnedNetwork__deps: ['$slopCityAbortOwnedWebRequests'],
+  $slopCityDisposeOwnedNetwork__postset: "Module['slopCityDisposeOwnedNetwork'] = slopCityDisposeOwnedNetwork;",
+  $slopCityDisposeOwnedNetwork: function () {
+    // Upstream has no network bridge; keep template dispose hook explicit.
+    try { slopCityAbortOwnedWebRequests(); } catch (error) { console.warn('Session network cleanup failed.', error); }
   }
 });

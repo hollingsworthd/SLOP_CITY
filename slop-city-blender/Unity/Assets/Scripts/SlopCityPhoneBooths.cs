@@ -7,6 +7,7 @@ namespace SlopCity
     public sealed class SlopCityPhoneBooths : MonoBehaviour
     {
         private Material enamel,metal,display,glass,ivory;
+        private readonly System.Collections.Generic.List<SlopCityCityScreen> boothScreens = new System.Collections.Generic.List<SlopCityCityScreen>();
         public static SlopCityPhoneBooths Ensure(SlopCityFirstPerson player)
         {
             var existing=FindFirstObjectByType<SlopCityPhoneBooths>();if(existing)return existing;
@@ -41,6 +42,7 @@ namespace SlopCity
                 GlazedFace(booth.transform,"Right_glass_panel",new Vector3(.35f,0,0),-90);
                 Box(booth.transform,"Roof_cornice",new Vector3(0,2.26f,0),new Vector3(.82f,.10f,.78f),enamel);
                 var crown=GameObject.CreatePrimitive(PrimitiveType.Sphere);crown.name="Domed_red_crown";crown.transform.SetParent(booth.transform,false);
+                var crownCollider=crown.GetComponent<Collider>();if(crownCollider){if(Application.isPlaying)Destroy(crownCollider);else DestroyImmediate(crownCollider);}
                 crown.transform.localPosition=new Vector3(0,2.30f,0);crown.transform.localScale=new Vector3(.80f,.28f,.74f);
                 crown.GetComponent<Renderer>().sharedMaterial=enamel;crown.GetComponent<Renderer>().shadowCastingMode=ShadowCastingMode.Off;
                 TelephoneSign(booth.transform,new Vector3(0,2.12f,-.355f),0);
@@ -54,9 +56,11 @@ namespace SlopCity
 
                 Box(booth.transform,"Booth_TV_Case",new Vector3(0,1.82f,.095f),new Vector3(.50f,.32f,.16f),metal);
                 var picture=GameObject.CreatePrimitive(PrimitiveType.Quad);picture.name="Booth_TV_Picture";picture.transform.SetParent(booth.transform,false);
+                var pictureCollider=picture.GetComponent<Collider>();if(pictureCollider){if(Application.isPlaying)Destroy(pictureCollider);else DestroyImmediate(pictureCollider);}
                 picture.transform.localPosition=new Vector3(0,1.82f,.008f);picture.transform.localScale=new Vector3(.44f,.2475f,1);
                 var renderer=picture.GetComponent<Renderer>();renderer.sharedMaterial=metal;renderer.shadowCastingMode=ShadowCastingMode.Off;
                 var screen=picture.AddComponent<SlopCityCityScreen>();screen.Configure(renderer,2,10f);
+                boothScreens.Add(screen);
                 if(SlopCityCityMedia.Instance)SlopCityCityMedia.Instance.RegisterScreen(screen);
                 // Shared cleaning owns the finish; the booth cannot be taken and
                 // the TV picture remains protected from dust/material overrides.
@@ -86,9 +90,17 @@ namespace SlopCity
         private static void Box(Transform parent,string name,Vector3 point,Vector3 size,Material material)
         {
             var shape=GameObject.CreatePrimitive(PrimitiveType.Cube);shape.name=name;shape.transform.SetParent(parent,false);shape.transform.localPosition=point;shape.transform.localScale=size;
+            var collider=shape.GetComponent<Collider>();if(collider){if(Application.isPlaying)Destroy(collider);else DestroyImmediate(collider);}
             var renderer=shape.GetComponent<Renderer>();renderer.sharedMaterial=material;renderer.shadowCastingMode=ShadowCastingMode.Off;
         }
-        private void OnDestroy(){Release(enamel);Release(metal);Release(display);Release(glass);Release(ivory);}
+        private void OnDestroy()
+        {
+            SlopCityCityMedia media=SlopCityCityMedia.Instance;
+            foreach(SlopCityCityScreen screen in boothScreens)
+                if(media&&screen)media.UnregisterScreen(screen);
+            boothScreens.Clear();
+            Release(enamel);Release(metal);Release(display);Release(glass);Release(ivory);
+        }
         private static void Release(Material value){if(!value)return;if(Application.isPlaying)Destroy(value);else DestroyImmediate(value);}
     }
 }

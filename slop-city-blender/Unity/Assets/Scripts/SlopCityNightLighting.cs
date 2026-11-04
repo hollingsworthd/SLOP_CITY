@@ -12,6 +12,7 @@ namespace SlopCity
         [SerializeField] private Material originalSky;
         [SerializeField] private Material eveningSky;
         private bool ownsEveningSky;
+        private Light cachedDaylight;
         public Material OriginalSky => originalSky;
         public Material EveningSky => eveningSky;
 
@@ -37,15 +38,23 @@ namespace SlopCity
             RenderSettings.fogColor = new Color(.30f, .41f, .54f, 1);
             RenderSettings.fogDensity = .0026f;
 
-            foreach (GameObject root in gameObject.scene.GetRootGameObjects())
-                foreach (Light lamp in root.GetComponentsInChildren<Light>(true))
-                    if (lamp.type == LightType.Directional && lamp.name == "BlueHour_Daylight")
-                    {
-                        lamp.intensity = DaylightIntensity;
-                        lamp.color = new Color(.87f, .94f, 1f, 1);
-                        lamp.transform.rotation = Quaternion.Euler(SunElevation, -58f, 0);
-                        RenderSettings.sun = lamp;
-                    }
+            if (!cachedDaylight)
+            {
+                foreach (GameObject root in gameObject.scene.GetRootGameObjects())
+                {
+                    foreach (Light lamp in root.GetComponentsInChildren<Light>(true))
+                        if (lamp.type == LightType.Directional && lamp.name == "BlueHour_Daylight")
+                        { cachedDaylight = lamp; break; }
+                    if (cachedDaylight) break;
+                }
+            }
+            if (cachedDaylight)
+            {
+                cachedDaylight.intensity = DaylightIntensity;
+                cachedDaylight.color = new Color(.87f, .94f, 1f, 1);
+                cachedDaylight.transform.rotation = Quaternion.Euler(SunElevation, -58f, 0);
+                RenderSettings.sun = cachedDaylight;
+            }
 
             foreach (Light lamp in GetComponentsInChildren<Light>(true))
             {

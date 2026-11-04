@@ -59,6 +59,8 @@ namespace SlopCity
         private float visualRetryAfter;
         private int failedVisualFloor = -1;
         private int visualAdmissionAfterFrame;
+        private int lastVisualRefreshFloor = -1, lastVisualRefreshTarget = -1;
+        private bool lastVisualRefreshMoving;
         private float blockedSeconds, obstructionRetry;
         private bool returningFromObstruction, obstructed;
 
@@ -185,6 +187,7 @@ namespace SlopCity
         internal void RefreshLandingVisuals()
         {
             if (!streamLandingVisuals || landingRoots == null || Time.unscaledTime < visualRetryAfter) return;
+            int refreshFloor = moving ? targetFloor : currentFloor;
             if (failedVisualFloor >= 0)
             {
                 // A wanted landing can still contain a half-built list. Retry its
@@ -211,6 +214,16 @@ namespace SlopCity
                     if (Mathf.Abs(elevations[index] - height) < Mathf.Abs(elevations[nearest] - height)) nearest = index;
                 wantedLandingVisuals.Add(nearest);
             }
+            if (failedVisualFloor < 0)
+            {
+                bool allPresent = true;
+                foreach (int floor in wantedLandingVisuals)
+                    if (!landingVisuals.ContainsKey(floor)) { allPresent = false; break; }
+                if (allPresent && landingVisuals.Count <= MaximumVisualLandings
+                    && lastVisualRefreshFloor == currentFloor && lastVisualRefreshTarget == refreshFloor
+                    && lastVisualRefreshMoving == moving)
+                    return;
+            }
             retireLandingVisuals.Clear();
             foreach (int floor in landingVisuals.Keys)
                 if (!wantedLandingVisuals.Contains(floor)) retireLandingVisuals.Add(floor);
@@ -223,6 +236,19 @@ namespace SlopCity
                     return; // Retained native objects still occupy the visual budget.
                 }
                 landingVisuals.Remove(floor);
+            }
+            while (landingVisuals.Count > MaximumVisualLandings)
+            {
+                int farthest = -1; float distance = -1f;
+                foreach (var pair in landingVisuals)
+                {
+                    if (wantedLandingVisuals.Contains(pair.Key)) continue;
+                    float score = Mathf.Abs(elevations[pair.Key] - elevations[currentFloor]);
+                    if (score > distance) { distance = score; farthest = pair.Key; }
+                }
+                if (farthest < 0) break;
+                if (!RetireLandingVisuals(landingVisuals[farthest])) { visualRetryAfter = Time.unscaledTime + 5f; return; }
+                landingVisuals.Remove(farthest);
             }
             if (Application.isPlaying && Time.frameCount < visualAdmissionAfterFrame)
             {
@@ -269,27 +295,51 @@ namespace SlopCity
                 }
             }
             if (changed) visualGeometryChanged?.Invoke();
+            lastVisualRefreshFloor = currentFloor;
+            lastVisualRefreshTarget = refreshFloor;
+            lastVisualRefreshMoving = moving;
         }
+
+        private readonly Dictionary<GameObject, int> landingVisualDestroyRefusals = new Dictionary<GameObject, int>();
 
         private bool RetireLandingVisuals(List<GameObject> visuals)
         {
             for (int index = visuals.Count - 1; index >= 0; index--)
             {
+                GameObject visual = visuals[index];
+                if (!visual) { visuals.RemoveAt(index); landingVisualDestroyRefusals.Remove(visual); continue; }
                 try
                 {
-                    if (visuals[index])
-                    {
-                        if (Application.isPlaying) visualAdmissionAfterFrame = Mathf.Max(visualAdmissionAfterFrame, Time.frameCount + 1);
-                        SlopCityInteriorGeometry.Dispose(visuals[index]);
-                    }
+                    if (Application.isPlaying) visualAdmissionAfterFrame = Mathf.Max(visualAdmissionAfterFrame, Time.frameCount + 1);
+                    SlopCityInteriorGeometry.Dispose(visual);
                     visuals.RemoveAt(index);
+                    landingVisualDestroyRefusals.Remove(visual);
                 }
                 catch (Exception error)
                 {
+                    int refusals = 1;
+                    if (landingVisualDestroyRefusals.TryGetValue(visual, out int previous)) refusals = previous + 1;
+                    landingVisualDestroyRefusals[visual] = refusals;
                     if (!visualAllocationWarning)
                     {
                         visualAllocationWarning = true;
                         Debug.LogWarning("Elevator landing cleanup is pending: " + error.GetType().Name, this);
+                    }
+                    if (refusals < 120) continue;
+                    try
+                    {
+                        if (Application.isEditor && !Application.isPlaying) DestroyImmediate(visual);
+                        else DestroyImmediate(visual, true);
+                        visuals.RemoveAt(index);
+                        landingVisualDestroyRefusals.Remove(visual);
+                    }
+                    catch (Exception immediateError)
+                    {
+                        if (!visualAllocationWarning)
+                        {
+                            visualAllocationWarning = true;
+                            Debug.LogWarning("Elevator landing cleanup is pending: " + immediateError.GetType().Name, this);
+                        }
                     }
                 }
             }

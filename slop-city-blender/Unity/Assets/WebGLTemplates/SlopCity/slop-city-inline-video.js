@@ -216,12 +216,28 @@
     if (root && root.content && root.content.querySelectorAll) root.content.querySelectorAll("video").forEach(configure);
     return root;
   }
+  function markupMayContainVideo(value) {
+    if (value == null) return false;
+    const text = String(value);
+    return /<\s*video[\s>/]/i.test(text);
+  }
   const documents = window.Document ? window.Document.prototype : document;
-  ["createElement", "createElementNS"].forEach(function (name) {
-    patchMethod(documents, name, function (original) {
-      return function () { return configureTree(original.apply(this, arguments)); };
-    });
+  patchMethod(documents, "createElement", function (original) {
+    return function (localName) {
+      const element = original.apply(this, arguments);
+      if (isVideo(element)) configure(element);
+      return element;
+    };
   });
+  if (documents.createElementNS) {
+    patchMethod(documents, "createElementNS", function (original) {
+      return function (namespaceURI, localName) {
+        const element = original.apply(this, arguments);
+        if (isVideo(element)) configure(element);
+        return element;
+      };
+    });
+  }
   patchMethod(window.Node && window.Node.prototype, "cloneNode", function (original) {
     return function () { return configureTree(original.apply(this, arguments)); };
   });
@@ -235,7 +251,7 @@
       set: function (value) {
         const parent = this.parentNode;
         descriptor.set.call(this, value);
-        configureTree(name === "outerHTML" ? parent : this);
+        if (markupMayContainVideo(value)) configureTree(name === "outerHTML" ? parent : this);
       }
     }));
   });

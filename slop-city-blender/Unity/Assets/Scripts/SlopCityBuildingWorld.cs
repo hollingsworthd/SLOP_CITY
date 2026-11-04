@@ -42,8 +42,23 @@ namespace SlopCity
         private Material streetAsphalt, streetPavement;
         private readonly Dictionary<SlopCityBuildingInterior, float> streamingRetry = new Dictionary<SlopCityBuildingInterior, float>();
         private readonly List<SlopCityBuildingInterior> streamingRetryDrop = new List<SlopCityBuildingInterior>();
+        private int cachedActiveFloorCount = -1;
+        private readonly Dictionary<Mesh, int> streetMeshDestroyRefusals = new Dictionary<Mesh, int>();
         public IReadOnlyList<SlopCityBuildingInterior> Buildings => buildings;
-        public int ActiveFloorCount => buildings.Where(item => item).Sum(item => item.LoadedFloorCount);
+        public int ActiveFloorCount
+        {
+            get
+            {
+                if (cachedActiveFloorCount < 0)
+                {
+                    cachedActiveFloorCount = 0;
+                    for (int index = 0; index < buildings.Count; index++)
+                        if (buildings[index]) cachedActiveFloorCount += buildings[index].LoadedFloorCount;
+                }
+                return cachedActiveFloorCount;
+            }
+        }
+        internal void InvalidateActiveFloorCount() => cachedActiveFloorCount = -1;
         public int ActiveElevatorCount => buildings.Count(item => item && item.Elevator && item.Elevator.gameObject.activeInHierarchy)
             + stationLifts.Count(item => item && item.gameObject.activeInHierarchy);
         public IReadOnlyList<SlopCityElevator> StationLifts => stationLifts;
@@ -144,7 +159,7 @@ namespace SlopCity
             TryFlushInteractionRefresh();
         }
 
-        public void GeometryChanged() { geometryChanged = true; }
+        public void GeometryChanged() { InvalidateActiveFloorCount(); geometryChanged = true; }
 
         private void PruneStreamingRetry()
         {
@@ -190,9 +205,9 @@ namespace SlopCity
         private void HandleLowMemory()
         {
 #if UNITY_WEBGL && !UNITY_EDITOR
-            // Trim on the normal streaming tick, never while another floor is being built.
             constrainedBrowser = true;
             nextRefresh = 0;
+            if (player && installed) RefreshStreaming();
 #endif
         }
 
@@ -247,7 +262,8 @@ namespace SlopCity
                     if (streamingRetry.TryGetValue(item, out float retryAt) && Time.unscaledTime < retryAt) continue;
                     try
                     {
-                    if (!item.Elevator && buildings.Count(other => other.IsTower && other.Elevator) >= TowerBudget)
+                    if (!item.Elevator && buildings.Count(other => other.IsTower && other.Elevator
+                        && other.Elevator.gameObject.activeInHierarchy) >= TowerBudget)
                     {
                         // The previous tower can remain pinned or retain a failed
                         // retirement. Its rooms still occupy the shared budget;
@@ -283,8 +299,8 @@ namespace SlopCity
             bool pinA = a.Elevator && a.Elevator.PlayerInside, pinB = b.Elevator && b.Elevator.PlayerInside;
             if (pinA != pinB) return pinA ? -1 : 1;
             float distanceA = a.HorizontalDistanceSquared(streamingFeet), distanceB = b.HorizontalDistanceSquared(streamingFeet);
-            if (a.Elevator) distanceA = Mathf.Max(0f, distanceA - 4f);
-            if (b.Elevator) distanceB = Mathf.Max(0f, distanceB - 4f);
+            if (a.Elevator) distanceA = Mathf.Max(0f, distanceA - 16f);
+            if (b.Elevator) distanceB = Mathf.Max(0f, distanceB - 16f);
             return distanceA.CompareTo(distanceB);
         }
 
@@ -302,7 +318,7 @@ namespace SlopCity
             // every side of the tower's large footprint: ordinary street walking
             // beside its back wall must not allocate a car and furnished rooms.
             if (item.ContainsInterior(feet) || (lift && (lift.PlayerInside || !lift.CanUnload))) return true;
-            if (player && player.IsSeated) return false;
+            if (player && player.IsSeated && !item.ContainsInterior(feet) && !(lift && lift.PlayerInside)) return false;
             Vector3 delta = feet - item.EntranceFeet;
             if (Mathf.Abs(delta.y) > EntranceVerticalMargin) return false;
             float radius = lift ? EntranceRetentionDistance : EntranceAdmissionDistance;
@@ -369,20 +385,29 @@ namespace SlopCity
                 // Preserve only the exterior intervals, including all original side/rib/glazing details.
                 Vector3 originalPosition = bridge.position, originalScale = bridge.localScale, direction = bridge.forward;
                 var segments = new List<Transform> { bridge };
-                for (int i = 1; i < clear.Count; i++)
+                try
                 {
-                    Transform copy = UnityEngine.Object.Instantiate(bridge.gameObject, bridge.parent).transform;
-                    copy.name = "Runtime_ExteriorBridge_Segment_" + bridge.name + "_" + i;
-                    segments.Add(copy);
+                    for (int i = 1; i < clear.Count; i++)
+                    {
+                        Transform copy = UnityEngine.Object.Instantiate(bridge.gameObject, bridge.parent).transform;
+                        copy.name = "Runtime_ExteriorBridge_Segment_" + bridge.name + "_" + i;
+                        segments.Add(copy);
+                    }
+                    for (int i = 0; i < clear.Count; i++)
+                    {
+                        Transform segment = segments[i]; Vector2 interval = clear[i];
+                        segment.position = originalPosition + direction * ((interval.x + interval.y) / 2);
+                        Vector3 scale = originalScale; scale.z *= (interval.y - interval.x) / length; segment.localScale = scale;
+                        SlopCityInteriorGeometry.Root(segment, "Runtime_Exterior_Clip_Metadata");
+                    }
+                    changed++;
                 }
-                for (int i = 0; i < clear.Count; i++)
+                catch
                 {
-                    Transform segment = segments[i]; Vector2 interval = clear[i];
-                    segment.position = originalPosition + direction * ((interval.x + interval.y) / 2);
-                    Vector3 scale = originalScale; scale.z *= (interval.y - interval.x) / length; segment.localScale = scale;
-                    SlopCityInteriorGeometry.Root(segment, "Runtime_Exterior_Clip_Metadata");
+                    for (int i = 1; i < segments.Count; i++)
+                        if (segments[i]) SlopCityInteriorGeometry.Dispose(segments[i].gameObject);
+                    throw;
                 }
-                changed++;
             }
             return changed;
         }
@@ -516,9 +541,41 @@ namespace SlopCity
 
         private void OnDestroy()
         {
-            foreach (Mesh mesh in streetMeshes)
-                if (mesh) { if (Application.isPlaying) Destroy(mesh); else DestroyImmediate(mesh); }
+            for (int index = streetMeshes.Count - 1; index >= 0; index--)
+            {
+                Mesh mesh = streetMeshes[index];
+                if (!mesh) { streetMeshes.RemoveAt(index); streetMeshDestroyRefusals.Remove(mesh); continue; }
+                if (TryDestroyStreetMesh(mesh))
+                {
+                    streetMeshes.RemoveAt(index);
+                    streetMeshDestroyRefusals.Remove(mesh);
+                }
+            }
             streetMeshes.Clear();
+        }
+
+        private bool TryDestroyStreetMesh(Mesh mesh)
+        {
+            try
+            {
+                if (Application.isPlaying) Destroy(mesh);
+                else DestroyImmediate(mesh);
+                return true;
+            }
+            catch (Exception)
+            {
+                int refusals = 1;
+                if (streetMeshDestroyRefusals.TryGetValue(mesh, out int previous)) refusals = previous + 1;
+                streetMeshDestroyRefusals[mesh] = refusals;
+                if (refusals < 120) return false;
+                try
+                {
+                    if (Application.isEditor && !Application.isPlaying) DestroyImmediate(mesh);
+                    else DestroyImmediate(mesh, true);
+                    return true;
+                }
+                catch (Exception) { return false; }
+            }
         }
     }
 

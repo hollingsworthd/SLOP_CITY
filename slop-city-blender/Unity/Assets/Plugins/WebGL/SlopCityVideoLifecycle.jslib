@@ -11,6 +11,7 @@ mergeInto(LibraryManager.library, {
   // a held walking gesture. One source-free element is not an active decoder.
   $slopCityReusableIOSVideo: null,
   $slopCityRetiredVideoDecoders: {},
+  $slopCityRetiredVideoDrainInterval: null,
   $slopCityVideoAdmissionLimit: 480,
   $slopCityDisposingVideoDecoders: false,
   $slopCityNativeVideoDestroy: LibraryManager.library.JS_Video_Destroy,
@@ -133,13 +134,34 @@ mergeInto(LibraryManager.library, {
     } catch (_) { return false; }
   },
 
-  $slopCityDrainRetiredVideoDecoders__deps: ['$slopCityRetiredVideoDecoders', '$slopCityRetireVideoDecoder', '$slopCityReusableIOSVideo', '$slopCityUsesIOSVideo', '$slopCityDisposingVideoDecoders', '$slopCityCanReuseVideoElement'],
+  $slopCityArmRetiredVideoDrain__deps: ['$slopCityRetiredVideoDecoders', '$slopCityRetiredVideoDrainInterval', '$slopCityDrainRetiredVideoDecoders'],
+  $slopCityArmRetiredVideoDrain: function () {
+    if (Object.keys(slopCityRetiredVideoDecoders).length === 0) {
+      if (slopCityRetiredVideoDrainInterval) {
+        clearInterval(slopCityRetiredVideoDrainInterval);
+        slopCityRetiredVideoDrainInterval = null;
+      }
+      return;
+    }
+    if (slopCityRetiredVideoDrainInterval) return;
+    if (typeof setInterval !== 'function') return;
+    slopCityRetiredVideoDrainInterval = setInterval(function () {
+      slopCityDrainRetiredVideoDecoders();
+      if (Object.keys(slopCityRetiredVideoDecoders).length === 0 && slopCityRetiredVideoDrainInterval) {
+        clearInterval(slopCityRetiredVideoDrainInterval);
+        slopCityRetiredVideoDrainInterval = null;
+      }
+    }, 250);
+  },
+
+  $slopCityDrainRetiredVideoDecoders__deps: ['$slopCityRetiredVideoDecoders', '$slopCityRetireVideoDecoder', '$slopCityReusableIOSVideo', '$slopCityUsesIOSVideo', '$slopCityDisposingVideoDecoders', '$slopCityCanReuseVideoElement', '$slopCityReleaseVideoTexture', '$slopCityArmRetiredVideoDrain'],
   $slopCityDrainRetiredVideoDecoders: function () {
     Object.keys(slopCityRetiredVideoDecoders).forEach(function (id) {
       var video = slopCityRetiredVideoDecoders[id];
       video.slopCityRetireAttempts = (video.slopCityRetireAttempts || 0) + 1;
       if (!slopCityRetireVideoDecoder(id, video)) {
         if (video.slopCityRetireAttempts >= 120) {
+          try { slopCityReleaseVideoTexture(video); } catch (_) {}
           try { if (video.parentNode) video.parentNode.removeChild(video); } catch (_) {}
           delete slopCityRetiredVideoDecoders[id];
         }
@@ -150,6 +172,7 @@ mergeInto(LibraryManager.library, {
         && slopCityCanReuseVideoElement(video))
         slopCityReusableIOSVideo = video;
     });
+    slopCityArmRetiredVideoDrain();
     return Object.keys(slopCityRetiredVideoDecoders).length === 0;
   },
 
@@ -175,10 +198,11 @@ mergeInto(LibraryManager.library, {
 
   JS_Video_Create__proxy: 'sync',
   JS_Video_Create__sig: 'ii',
-  JS_Video_Create__deps: ['$videoInstances', '$videoInstanceIdCounter', '$hasSRGBATextures', '$UTF8ToString', '$jsIsWebkit', '$slopCityDisposeOwnedVideoDecoders', '$slopCityUsesIOSVideo', '$slopCityReusableIOSVideo', '$slopCityAdmitVideoMetadata', '$slopCityUsesMobileVideo', '$slopCityDrainRetiredVideoDecoders', '$slopCityFailVideoPlayback', '$slopCityCanReuseVideoElement'],
+  JS_Video_Create__deps: ['$videoInstances', '$videoInstanceIdCounter', '$hasSRGBATextures', '$UTF8ToString', '$jsIsWebkit', '$slopCityDisposeOwnedVideoDecoders', '$slopCityUsesIOSVideo', '$slopCityReusableIOSVideo', '$slopCityAdmitVideoMetadata', '$slopCityUsesMobileVideo', '$slopCityDrainRetiredVideoDecoders', '$slopCityArmRetiredVideoDrain', '$slopCityFailVideoPlayback', '$slopCityCanReuseVideoElement'],
   JS_Video_Create: function (url) {
     var str = UTF8ToString(url);
     slopCityDrainRetiredVideoDecoders();
+    slopCityArmRetiredVideoDrain();
     var ios = slopCityUsesIOSVideo();
     var video = ios && slopCityReusableIOSVideo;
     if (video) {
@@ -221,8 +245,15 @@ mergeInto(LibraryManager.library, {
     video.slopCityLoadedDataListener = loadedDataListener;
     video.addEventListener('loadeddata', loadedDataListener);
     if (typeof video.requestVideoFrameCallback === 'function') {
+      function compositorFrameActive(allowPausedBootstrap) {
+        if (!current()) return false;
+        if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return false;
+        if (video.ended) return false;
+        if (!allowPausedBootstrap && video.paused) return false;
+        return true;
+      }
       function requestFrame(first) {
-        if (!current()) return;
+        if (!compositorFrameActive(!!first)) return;
         var request = {};
         video.slopCityCreatedFrameRequest = request;
         request.id = video.requestVideoFrameCallback(function () {
@@ -232,7 +263,7 @@ mergeInto(LibraryManager.library, {
           if (first) video.isLoaded = true;
           // Keep Unity's UUM-111608 compositor workaround. Also track presented
           // frames on desktop WebKit: currentTime can advance between decoded frames.
-          requestFrame(false);
+          if (compositorFrameActive(false)) requestFrame(false);
         });
       }
       requestFrame(true);
@@ -241,7 +272,8 @@ mergeInto(LibraryManager.library, {
     // preparation avoids eager full-clip buffering before the single slot plays.
     video.preload = slopCityUsesMobileVideo(video) ? 'metadata' : 'auto';
     function metadataListener() {
-      if (current()) slopCityAdmitVideoMetadata(video);
+      if (!current()) return;
+      if (!slopCityAdmitVideoMetadata(video)) slopCityFailVideoPlayback(id, video, video.slopCityPlaybackIntent);
     }
     video.slopCityMetadataListener = metadataListener;
     video.addEventListener('loadedmetadata', metadataListener);
@@ -251,19 +283,27 @@ mergeInto(LibraryManager.library, {
     video.setAttribute('playsinline', '');
     video.crossOrigin = 'anonymous';
     var admissionStartedAt = Date.now();
+    var admissionBackoffMs = 50;
+    function elementSourceReady() {
+      try {
+        return video.readyState === 0 && !video.getAttribute('src') && !video.currentSrc;
+      } catch (_) { return false; }
+    }
     function admitSource() {
       if (!current()) return;
-      // load() aborts the old source asynchronously. Wait for its observable
-      // empty state and a quiet interval before attaching the replacement.
-      if (!slopCityDrainRetiredVideoDecoders() || (ios && retiredAt && (Date.now() - retiredAt < 250
-        || video.readyState !== 0
-        || (video.currentSrc && !(video.readyState === 0 || video.slopCitySourceClearRequested || video.slopCityDestroyed))))) {
+      // load() aborts the old source asynchronously. Wait for this element's
+      // observable empty state; other decoders retiring must not block admission.
+      var reuseQuiet = ios && retiredAt && !elementSourceReady()
+        && (Date.now() - retiredAt < 250 || video.readyState !== 0
+          || (video.currentSrc && !(video.readyState === 0 || video.slopCitySourceClearRequested || video.slopCityDestroyed)));
+      if (reuseQuiet) {
         if (Date.now() - admissionStartedAt >= 30000) {
           delete video.slopCitySourceAdmissionTimer;
           slopCityFailVideoPlayback(id, video, video.slopCityPlaybackIntent);
           return;
         }
-        video.slopCitySourceAdmissionTimer = setTimeout(admitSource, 50);
+        video.slopCitySourceAdmissionTimer = setTimeout(admitSource, admissionBackoffMs);
+        admissionBackoffMs = Math.min(admissionBackoffMs * 2, 1000);
         return;
       }
       delete video.slopCitySourceAdmissionTimer;
@@ -280,7 +320,7 @@ mergeInto(LibraryManager.library, {
 
   JS_Video_Destroy__proxy: 'sync',
   JS_Video_Destroy__sig: 'vi',
-  JS_Video_Destroy__deps: ['$videoInstances', '$slopCityRetiredVideoDecoders', '$slopCityDrainRetiredVideoDecoders'],
+  JS_Video_Destroy__deps: ['$videoInstances', '$slopCityRetiredVideoDecoders', '$slopCityDrainRetiredVideoDecoders', '$slopCityArmRetiredVideoDrain'],
   JS_Video_Destroy: function (id) {
     var video = videoInstances[id] || slopCityRetiredVideoDecoders[id];
     if (!video) return;
@@ -288,5 +328,6 @@ mergeInto(LibraryManager.library, {
     // Retirement owns partial failures and blocks new source admission. It can
     // be retried without allocating another active decoder beside that owner.
     slopCityDrainRetiredVideoDecoders();
+    slopCityArmRetiredVideoDrain();
   }
 });

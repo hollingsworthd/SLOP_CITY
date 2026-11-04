@@ -13,6 +13,9 @@ namespace SlopCity
         private Rect lastSafe;
         private Vector2 lastSize;
         private float lastPixelRatio, nextSalvageCheck;
+        private SlopCityTouchStick moveStick;
+        private SlopCityTouchLook touchLook;
+        private SlopCityTouchHold touchRun;
         private readonly System.Collections.Generic.List<RectTransform> buttons = new System.Collections.Generic.List<RectTransform>();
         private Sprite disc;
         private Text cleanCaption;
@@ -47,7 +50,8 @@ namespace SlopCity
             var look = Rect("RightSideLook", safe);
             Fill(look, new Vector2(.5f, 0), Vector2.one);
             look.gameObject.AddComponent<Image>().color = Color.clear;
-            look.gameObject.AddComponent<SlopCityTouchLook>().Configure(source);
+            touchLook = look.gameObject.AddComponent<SlopCityTouchLook>();
+            touchLook.Configure(source);
             left = Rect("LeftSideMove", safe);
             Fill(left, Vector2.zero, new Vector2(.48f,.80f));
             left.gameObject.AddComponent<Image>().color = Color.clear;
@@ -59,11 +63,13 @@ namespace SlopCity
             thumb.anchorMin = thumb.anchorMax = new Vector2(.5f,.5f);
             var thumbImage = thumb.gameObject.AddComponent<Image>();
             thumbImage.sprite = disc; thumbImage.color = new Color(.88f,.94f,.96f,.52f); thumbImage.raycastTarget = false;
-            left.gameObject.AddComponent<SlopCityTouchStick>().Configure(source,thumb,ring);
+            moveStick = left.gameObject.AddComponent<SlopCityTouchStick>();
+            moveStick.Configure(source, thumb, ring);
             AddButton("TouchJump", "JUMP", source.RequestJump, font);
             AddButton("TouchInteract", "USE", source.RequestInteract, font);
             var run = AddButton("TouchRun", "RUN", null, font);
-            run.gameObject.AddComponent<SlopCityTouchHold>().Configure(source);
+            touchRun = run.gameObject.AddComponent<SlopCityTouchHold>();
+            touchRun.Configure(source);
             AddButton("TouchPause", "II", source.RequestPause, font);
             AddButton("TouchNewJob", "JOB", source.RequestNewContract, font);
             AddButton("TouchHome", "HOME", source.RequestRespawn, font);
@@ -75,7 +81,8 @@ namespace SlopCity
 
         private void Update()
         {
-            if (Time.unscaledTime >= nextSalvageCheck && buttons.Count >= 9)
+            if (Time.unscaledTime >= nextSalvageCheck && buttons.Count >= 9 && isActiveAndEnabled
+                && input && input.UseTouchControls && input.GameplayEnabled)
             {
                 nextSalvageCheck = Time.unscaledTime + .15f;
                 var player = input ? input.GetComponent<SlopCityFirstPerson>() : null;
@@ -100,9 +107,9 @@ namespace SlopCity
         {
             // Rotation/resizing invalidates held gestures, but a completed button
             // click must remain queued until the player consumes it.
-            foreach (var stick in GetComponentsInChildren<SlopCityTouchStick>()) stick.CancelGesture();
-            foreach (var look in GetComponentsInChildren<SlopCityTouchLook>()) look.CancelGesture();
-            foreach (var hold in GetComponentsInChildren<SlopCityTouchHold>()) hold.CancelGesture();
+            if (moveStick) moveStick.CancelGesture();
+            if (touchLook) touchLook.CancelGesture();
+            if (touchRun) touchRun.CancelGesture();
             if (input) input.ResetContinuousTouch();
             lastSafe = safeArea;
             lastSize = ((RectTransform)transform).rect.size;

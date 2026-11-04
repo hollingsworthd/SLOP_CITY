@@ -6,6 +6,11 @@ mergeInto(LibraryManager.library, {
     var query = new URLSearchParams(window.location.search);
     return query.get("qa") === "1" && query.get("rendering") === "deferred" ? 1 : 0;
   },
+  $slopCityClearMemoryDiagnostics__postset: "Module['slopCityClearMemoryDiagnostics'] = slopCityClearMemoryDiagnostics;",
+  $slopCityClearMemoryDiagnostics: function () {
+    delete Module['slopCityMemoryTextureSupport'];
+  },
+
   SlopCity_ReportMemory__deps: ['$GL'],
   SlopCity_ReportMemory: function (allocatedBytes, reservedBytes, managedUsedBytes, x, y, z, yaw, pitch, actualRenderingPath) {
     if (new URLSearchParams(window.location.search).get("qa") !== "1") return;

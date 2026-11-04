@@ -14,6 +14,14 @@ namespace SlopCity
         public SlopCityCityScreen Screen => screen;
         public bool IsRadio { get; private set; }
 
+        private static void StripDecorativeCollider(GameObject shape)
+        {
+            Collider collider = shape.GetComponent<Collider>();
+            if (!collider) return;
+            if (Application.isPlaying) Destroy(collider);
+            else DestroyImmediate(collider);
+        }
+
         public static void AttachRoom(Transform floor, string roomId, int side, float width,
             float south, float north, int channel, bool withRadio)
         {
@@ -73,6 +81,7 @@ namespace SlopCity
                 SlopCityInteriorGeometry.Box(root, "Television_Frame", new Vector3(0f, 0f, .045f),
                     new Vector3(PictureWidth + .10f, PictureHeight + .10f, .08f), SlopCityInteriorGeometry.Metal, true);
                 GameObject picture = GameObject.CreatePrimitive(PrimitiveType.Quad);
+                StripDecorativeCollider(picture);
                 picture.name = "Television_Picture"; picture.transform.SetParent(root, false);
                 picture.transform.localPosition = new Vector3(0f, 0f, -.005f);
                 picture.transform.localScale = new Vector3(PictureWidth, PictureHeight, 1f);

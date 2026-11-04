@@ -1,6 +1,5 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using UnityEngine;
 
 namespace SlopCity
@@ -42,7 +41,8 @@ namespace SlopCity
             Transform[] all = city.GetComponentsInChildren<Transform>(true);
             SlopCityDistrict[] districts = city.GetComponentsInChildren<SlopCityDistrict>(true);
             if (districts.Length != 9) throw new InvalidOperationException("Metric city layout requires the nine saved districts.");
-            var oldPositions = all.ToDictionary(item => item, item => item.position);
+            var oldPositions = new Dictionary<Transform, Vector3>(all.Length);
+            foreach (Transform item in all) oldPositions[item] = item.position;
             var districtOffsets = new Dictionary<int, Vector3>();
             var originalDistrictCenters = new Dictionary<int, Vector3>();
             var districtTransforms = new Dictionary<int, Transform>();
@@ -90,8 +90,13 @@ namespace SlopCity
                             || child.name == "Sidewalk_Joint" || child.name.StartsWith("Home_Sidewalk_", StringComparison.Ordinal))
                             SetActive(child.gameObject, false, undo);
                     }
-                    var fixturePositions = Children(district.transform).ToDictionary(item => item, item => item.localPosition);
-                    var fixtureScales = Children(district.transform).ToDictionary(item => item, item => item.localScale);
+                    var fixturePositions = new Dictionary<Transform, Vector3>();
+                    var fixtureScales = new Dictionary<Transform, Vector3>();
+                    foreach (Transform child in Children(district.transform))
+                    {
+                        fixturePositions[child] = child.localPosition;
+                        fixtureScales[child] = child.localScale;
+                    }
                     undo.Add(() => { foreach (var item in fixturePositions) if (item.Key) item.Key.localPosition = item.Value;
                         foreach (var item in fixtureScales) if (item.Key) item.Key.localScale = item.Value; });
                     SlopCityDenseLayout.ApplyGroundFixtures(district.transform);
@@ -129,8 +134,9 @@ namespace SlopCity
                 }
                 PrepareJapan(city, oldPositions, towers, districtOffsets, undo);
                 PrepareMilitary(city, oldPositions, towers, undo, expandedMeshes);
-                foreach (Transform station in all.Where(item => item.name.StartsWith("Subway_Station_", StringComparison.Ordinal)))
+                foreach (Transform station in all)
                 {
+                    if (!station.name.StartsWith("Subway_Station_", StringComparison.Ordinal)) continue;
                     Vector3 original = oldPositions[station];
                     Vector3 next = city.TransformPoint(SlopCityDenseLayout.StreetPoint(city.InverseTransformPoint(original)));
                     Move(station, next, undo);
@@ -297,8 +303,14 @@ namespace SlopCity
             {
                 if (fixture.name.StartsWith("MilitarySF_LocalTower_", StringComparison.Ordinal))
                 {
-                    Tower source = towers.OrderBy(tower => (tower.originalPosition - old[fixture]).sqrMagnitude).FirstOrDefault();
-                    if (source == null || (source.originalPosition - old[fixture]).sqrMagnitude > .05f)
+                    Tower source = null;
+                    float best = float.PositiveInfinity;
+                    foreach (Tower tower in towers)
+                    {
+                        float score = (tower.originalPosition - old[fixture]).sqrMagnitude;
+                        if (score < best) { best = score; source = tower; }
+                    }
+                    if (source == null || best > .05f)
                         throw new InvalidOperationException("Detached tower architecture has no source: " + fixture.name);
                     Move(fixture, source.root.position, undo);
                     // Material batches contain disconnected manufactured panels. Widen their
@@ -512,8 +524,18 @@ namespace SlopCity
             if (!deck || !deck.sharedMesh) return;
             float length = deck.sharedMesh.bounds.size.z;
             Vector3 center = old[bridge];
-            Tower a = towers.OrderBy(tower => (tower.originalPosition - (center - bridge.forward * length / 2)).sqrMagnitude).First();
-            Tower b = towers.OrderBy(tower => (tower.originalPosition - (center + bridge.forward * length / 2)).sqrMagnitude).First();
+            Vector3 spanStart = center - bridge.forward * length / 2;
+            Vector3 spanEnd = center + bridge.forward * length / 2;
+            Tower a = null, b = null;
+            float bestA = float.PositiveInfinity, bestB = float.PositiveInfinity;
+            foreach (Tower tower in towers)
+            {
+                float scoreA = (tower.originalPosition - spanStart).sqrMagnitude;
+                if (scoreA < bestA) { bestA = scoreA; a = tower; }
+                float scoreB = (tower.originalPosition - spanEnd).sqrMagnitude;
+                if (scoreB < bestB) { bestB = scoreB; b = tower; }
+            }
+            if (!a || !b) return;
             Vector3 delta = b.root.position - a.root.position; delta.y = 0;
             // Retain the cabin-width bridge; only its span follows the paired buildings.
             foreach (Transform child in Children(bridge)) ScaleField(child, new Vector3(1, 1, delta.magnitude / length), undo, cache);
@@ -537,15 +559,35 @@ namespace SlopCity
 
         private static void PrepareStreetDetails(Transform root, Dictionary<Transform, Vector3> old, List<Action> undo)
         {
-            Transform[] grates = Children(root).Where(item => item.name == "Drain_Grate").ToArray();
+            Transform[] grates = null;
+            int grateCount = 0;
+            foreach (Transform fixture in Children(root))
+            {
+                if (fixture.name != "Drain_Grate") continue;
+                if (grates == null || grateCount == grates.Length)
+                {
+                    int capacity = grates == null ? 4 : grates.Length * 2;
+                    var next = new Transform[capacity];
+                    if (grates != null) Array.Copy(grates, next, grateCount);
+                    grates = next;
+                }
+                grates[grateCount++] = fixture;
+            }
             foreach (Transform fixture in Children(root))
             {
                 Vector3 source = old[fixture];
-                if (fixture.name == "Drain_Slot")
+                if (fixture.name == "Drain_Slot" && grates != null)
                 {
-                    Transform grate = grates.OrderBy(item => (old[item] - source).sqrMagnitude).FirstOrDefault();
-                    if (grate && (old[grate] - source).sqrMagnitude < 1f)
-                    { Move(fixture, SlopCityDenseLayout.StreetPoint(old[grate]) + source - old[grate], undo); continue; }
+                    Transform nearest = null;
+                    float best = 1f;
+                    for (int i = 0; i < grateCount; i++)
+                    {
+                        Transform grate = grates[i];
+                        float score = (old[grate] - source).sqrMagnitude;
+                        if (score < best) { best = score; nearest = grate; }
+                    }
+                    if (nearest && best < 1f)
+                    { Move(fixture, SlopCityDenseLayout.StreetPoint(old[nearest]) + source - old[nearest], undo); continue; }
                 }
                 MoveLocal(fixture, SlopCityDenseLayout.StreetPoint(fixture.localPosition), undo);
             }

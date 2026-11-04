@@ -39,6 +39,10 @@ namespace SlopCity
         private bool cleaningRequest;
         private int retiringDisposeFailures;
         private bool retiringDisposeAbandonedWarned;
+        private bool queuedNavigatePending;
+        private string queuedNavigatePath = "";
+        private bool queuedNavigateFile;
+        private const int StreamReceiveBytes = 64 * 1024;
 
         [Serializable] private sealed class Entry
         {
@@ -184,11 +188,19 @@ namespace SlopCity
                 }
             }
             else retiringDisposeFailures = 0;
+            TryRunQueuedNavigate();
         }
-        private void OnDisable() { CancelPending(); }
+        private void OnDisable()
+        {
+            CancelPending();
+            queuedNavigatePending = false;
+            for (int attempt = 0; attempt < 8 && (retiringRequest != null || retiringHandler != null); attempt++)
+                DisposeRequest(null, null);
+        }
         private void OnDestroy()
         {
             CancelPending();
+            queuedNavigatePending = false;
             if (overlay) { if (Application.isPlaying) Destroy(overlay); else DestroyImmediate(overlay); }
         }
 
@@ -244,13 +256,24 @@ namespace SlopCity
         private void Navigate(string path, bool isFile)
         {
             if (!overlay || !overlay.activeInHierarchy || !IsSafePath(path)) return;
-            CancelPending();
             if (cleaningRequest || retiringRequest != null || retiringHandler != null)
             {
-                statusLabel.text = "The previous source download is still closing. Retry or open GitHub.";
+                queuedNavigatePath = path;
+                queuedNavigateFile = isFile;
+                queuedNavigatePending = true;
+                statusLabel.text = "The previous source download is still closing…";
                 return;
             }
-            sourceMode = true; currentPath = path; fileView = isFile;
+            BeginNavigate(path, isFile);
+        }
+
+        private void BeginNavigate(string path, bool isFile)
+        {
+            if (!overlay || !overlay.activeInHierarchy || !IsSafePath(path)) return;
+            CancelPending();
+            sourceMode = true;
+            currentPath = path;
+            fileView = isFile;
             title.text = "SOURCE + LICENSE";
             up.interactable = path.Length > 0; retry.interactable = true;
             pathLabel.text = "main / " + path;
@@ -258,6 +281,14 @@ namespace SlopCity
             statusLabel.text = "Loading public source…";
             ClearContent(); ClearPages();
             pending = StartCoroutine(Fetch(path, isFile, generation));
+        }
+
+        private void TryRunQueuedNavigate()
+        {
+            if (!queuedNavigatePending || cleaningRequest || retiringRequest != null || retiringHandler != null
+                || !overlay || !overlay.activeInHierarchy) return;
+            queuedNavigatePending = false;
+            BeginNavigate(queuedNavigatePath, queuedNavigateFile);
         }
 
         private void GoUp()
@@ -314,7 +345,7 @@ namespace SlopCity
                     catch (Exception error) { Debug.LogWarning("Source response cleanup failed: " + error.Message); }
                 }
             }
-            finally { cleaningRequest = false; }
+            finally { cleaningRequest = false; TryRunQueuedNavigate(); }
         }
 
         private IEnumerator Fetch(string path, bool isFile, int ticket)
@@ -330,7 +361,7 @@ namespace SlopCity
                     // Allocate managed storage before the constructor creates
                     // its native handler, so allocation failure has no orphan.
                     byte[] body = new byte[ResponseLimit];
-                    byte[] receiveBuffer = new byte[16384];
+                    byte[] receiveBuffer = new byte[StreamReceiveBytes];
                     handler = new BoundedDownload(body, receiveBuffer);
                     request = new UnityWebRequest(ApiRoot + EncodePath(path) + "?ref=main", "GET");
                     activeRequest = request;

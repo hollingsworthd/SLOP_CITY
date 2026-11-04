@@ -13,6 +13,7 @@ namespace SlopCity
         public const float WindowSill = .95f;
         public const float WindowHead = 2.65f;
         [SerializeField] private List<Mesh> ownedMeshes = new List<Mesh>();
+        private readonly Dictionary<Mesh, int> meshDisposeRefusals = new Dictionary<Mesh, int>();
         [SerializeField] private bool prepared;
         [SerializeField] private int occupiedStories;
 #if !UNITY_EDITOR
@@ -24,6 +25,7 @@ namespace SlopCity
         private static readonly List<SkinnedMeshRenderer> finalizationSkins = new List<SkinnedMeshRenderer>();
         private static readonly HashSet<Mesh> liveMeshes = new HashSet<Mesh>();
         private static readonly HashSet<Mesh> physicsMeshes = new HashSet<Mesh>();
+        private static Transform liveMeshScanCity;
 #endif
         public bool Prepared => prepared;
         public int OccupiedStories => occupiedStories;
@@ -66,29 +68,7 @@ namespace SlopCity
             while (city.parent && city.name != "SlopCity_NineBlocks") city = city.parent;
             try
             {
-                city.GetComponentsInChildren(true, finalizationFilters);
-                city.GetComponentsInChildren(true, finalizationColliders);
-                city.GetComponentsInChildren(true, finalizationSkins);
-                foreach (MeshFilter filter in finalizationFilters)
-                    if (filter.sharedMesh) liveMeshes.Add(filter.sharedMesh);
-                foreach (SkinnedMeshRenderer skin in finalizationSkins)
-                    if (skin.sharedMesh) liveMeshes.Add(skin.sharedMesh);
-                foreach (MeshCollider collider in finalizationColliders)
-                    if (collider.sharedMesh)
-                    { liveMeshes.Add(collider.sharedMesh); physicsMeshes.Add(collider.sharedMesh); }
-#if UNITY_WEBGL
-                // The fallback may share its source with a collider/skin outside the
-                // city hierarchy. Respect all scene users before finalizing that copy.
-                foreach (GameObject root in gameObject.scene.GetRootGameObjects())
-                {
-                    root.GetComponentsInChildren(true, finalizationColliders);
-                    root.GetComponentsInChildren(true, finalizationSkins);
-                    foreach (MeshCollider collider in finalizationColliders)
-                        if (collider.sharedMesh) physicsMeshes.Add(collider.sharedMesh);
-                    foreach (SkinnedMeshRenderer skin in finalizationSkins)
-                        if (skin.sharedMesh) physicsMeshes.Add(skin.sharedMesh);
-                }
-#endif
+                EnsureCityLiveMeshScan(city);
                 for (int index = ownedMeshes.Count - 1; index >= 0; index--)
                 {
                     Mesh mesh = ownedMeshes[index];
@@ -100,6 +80,7 @@ namespace SlopCity
                         // a second GPU copy solely to discard its CPU data.
                         Destroy(mesh);
                         ownedMeshes.RemoveAt(index);
+                        meshDisposeRefusals.Remove(mesh);
                     }
                     else if (!physicsMeshes.Contains(mesh) && mesh.isReadable)
                         mesh.UploadMeshData(true);
@@ -111,10 +92,46 @@ namespace SlopCity
             finally
             {
                 finalizationFilters.Clear(); finalizationColliders.Clear(); finalizationSkins.Clear();
-                liveMeshes.Clear(); physicsMeshes.Clear();
             }
 #endif
         }
+
+#if !UNITY_EDITOR
+        private static void EnsureCityLiveMeshScan(Transform city)
+        {
+            if (!city || liveMeshScanCity == city) return;
+            liveMeshScanCity = city;
+            liveMeshes.Clear(); physicsMeshes.Clear();
+            city.GetComponentsInChildren(true, finalizationFilters);
+            city.GetComponentsInChildren(true, finalizationColliders);
+            city.GetComponentsInChildren(true, finalizationSkins);
+            foreach (MeshFilter filter in finalizationFilters)
+                if (filter.sharedMesh) liveMeshes.Add(filter.sharedMesh);
+            foreach (SkinnedMeshRenderer skin in finalizationSkins)
+                if (skin.sharedMesh) liveMeshes.Add(skin.sharedMesh);
+            foreach (MeshCollider collider in finalizationColliders)
+                if (collider.sharedMesh)
+                { liveMeshes.Add(collider.sharedMesh); physicsMeshes.Add(collider.sharedMesh); }
+#if UNITY_WEBGL
+            foreach (GameObject root in city.gameObject.scene.GetRootGameObjects())
+            {
+                root.GetComponentsInChildren(true, finalizationColliders);
+                root.GetComponentsInChildren(true, finalizationSkins);
+                foreach (MeshCollider collider in finalizationColliders)
+                    if (collider.sharedMesh) physicsMeshes.Add(collider.sharedMesh);
+                foreach (SkinnedMeshRenderer skin in finalizationSkins)
+                    if (skin.sharedMesh) physicsMeshes.Add(skin.sharedMesh);
+            }
+#endif
+            finalizationFilters.Clear(); finalizationColliders.Clear(); finalizationSkins.Clear();
+        }
+
+        private static void CompleteCityLiveMeshScan()
+        {
+            liveMeshScanCity = null;
+            liveMeshes.Clear(); physicsMeshes.Clear();
+        }
+#endif
 
 #if UNITY_EDITOR || UNITY_WEBGL
         private Mesh UnbatchedFrameCpuSource()
@@ -188,6 +205,9 @@ namespace SlopCity
                 if (!facade) facade = tower.gameObject.AddComponent<SlopCityMetricFacade>();
                 if (!facade.prepared) facade.Build();
             }
+#if !UNITY_EDITOR
+            CompleteCityLiveMeshScan();
+#endif
         }
 
         private void Build()
@@ -483,10 +503,41 @@ namespace SlopCity
             bool pending = false;
             for (int index = ownedMeshes.Count - 1; index >= first; index--)
             {
-                try { DisposeMesh(ownedMeshes[index]); ownedMeshes.RemoveAt(index); }
-                catch (Exception) { pending = true; }
+                Mesh mesh = ownedMeshes[index];
+                if (!mesh) { ownedMeshes.RemoveAt(index); meshDisposeRefusals.Remove(mesh); continue; }
+                if (TryDisposeMesh(mesh))
+                {
+                    ownedMeshes.RemoveAt(index);
+                    meshDisposeRefusals.Remove(mesh);
+                }
+                else pending = true;
             }
             if (pending) Debug.LogWarning("Facade cleanup was interrupted; refused meshes remain owned.", this);
+        }
+
+        private bool TryDisposeMesh(Mesh mesh)
+        {
+            if (!mesh) return true;
+            try
+            {
+                if (Application.isPlaying) Destroy(mesh);
+                else DestroyImmediate(mesh);
+                return true;
+            }
+            catch (Exception)
+            {
+                int refusals = 1;
+                if (meshDisposeRefusals.TryGetValue(mesh, out int previous)) refusals = previous + 1;
+                meshDisposeRefusals[mesh] = refusals;
+                if (refusals < 120) return false;
+                try
+                {
+                    if (Application.isEditor && !Application.isPlaying) DestroyImmediate(mesh);
+                    else DestroyImmediate(mesh, true);
+                    return true;
+                }
+                catch (Exception) { return false; }
+            }
         }
 
         private static void DisposeMesh(Mesh mesh)

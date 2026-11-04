@@ -21,8 +21,9 @@ namespace SlopCity
         private float totalLength;
         private Color beamTint;
         private bool resourceAllocationFailed;
+        private float resourceRetryAt;
 
-        private void OnEnable() { resourceAllocationFailed=false; }
+        private void OnEnable() { resourceAllocationFailed=false; resourceRetryAt=0f; }
 
         public void Configure(Transform playerOwner)
         {
@@ -148,6 +149,7 @@ namespace SlopCity
                 // Route updates are not allocation recovery events. Release partial
                 // resources and wait for explicit reconfiguration or re-enabling.
                 resourceAllocationFailed=true;
+                resourceRetryAt=Time.unscaledTime+2f;
                 Release();
                 Debug.LogWarning("Signal guide unavailable after resource allocation failure: "+error.GetType().Name,this);
                 return false;
@@ -175,6 +177,11 @@ namespace SlopCity
 
         private void Update()
         {
+            if (resourceAllocationFailed && Time.unscaledTime >= resourceRetryAt)
+            {
+                resourceAllocationFailed = false;
+                resourceRetryAt = Time.unscaledTime + 2f;
+            }
             // SetPath supplies fixed endpoints; only this tiny pulse changes between route updates.
             if (count > 0 && Time.timeScale > 0) UpdatePulse();
         }

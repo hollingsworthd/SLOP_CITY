@@ -58,6 +58,13 @@ namespace SlopCity
             : "OPTIONAL CONTACT\nUse a woman in red for city dispatch help and a brief signal.";
         public string TransmissionText => clue;
 
+        public void RefreshLevelAccess()
+        {
+            levelAccess.Clear();
+            foreach (SlopCityInteractable item in FindObjectsByType<SlopCityInteractable>(FindObjectsSortMode.None))
+                if (item.Destination) levelAccess.Add(item);
+        }
+
         public void Configure(SlopCityFirstPerson owner)
         {
             if (ready) { player = owner; return; }
@@ -66,8 +73,7 @@ namespace SlopCity
             ReleaseDinnerGate();
             beams = gameObject.AddComponent<SlopCitySignalBeams>();
             beams.Configure(owner.transform);
-            foreach (SlopCityInteractable item in FindObjectsByType<SlopCityInteractable>(FindObjectsSortMode.None))
-                if (item.Destination) levelAccess.Add(item);
+            RefreshLevelAccess();
             ready = true;
             EnsureTarget();
         }

@@ -1012,6 +1012,7 @@ namespace SlopCity
             if (!initialized) return;
             RefreshSalvage();
             RefreshSites();
+            if (MatrixHunt) MatrixHunt.RefreshLevelAccess();
             aimed = default;
             nextTargetAt = 0f;
         }
@@ -1023,6 +1024,7 @@ namespace SlopCity
             RefreshSalvageLight();
             aimed = default;
             nextTargetAt = 0f;
+            InvalidateSalvageAimCache();
         }
 
         private void RefreshSites()

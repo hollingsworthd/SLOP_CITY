@@ -9,6 +9,8 @@ namespace SlopCity
     public sealed class SlopCityBranding : MonoBehaviour
     {
         public const string RootName = "SlopCity_Physical_Branding";
+        private static Texture2D cachedCityLogo, cachedPublisherLogo;
+        private static Shader cachedBrandShader;
         private Mesh quad;
         private Material cityMaterial, publisherMaterial, backingMaterial;
         public int SignCount => transform.childCount;
@@ -37,9 +39,9 @@ namespace SlopCity
             Transform existing = city.Find(RootName);
             if (existing) return existing.GetComponent<SlopCityBranding>();
 
-            Texture2D cityLogo = Resources.Load<Texture2D>("Brand/SlopCityLogo");
-            Texture2D publisherLogo = Resources.Load<Texture2D>("Brand/MachinePublishersLogo");
-            Shader shader = Resources.Load<Shader>("Brand/BrandSign");
+            Texture2D cityLogo = cachedCityLogo ?? (cachedCityLogo = Resources.Load<Texture2D>("Brand/SlopCityLogo"));
+            Texture2D publisherLogo = cachedPublisherLogo ?? (cachedPublisherLogo = Resources.Load<Texture2D>("Brand/MachinePublishersLogo"));
+            Shader shader = cachedBrandShader ?? (cachedBrandShader = Resources.Load<Shader>("Brand/BrandSign"));
             if (!cityLogo || !publisherLogo || !shader || !shader.isSupported)
             {
                 Debug.LogWarning("SLOP CITY: Physical brand artwork is unavailable.");

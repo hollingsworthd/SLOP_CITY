@@ -31,6 +31,7 @@ namespace SlopCity
         public bool Prepared => prepared;
         public int SharedCloneCount => materialPairs.Count;
         public IReadOnlyList<MaterialPair> MaterialPairs => materialPairs;
+        private static readonly List<Material> materialScratch = new List<Material>();
         public int EmissiveMaterialCount
         {
             get { int count = 0; foreach (MaterialPair pair in materialPairs) if (pair.emissive) count++; return count; }
@@ -83,11 +84,12 @@ namespace SlopCity
             foreach (Renderer renderer in GetComponentsInChildren<Renderer>(true))
             {
                 if (SlopCitySalvagePreparation.IsMutable(renderer)) continue;
-                Material[] slots = renderer.sharedMaterials;
+                materialScratch.Clear();
+                renderer.GetSharedMaterials(materialScratch);
                 bool changed = false;
-                for (int index = 0; index < slots.Length; index++)
+                for (int index = 0; index < materialScratch.Count; index++)
                 {
-                    Material source = slots[index];
+                    Material source = materialScratch[index];
                     if (!source || completed.Contains(source)) continue;
                     if (!replacements.TryGetValue(source, out Material replacement))
                     {
@@ -112,10 +114,14 @@ namespace SlopCity
                         replacements.Add(source, replacement);
                         completed.Add(replacement);
                     }
-                    slots[index] = replacement;
+                    materialScratch[index] = replacement;
                     changed = true;
                 }
-                if (changed) renderer.sharedMaterials = slots;
+                if (changed)
+                {
+                    renderer.SetSharedMaterials(materialScratch);
+                    renderer.SetPropertyBlock(null);
+                }
             }
             prepared = true;
         }
@@ -182,12 +188,17 @@ namespace SlopCity
             foreach (Renderer renderer in GetComponentsInChildren<Renderer>(true))
             {
                 if (!renderer) continue;
-                Material[] slots = renderer.sharedMaterials;
+                materialScratch.Clear();
+                renderer.GetSharedMaterials(materialScratch);
                 bool changed = false;
-                for (int index = 0; index < slots.Length; index++)
-                    if (slots[index] && originals.TryGetValue(slots[index], out Material original))
-                    { slots[index] = original; changed = true; }
-                if (changed) renderer.sharedMaterials = slots;
+                for (int index = 0; index < materialScratch.Count; index++)
+                    if (materialScratch[index] && originals.TryGetValue(materialScratch[index], out Material original))
+                    { materialScratch[index] = original; changed = true; }
+                if (changed)
+                {
+                    renderer.SetSharedMaterials(materialScratch);
+                    renderer.SetPropertyBlock(null);
+                }
             }
             }
             finally

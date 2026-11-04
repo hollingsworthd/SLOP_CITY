@@ -13,6 +13,14 @@ namespace SlopCity
         private SlopCityCityMedia registeredMedia;
         public SlopCityCityScreen Screen => screen;
 
+        private static void StripDecorativeCollider(GameObject shape)
+        {
+            Collider collider = shape.GetComponent<Collider>();
+            if (!collider) return;
+            if (Application.isPlaying) Destroy(collider);
+            else DestroyImmediate(collider);
+        }
+
         public static SlopCityEntranceBroadcast Attach(Transform entrance, float depth)
         {
             if (!entrance || float.IsNaN(depth) || float.IsInfinity(depth) || depth <= 0f) return null;
@@ -31,6 +39,7 @@ namespace SlopCity
             SlopCityInteriorGeometry.Box(root, "Entrance_Broadcast_Frame", new Vector3(0f, 0f, .06f),
                 new Vector3(Width + .10f, Height + .10f, .10f), SlopCityInteriorGeometry.Metal, true);
             GameObject picture = GameObject.CreatePrimitive(PrimitiveType.Quad);
+            StripDecorativeCollider(picture);
             picture.name = "Entrance_Broadcast_Picture";
             picture.transform.SetParent(root, false);
             picture.transform.localPosition = new Vector3(0f, 0f, -.001f);

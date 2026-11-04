@@ -21,7 +21,7 @@ namespace SlopCity
         {
             if(!expandedPopulation||!building||!root||!homeLookup.TryGetValue(HomeKey(building,floor),out int homeIndex))return;
             InteriorHome home=interiorHomes[homeIndex];if(home.root==root&&home.route!=null)return;
-            Physics.SyncTransforms();LastInteriorNodeProbes=LastInteriorEdgeChecks=0;
+            if(home.route==null||home.root!=root)Physics.SyncTransforms();LastInteriorNodeProbes=LastInteriorEdgeChecks=0;
             SlopCityCrowdRoute graph=BuildInteriorRoute(building,floor,root);
             home.root=root;home.route=graph;AdmittedInteriorRouteCount=0;foreach(var h in interiorHomes)if(h.route!=null)AdmittedInteriorRouteCount++;
             if(graph==null)return;

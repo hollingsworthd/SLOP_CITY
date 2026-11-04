@@ -82,6 +82,18 @@ namespace SlopCity
                 pendingFontRebuild.Enqueue(this);
         }
 
+        private static void PurgeFontRebuildQueue(SlopCityWorldText sign)
+        {
+            if (!sign || !pendingFontRebuildSet.Remove(sign)) return;
+            int remaining = pendingFontRebuild.Count;
+            for (int i = 0; i < remaining; i++)
+            {
+                SlopCityWorldText queued = pendingFontRebuild.Dequeue();
+                if (queued && queued != sign && pendingFontRebuildSet.Contains(queued))
+                    pendingFontRebuild.Enqueue(queued);
+            }
+        }
+
         private void Refresh(bool force)
         {
             if (!textMesh) textMesh = GetComponent<TextMesh>();
@@ -118,7 +130,7 @@ namespace SlopCity
 
         private void OnDisable()
         {
-            pendingFontRebuildSet.Remove(this);
+            PurgeFontRebuildQueue(this);
             if (subscribed) Font.textureRebuilt -= OnFontTextureRebuilt;
             subscribed = false;
             // The shared saved material owns no transient resources. Restore the

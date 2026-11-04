@@ -47,6 +47,16 @@ namespace SlopCity
         private bool browserTouch = false;
 #if UNITY_WEBGL && !UNITY_EDITOR
         [DllImport("__Internal")] private static extern int SlopCityUsesTouch();
+
+        /// <summary>Match jslib mobile video rules before input Awake and without touch UI.</summary>
+        internal static bool BrowserUsesMobileMediaBudget(SlopCityPlayerInput input)
+        {
+            if (input && (input.forceTouchControlsForTesting || input.browserTouch || input.UseTouchControls)) return true;
+            if (Application.isMobilePlatform) return true;
+            try { return SlopCityUsesTouch() != 0; }
+            catch (EntryPointNotFoundException) { return TouchSupported(); }
+            catch (DllNotFoundException) { return TouchSupported(); }
+        }
 #endif
         private void Awake()
         {

@@ -12,7 +12,8 @@ namespace SlopCity
         [SerializeField] private float openAngle = 95f;
         [SerializeField] private Quaternion closedLocalRotation = Quaternion.identity;
         [SerializeField] private float degreesPerSecond = 110f;
-        private CharacterController[] users;
+        private readonly CharacterController[] users = new CharacterController[1];
+        private int userCount;
         private float angle;
         private float targetAngle;
 
@@ -46,7 +47,8 @@ namespace SlopCity
         {
             if (!leaf || !blocker || IsMoving) return false;
             CharacterController capsule = user ? user.GetComponentInParent<CharacterController>() : null;
-            users = capsule ? new[] { capsule } : new CharacterController[0];
+            if (capsule) { users[0] = capsule; userCount = 1; }
+            else userCount = 0;
             float destination = IsOpen ? 0f : openAngle;
             if (!IsOpen && user)
             {
@@ -100,12 +102,13 @@ namespace SlopCity
 
         private bool TouchesUser(float value)
         {
-            if (users == null) return false;
+            if (userCount <= 0) return false;
             Quaternion delta = WorldRotation(value) * Quaternion.Inverse(leaf.rotation);
             Vector3 position = leaf.position + delta * (blocker.transform.position - leaf.position);
             Quaternion rotation = delta * blocker.transform.rotation;
-            foreach (CharacterController user in users)
+            for (int i = 0; i < userCount; i++)
             {
+                CharacterController user = users[i];
                 if (!user || !user.enabled || !user.gameObject.activeInHierarchy) continue;
                 if (Physics.ComputePenetration(blocker, position, rotation, user,
                     user.transform.position, user.transform.rotation, out _, out float depth) && depth > 0.001f)

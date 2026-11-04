@@ -20,6 +20,7 @@ namespace SlopCity
         private readonly Dictionary<Vector2Int, Node> nodes = new Dictionary<Vector2Int, Node>();
         private readonly List<Node> openHeap = new List<Node>();
         private readonly Stack<Node> nodePool = new Stack<Node>();
+        private const int MaximumNodePoolSize = 512;
         private readonly List<Vector3> path = new List<Vector3>();
         private readonly RaycastHit[] hits = new RaycastHit[48];
         private readonly Collider[] overlaps = new Collider[48];
@@ -120,6 +121,7 @@ namespace SlopCity
         {
             node.parent = null;
             node.heapIndex = -1;
+            if (nodePool.Count >= MaximumNodePoolSize) return;
             nodePool.Push(node);
         }
 
@@ -243,6 +245,7 @@ namespace SlopCity
             Vector3 delta = to - from; float length = Mathf.Min(delta.magnitude, 4f);
             if (length < .01f) return null;
             int count = Physics.RaycastNonAlloc(from + Vector3.up, delta.normalized, hits, length, ~0, QueryTriggerInteraction.Ignore);
+            if (count == hits.Length) return null;
             SlopCityDoor closest = null; float nearest = float.PositiveInfinity;
             for (int i = 0; i < count; i++)
             {

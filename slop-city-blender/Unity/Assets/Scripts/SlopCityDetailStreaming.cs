@@ -30,6 +30,7 @@ namespace SlopCity
         {
             public Mesh mesh;
             public int generation, failures, destroyRefusals;
+            public bool admissionBlocked;
             public float retryAt, lastVisibleAt;
         }
         [SerializeField] private DetailEntry[] entries = Array.Empty<DetailEntry>();
@@ -60,7 +61,7 @@ namespace SlopCity
         public IReadOnlyList<DetailEntry> Entries => entries;
         public long ResidentBytes => residentBytes;
         public int PendingIndex => pendingIndex;
-        public bool IsResident(int index) => leases != null && index >= 0 && index < leases.Length && leases[index].mesh;
+        public bool IsResident(int index) => leases != null && index >= 0 && index < leases.Length && leases[index].mesh && !leases[index].admissionBlocked;
 #if UNITY_EDITOR
         public void SetBuildEntries(DetailEntry[] value) { entries = value ?? Array.Empty<DetailEntry>(); }
 #endif
@@ -104,7 +105,10 @@ namespace SlopCity
             // Optional street detail follows the touch camera's actual demand.
             // Keep a short turn-back grace period instead of filling the entire
             // resident ceiling with geometry behind the player while walking.
-            visibleAdmission = network && view && Application.isMobilePlatform;
+            SlopCityPlayerInput touchInput = SlopCityPlayerInput.FindFirstObjectByType<SlopCityPlayerInput>(FindObjectsInactive.Include);
+            visibleAdmission = network && view && (touchInput
+                ? SlopCityPlayerInput.BrowserUsesMobileMediaBudget(touchInput)
+                : Application.isMobilePlatform);
             if (visibleAdmission) GeometryUtility.CalculateFrustumPlanes(view, admissionFrustum);
 #endif
             if (pendingIndex >= 0 && DistanceSquared(pendingIndex, position) > RetirementDistance * RetirementDistance)
@@ -121,26 +125,39 @@ namespace SlopCity
                 if (distance > RetirementDistance * RetirementDistance) { leases[i].failures = 0; leases[i].retryAt = 0; }
             }
             // Destruction is deferred in a player. Never allocate a replacement in that same frame.
-            if (retired || pendingIndex >= 0) return;
+            if (pendingIndex >= 0) return;
+            if (retired && Time.frameCount == retirementFrame)
+            {
+#if UNITY_WEBGL && !UNITY_EDITOR
+                nextTick = Time.unscaledTime;
+#endif
+                return;
+            }
             int best = -1; float closest = AdmissionDistance * AdmissionDistance;
             for (int i = 0; i < entries.Length; i++)
             {
-                if (leases[i].mesh || leases[i].failures >= 3 || now < leases[i].retryAt || !ValidEntry(entries[i])) continue;
+                if (leases[i].mesh || pendingIndex == i || leases[i].failures >= 3 || now < leases[i].retryAt || !ValidEntry(entries[i])) continue;
                 if (visibleAdmission && !VisibleToAdmissionCamera(i)) continue;
                 float distance = DistanceSquared(i, position);
                 if (distance < closest) { closest = distance; best = i; }
             }
             if (best < 0) return;
             long wanted = entries[best].geometryBytes;
-            if (residentBytes + wanted > ResidentBudgetBytes)
+            if (EffectiveResidentBytes() + wanted > ResidentBudgetBytes)
             {
                 float margin = Mathf.Sqrt(closest) + 8f;
                 int farthest = -1; float distance = margin * margin;
                 for (int i = 0; i < entries.Length; i++)
-                    if (leases[i].mesh && DistanceSquared(i, position) > distance)
+                    if (leases[i].mesh && !leases[i].admissionBlocked && DistanceSquared(i, position) > distance)
                     { distance = DistanceSquared(i, position); farthest = i; }
                 if (farthest >= 0) Retire(farthest);
-                return;
+                if (pendingIndex >= 0 || Time.frameCount == retirementFrame)
+                {
+#if UNITY_WEBGL && !UNITY_EDITOR
+                    nextTick = Time.unscaledTime;
+#endif
+                    return;
+                }
             }
             int token = Begin(best);
             if (network && token >= 0) pendingRoutine = StartCoroutine(Load(best, token));
@@ -159,7 +176,7 @@ namespace SlopCity
             if (pendingIndex < 0 && (pendingRequest != null || pendingDownload != null || pendingRoutine != null)) CancelPending();
             if (disposed || index < 0 || index >= entries.Length || pendingIndex >= 0 || pendingRequest != null
                 || pendingDownload != null || pendingRoutine != null || Time.frameCount == retirementFrame || leases[index].mesh
-                || !ValidEntry(entries[index]) || residentBytes + entries[index].geometryBytes > ResidentBudgetBytes) return -1;
+                || !ValidEntry(entries[index]) || EffectiveResidentBytes() + entries[index].geometryBytes > ResidentBudgetBytes) return -1;
             // A failed proxy setter may leave a now-destroyed owned mesh in the
             // filter. Repair only an empty/dead binding; never replace foreign geometry.
             try { if (!entries[index].target.sharedMesh) entries[index].target.sharedMesh = entries[index].farProxy; }
@@ -216,7 +233,7 @@ namespace SlopCity
             try
             {
                 DetailEntry entry = entries[index];
-                if (!ValidEntry(entry) || residentBytes + entry.geometryBytes > ResidentBudgetBytes)
+                if (!ValidEntry(entry) || EffectiveResidentBytes() + entry.geometryBytes > ResidentBudgetBytes)
                     throw new InvalidDataException("Detail admission exceeds its resident budget.");
                 mesh = SlopCityDetailMeshCodec.DecodeOwned(bytes, entry.sha256, entry.payloadBytes, out geometryBytes, ref mesh, expectedGeometryBytes: entry.geometryBytes);
                 if (geometryBytes != entry.geometryBytes || !entry.target || entry.target.sharedMesh != entry.farProxy)
@@ -238,15 +255,12 @@ namespace SlopCity
             }
             catch (Exception)
             {
-                // DecodeOwned exposes allocation before any native setter, so a
-                // decode/binding rollback cannot strand a local native handle.
                 if (!ReferenceEquals(mesh, null))
                 {
-                    leases[index].mesh = mesh;
-                    residentBytes += geometryBytes;
+                    try { DestroyOwned(mesh); }
+                    catch (Exception) { WarnCleanup(); leases[index].mesh = mesh; AbandonLeaseBudget(index); }
                 }
                 Failed(index, token);
-                Retire(index);
                 return false;
             }
         }
@@ -339,11 +353,13 @@ namespace SlopCity
                 catch (Exception)
                 {
                     WarnCleanup();
+                    AbandonLeaseBudget(index);
                     return;
                 }
             }
             lease.mesh = null;
             lease.destroyRefusals = 0;
+            lease.admissionBlocked = false;
             residentBytes -= entry.geometryBytes;
 #if UNITY_EDITOR
             if (Application.isPlaying) retirementFrame = Time.frameCount;
@@ -351,6 +367,24 @@ namespace SlopCity
             retirementFrame = Time.frameCount;
 #endif
         }
+        private long EffectiveResidentBytes()
+        {
+            if (leases == null) return residentBytes;
+            long charged = residentBytes;
+            for (int i = 0; i < entries.Length; i++)
+                if (leases[i].admissionBlocked && leases[i].mesh) charged -= entries[i].geometryBytes;
+            return charged;
+        }
+
+        private void AbandonLeaseBudget(int index)
+        {
+            Lease lease = leases[index];
+            if (lease.admissionBlocked || ReferenceEquals(lease.mesh, null)) return;
+            lease.admissionBlocked = true;
+            residentBytes -= entries[index].geometryBytes;
+            if (residentBytes < 0) residentBytes = 0;
+        }
+
         private static void DestroyOwned(Mesh mesh)
         {
 #if UNITY_EDITOR

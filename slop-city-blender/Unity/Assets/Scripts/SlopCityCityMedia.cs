@@ -68,6 +68,9 @@ namespace SlopCity
         private bool progressSavePending;
         private float progressSaveDue;
         private string feedMessage = "Bundled clips. Open creator feeds for current TikTok posts.";
+        private int assignedClipCount;
+        private readonly Dictionary<string, int> assignedClipRefs = new Dictionary<string, int>(StringComparer.Ordinal);
+        private static readonly AnimationCurve SpatialAudioRolloff = AnimationCurve.Linear(0f, 1f, 1f, 1f);
 
         public static SlopCityCityMedia Instance { get; private set; }
         public int ScreenCount => screens.Count;
@@ -75,15 +78,7 @@ namespace SlopCity
         public float Volume => volume;
         public bool IsRefreshing => refreshing;
         public int DecoderLimit => activeDecoderLimit;
-        public int AssignedClipCount
-        {
-            get
-            {
-                var keys = new HashSet<string>(StringComparer.Ordinal);
-                foreach (ScreenState display in displays) if (display.screen && !string.IsNullOrEmpty(display.screen.ClipKey)) keys.Add(display.screen.ClipKey);
-                return keys.Count;
-            }
-        }
+        public int AssignedClipCount => assignedClipCount;
         public SlopCityCityScreen AudibleScreen => audioOwner != null && focusedAudioGain > .001f ? audioOwner.screen : null;
         public int PlaylistCount(int channel) => channels[Mathf.Clamp(channel, 0, ChannelCount - 1)]?.playlist.Count ?? 0;
         public string CurrentVideoId(int channel) => channels[Mathf.Clamp(channel, 0, ChannelCount - 1)]?.currentVideo?.id ?? "";
@@ -151,10 +146,15 @@ namespace SlopCity
 
         private void RefreshDecoderBudget(bool browserBuild)
         {
-            // Use the same established input decision that creates mobile controls;
-            // native touch editions keep their three-slot pool and display quality.
+            // Align with SlopCityUsesTouch / iOS UA (jslib mobile video) even when
+            // touch chrome is off or city media initializes before player Awake.
             SlopCityPlayerInput input = viewer ? viewer.GetComponentInParent<SlopCityPlayerInput>() : null;
-            activeDecoderLimit = browserBuild && input && input.UseTouchControls ? 1 : ChannelCount;
+#if UNITY_WEBGL && !UNITY_EDITOR
+            bool mobileWeb = browserBuild && SlopCityPlayerInput.BrowserUsesMobileMediaBudget(input);
+#else
+            bool mobileWeb = browserBuild && input && input.UseTouchControls;
+#endif
+            activeDecoderLimit = mobileWeb ? 1 : ChannelCount;
         }
 
         private void Awake() { Instance = this; }
@@ -249,6 +249,30 @@ namespace SlopCity
             SlopCityCityScreen[] discovered = root ? root.GetComponentsInChildren<SlopCityCityScreen>(true)
                 : FindObjectsByType<SlopCityCityScreen>(FindObjectsInactive.Include, FindObjectsSortMode.None);
             foreach (SlopCityCityScreen screen in discovered) RegisterScreen(screen);
+        }
+
+        private void AddAssignedClipRef(string key)
+        {
+            if (string.IsNullOrEmpty(key)) return;
+            if (assignedClipRefs.TryGetValue(key, out int count)) assignedClipRefs[key] = count + 1;
+            else { assignedClipRefs[key] = 1; assignedClipCount++; }
+        }
+
+        private void ReleaseAssignedClipRef(string key)
+        {
+            if (string.IsNullOrEmpty(key) || !assignedClipRefs.TryGetValue(key, out int count)) return;
+            if (count <= 1) { assignedClipRefs.Remove(key); assignedClipCount--; }
+            else assignedClipRefs[key] = count - 1;
+        }
+
+        private void AssignScreenClip(ScreenState display, string key, string title)
+        {
+            if (!display?.screen) return;
+            string previous = display.screen.ClipKey;
+            display.screen.AssignClip(key, title);
+            if (previous == key) return;
+            ReleaseAssignedClipRef(previous);
+            AddAssignedClipRef(key);
         }
 
         public void RegisterScreen(SlopCityCityScreen screen)
@@ -413,6 +437,7 @@ namespace SlopCity
                 displays.Remove(display);
                 candidates.Remove(display);
                 CleanupMedia(() => { if (display.screen) display.screen.Restore(); });
+                ReleaseAssignedClipRef(display.screen ? display.screen.ClipKey : null);
                 ReleaseScreenResources(display);
             }
             // Retry entries are shared clip/catalog backoff, rather than screen
@@ -430,7 +455,18 @@ namespace SlopCity
                 if (!display.texture)
                 {
 #if UNITY_WEBGL && !UNITY_EDITOR
-                    display.texture = new RenderTexture(display.screen.IsFeatured ? 270 : 320, display.screen.IsFeatured ? 480 : 180, 0, RenderTextureFormat.ARGB32);
+                    int width, height;
+                    if (MobileWebBudget)
+                    {
+                        width = display.screen.IsFeatured ? 270 : 480;
+                        height = display.screen.IsFeatured ? 480 : 270;
+                    }
+                    else
+                    {
+                        width = display.screen.IsFeatured ? 270 : 320;
+                        height = display.screen.IsFeatured ? 480 : 180;
+                    }
+                    display.texture = new RenderTexture(width, height, 0, RenderTextureFormat.ARGB32);
 #else
                     display.texture = new RenderTexture(display.screen.IsFeatured ? 360 : 640, display.screen.IsFeatured ? 640 : 360, 0, RenderTextureFormat.ARGB32);
 #endif
@@ -1230,7 +1266,7 @@ namespace SlopCity
                             if (display.slot != null) ReleaseSlot(display.slot);
                             display.post = null; AssignNextPost(display);
                         }
-                        else { display.post = featured; display.screen.AssignClip(VideoKey(featured), PostTitle(featured)); }
+                        else { display.post = featured; AssignScreenClip(display, VideoKey(featured), PostTitle(featured)); }
                     }
                     else if (display.post == null) AssignNextPost(display);
                     continue;
@@ -1239,7 +1275,7 @@ namespace SlopCity
                 if (!reserved && byKey.TryGetValue(key, out SlopCityTikTokVideo current))
                 {
                     display.post = current;
-                    display.screen.AssignClip(key, PostTitle(current));
+                    AssignScreenClip(display, key, PostTitle(current));
                     continue;
                 }
                 if (!reserved && display.slot != null && display.slot.ready && display.post != null) continue;
@@ -1263,7 +1299,7 @@ namespace SlopCity
                 display.post = featured ?? (display.post != null && VideoKey(display.post) == display.screen.FeaturedClipKey ? display.post : null);
                 display.generation++;
                 display.needsThumbnail = !display.screen.AudioOnly && display.post != null;
-                display.screen.AssignClip(display.screen.FeaturedClipKey,
+                AssignScreenClip(display, display.screen.FeaturedClipKey,
                     display.post != null ? PostTitle(display.post) : "FEATURED CREATOR BROADCAST");
                 return;
             }
@@ -1294,7 +1330,7 @@ namespace SlopCity
             display.post = selected;
             display.generation++;
             display.needsThumbnail = !display.screen.AudioOnly && selected != null;
-            display.screen.AssignClip(selected != null ? VideoKey(selected) : "archive/" + display.fallback.localFile,
+            AssignScreenClip(display, selected != null ? VideoKey(selected) : "archive/" + display.fallback.localFile,
                 selected != null ? PostTitle(selected) : "BUNDLED / " + display.fallback.title);
         }
 
@@ -1511,6 +1547,9 @@ namespace SlopCity
         private void EnsurePlayer(Channel signal)
         {
             if (signal.player && signal.playbackConfigured) return;
+#if UNITY_WEBGL && !UNITY_EDITOR
+            if (MobileWebBudget && signal.owner == null) return;
+#endif
             if (signal.session || signal.player || signal.audio)
             {
                 ReleasePlayback(signal);
@@ -1526,7 +1565,7 @@ namespace SlopCity
             signal.audio.spatialBlend = 1f;
             // Range and occlusion are already mixed once in UpdateAudio; retain native panning.
             signal.audio.rolloffMode = AudioRolloffMode.Custom;
-            signal.audio.SetCustomCurve(AudioSourceCurveType.CustomRolloff, AnimationCurve.Linear(0f, 1f, 1f, 1f));
+            signal.audio.SetCustomCurve(AudioSourceCurveType.CustomRolloff, SpatialAudioRolloff);
             signal.audio.minDistance = 1.5f;
             signal.audio.maxDistance = 14f;
             signal.audio.dopplerLevel = 0f;
@@ -2275,6 +2314,9 @@ namespace SlopCity
 #endif
             signal.featuredHolding = signal.featuredHeldThisLoop = false;
             signal.featuredHoldRemaining = 0f;
+            signal.preparedHandler = null;
+            signal.errorHandler = null;
+            signal.endedHandler = null;
         }
 
         private static void ReleasePlayback(Channel signal)
@@ -2401,6 +2443,7 @@ namespace SlopCity
                     signal.resumeAudio = true;
                 }
             CleanupMedia(StopAllCoroutines);
+            // Same frame as StopAllCoroutines; see SlopCityMediaCoroutines.DisposeAll.
             CleanupMedia(mediaCoroutines.DisposeAll);
 #if UNITY_WEBGL && !UNITY_EDITOR
             foreach (Channel signal in channels)
@@ -2436,6 +2479,7 @@ namespace SlopCity
         {
             CleanupMedia(() => RefreshMobileLoungePriority(false, true));
             CleanupMedia(StopAllCoroutines);
+            // Same frame as StopAllCoroutines; see SlopCityMediaCoroutines.DisposeAll.
             CleanupMedia(mediaCoroutines.DisposeAll);
             CleanupMedia(() => SlopCityMediaAudioFocus.Remove(this));
             if (Instance == this) Instance = null;

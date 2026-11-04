@@ -47,6 +47,7 @@ namespace SlopCity
         private SlopCityPlayerInput input;
         private SlopCityFirstPerson owner;
         private Font font;
+        private GameObject ownedEventSystem;
         private bool initialized;
         private bool initializing;
         private bool immersiveView;
@@ -151,7 +152,7 @@ namespace SlopCity
                 if (!GetComponent<GraphicRaycaster>()) gameObject.AddComponent<GraphicRaycaster>();
                 if (!EventSystem.current)
                 {
-                    createdEvents = new GameObject("SlopCity_EventSystem", typeof(EventSystem));
+                    ownedEventSystem = createdEvents = new GameObject("SlopCity_EventSystem", typeof(EventSystem));
 #if ENABLE_INPUT_SYSTEM && !ENABLE_LEGACY_INPUT_MANAGER
                     createdEvents.AddComponent<UnityEngine.InputSystem.UI.InputSystemUIInputModule>();
 #else
@@ -205,6 +206,7 @@ namespace SlopCity
                     finally { Destroy(sourceBrowser); sourceBrowser = null; }
                 }
                 RetireUi(createdEvents);
+                ownedEventSystem = null;
                 if (promptLabel && !originalShadow)
                 {
                     Shadow shadow = promptLabel.GetComponent<Shadow>();
@@ -837,7 +839,29 @@ namespace SlopCity
             returnToLoungeButton.GetComponentInChildren<Text>().rectTransform.sizeDelta = back.sizeDelta;
         }
 
-        private void OnDestroy() { if (rabbitTrail) Destroy(rabbitTrail.gameObject); }
+        private void OnDestroy()
+        {
+            if (sourceBrowser)
+            {
+                try { sourceBrowser.Hide(); }
+                catch (System.Exception error) { Debug.LogWarning("Source browser cleanup failed: " + error.Message, this); }
+                Destroy(sourceBrowser);
+                sourceBrowser = null;
+            }
+            if (rabbitTrail) { Destroy(rabbitTrail.gameObject); rabbitTrail = null; }
+            if (touchControls) { RetireUi(touchControls); touchControls = null; }
+            if (menu) { RetireUi(menu); menu = null; }
+            if (sourceCard) { RetireUi(sourceCard); sourceCard = null; }
+            if (gameplayLayer) { RetireUi(gameplayLayer); gameplayLayer = null; }
+            if (ownedEventSystem)
+            {
+                if (EventSystem.current && EventSystem.current.gameObject == ownedEventSystem)
+                    EventSystem.current.SetSelectedGameObject(null);
+                RetireUi(ownedEventSystem);
+                ownedEventSystem = null;
+            }
+            initialized = false;
+        }
 
 
 

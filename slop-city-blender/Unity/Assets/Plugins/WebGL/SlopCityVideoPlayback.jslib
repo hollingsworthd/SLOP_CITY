@@ -5,11 +5,12 @@ mergeInto(LibraryManager.library, {
 
   $slopCityUsesMobileVideo: function (v) {
     if (typeof v.slopCityMobilePlayback === 'boolean') return v.slopCityMobilePlayback;
+    var touch = 0;
+    try { touch = typeof SlopCityUsesTouch === 'function' ? SlopCityUsesTouch() : 0; } catch (_) {}
     var info = typeof Module !== 'undefined' && Module.SystemInfo;
-    var nav = typeof navigator !== 'undefined' ? navigator : {};
-    v.slopCityMobilePlayback = !!((info && (info.mobile || /^(iPhoneOS|iPadOS|Android)$/.test(info.os)))
-      || /Android|iPhone|iPad|iPod/.test(nav.userAgent || '')
-      || (nav.platform === 'MacIntel' && nav.maxTouchPoints > 1));
+    v.slopCityMobilePlayback = !!(touch
+      || (info && info.mobile)
+      || (info && /^(iPhoneOS|iPadOS)$/.test(info.os)));
     return v.slopCityMobilePlayback;
   },
 
@@ -134,6 +135,8 @@ mergeInto(LibraryManager.library, {
   $slopCityRequestVideoFrame__deps: ['$videoInstances', '$slopCityCancelVideoFrame'],
   $slopCityRequestVideoFrame: function (video, v, intent) {
     if (videoInstances[video] !== v || typeof v.requestVideoFrameCallback !== 'function') return;
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+    if (v.paused || v.ended) return;
     slopCityCancelVideoFrame(v);
     var request = {};
     v.slopCityFrameRequest = request;
@@ -359,26 +362,47 @@ mergeInto(LibraryManager.library, {
     if (v && v.loopEndPollInterval) { clearInterval(v.loopEndPollInterval); delete v.loopEndPollInterval; }
   },
 
-  $slopCityNotifyVideoPlayback__deps: ['$jsVideoPendingBlockedVideos'],
-  $slopCityNotifyVideoPlayback: function () {
-    var pendingCount = Object.keys(jsVideoPendingBlockedVideos).length;
-    if (typeof window.CustomEvent !== 'function' || !document.dispatchEvent) return;
-    try {
-      document.dispatchEvent(new window.CustomEvent('slopcityvideoplayback', {
-        detail: { pendingCount: pendingCount, state: pendingCount ? 'waiting' : 'ready' }
-      }));
-    } catch (error) { /* Optional launcher status cannot interrupt playback. */ }
+  $slopCityVideoGestureListening: false,
+  $slopCityPlaybackNotifyScheduled: false,
+
+  $slopCityEnsureVideoGestureListener__deps: ['$slopCityVideoRetryGesture', '$slopCityVideoGestureListening'],
+  $slopCityEnsureVideoGestureListener: function () {
+    if (slopCityVideoGestureListening) return;
+    slopCityVideoGestureListening = true;
+    window.addEventListener('pointerup', slopCityVideoRetryGesture, true);
+    window.addEventListener('keydown', slopCityVideoRetryGesture, true);
   },
 
-  $jsVideoAddPendingBlockedVideo__deps: ['$jsVideoPendingBlockedVideos', '$slopCityVideoRetryGesture', '$slopCityNotifyVideoPlayback', '$slopCityUsesMobileVideo'],
+  $slopCityReleaseVideoGestureListener__deps: ['$jsVideoPendingBlockedVideos', '$slopCityVideoRetryGesture', '$slopCityVideoGestureListening'],
+  $slopCityReleaseVideoGestureListener: function () {
+    if (Object.keys(jsVideoPendingBlockedVideos).length > 0 || !slopCityVideoGestureListening) return;
+    slopCityVideoGestureListening = false;
+    window.removeEventListener('pointerup', slopCityVideoRetryGesture, true);
+    window.removeEventListener('keydown', slopCityVideoRetryGesture, true);
+  },
+
+  $slopCityNotifyVideoPlayback__deps: ['$jsVideoPendingBlockedVideos', '$slopCityPlaybackNotifyScheduled'],
+  $slopCityNotifyVideoPlayback: function () {
+    if (slopCityPlaybackNotifyScheduled) return;
+    slopCityPlaybackNotifyScheduled = true;
+    var schedule = typeof requestAnimationFrame === 'function' ? requestAnimationFrame : function (fn) { setTimeout(fn, 0); };
+    schedule(function () {
+      slopCityPlaybackNotifyScheduled = false;
+      var pendingCount = Object.keys(jsVideoPendingBlockedVideos).length;
+      if (typeof window.CustomEvent !== 'function' || !document.dispatchEvent) return;
+      try {
+        document.dispatchEvent(new window.CustomEvent('slopcityvideoplayback', {
+          detail: { pendingCount: pendingCount, state: pendingCount ? 'waiting' : 'ready' }
+        }));
+      } catch (error) { /* Optional launcher status cannot interrupt playback. */ }
+    });
+  },
+
+  $jsVideoAddPendingBlockedVideo__deps: ['$jsVideoPendingBlockedVideos', '$slopCityEnsureVideoGestureListener', '$slopCityNotifyVideoPlayback', '$slopCityUsesMobileVideo'],
   $jsVideoAddPendingBlockedVideo: function (video, v) {
     if (slopCityUsesMobileVideo(v) && jsVideoPendingBlockedVideos[video] === v) return;
-    if (Object.keys(jsVideoPendingBlockedVideos).length === 0) {
-      ['mousedown', 'touchstart', 'touchend', 'pointerup', 'keydown', 'click'].forEach(function (type) {
-        window.addEventListener(type, slopCityVideoRetryGesture, true);
-      });
-    }
     jsVideoPendingBlockedVideos[video] = v;
+    slopCityEnsureVideoGestureListener();
     slopCityNotifyVideoPlayback();
   },
 
@@ -489,7 +513,7 @@ mergeInto(LibraryManager.library, {
     } catch (error) { failed(error); }
   },
 
-  $jsVideoRemovePendingBlockedVideo__deps: ['$videoInstances', '$jsVideoPendingBlockedVideos', '$slopCityVideoRetryGesture', '$slopCityVideoRetryInFlight', '$slopCityNotifyVideoPlayback', '$slopCityCancelVideoFrame', '$slopCityClearVideoAttemptTimer', '$slopCityCancelVideoPictureWatch'],
+  $jsVideoRemovePendingBlockedVideo__deps: ['$videoInstances', '$jsVideoPendingBlockedVideos', '$slopCityVideoRetryInFlight', '$slopCityReleaseVideoGestureListener', '$slopCityNotifyVideoPlayback', '$slopCityCancelVideoFrame', '$slopCityClearVideoAttemptTimer', '$slopCityCancelVideoPictureWatch'],
   $jsVideoRemovePendingBlockedVideo: function (video, preservePictureWatch) {
     // Unity's unchanged destroy helper calls this before clearing its source.
     if (!preservePictureWatch)
@@ -502,11 +526,7 @@ mergeInto(LibraryManager.library, {
     if (videoInstances[video]) delete videoInstances[video].slopCityMutedFallback;
     delete jsVideoPendingBlockedVideos[video];
     delete slopCityVideoRetryInFlight[video];
-    if (Object.keys(jsVideoPendingBlockedVideos).length === 0) {
-      ['mousedown', 'touchstart', 'touchend', 'pointerup', 'keydown', 'click'].forEach(function (type) {
-        window.removeEventListener(type, slopCityVideoRetryGesture, true);
-      });
-    }
+    slopCityReleaseVideoGestureListener();
     slopCityNotifyVideoPlayback();
   }
 });

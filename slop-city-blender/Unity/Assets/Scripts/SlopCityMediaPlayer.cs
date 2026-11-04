@@ -66,13 +66,14 @@ namespace SlopCity
         private int webPlaybackGeneration;
         private VideoPlayer.FrameReadyEventHandler webFrameReadyHandler;
         private static SlopCityMediaPlayer mobileDecoderOwner;
+        private static readonly AnimationCurve SpatialAudioRolloff = AnimationCurve.Linear(0f, 1f, 1f, 1f);
         private bool MobileWebBudget
         {
             get
             {
                 if (!webCamera) webCamera = Camera.main;
                 SlopCityPlayerInput input = webCamera ? webCamera.GetComponentInParent<SlopCityPlayerInput>() : null;
-                return input && input.UseTouchControls;
+                return SlopCityPlayerInput.BrowserUsesMobileMediaBudget(input);
             }
         }
 #endif
@@ -262,7 +263,7 @@ namespace SlopCity
                 audioSource.playOnAwake = false;
                 audioSource.spatialBlend = 1f;
                 audioSource.rolloffMode = AudioRolloffMode.Custom;
-                audioSource.SetCustomCurve(AudioSourceCurveType.CustomRolloff, AnimationCurve.Linear(0f, 1f, 1f, 1f));
+                audioSource.SetCustomCurve(AudioSourceCurveType.CustomRolloff, SpatialAudioRolloff);
                 audioSource.minDistance = 2f;
                 audioSource.maxDistance = 18f;
                 audioSource.dopplerLevel = 0f;

@@ -35,6 +35,7 @@ namespace SlopCity
         private bool paused = true;
         private bool started;
         private bool initializationComplete;
+        private bool failedInitFrozen;
         private bool sourceOpen;
         private bool stoodUp;
         private bool inspectedBroadcast;
@@ -50,6 +51,8 @@ namespace SlopCity
         private bool appFocused = true;
         private bool appSuspended;
         private SlopCityDoor[] doors;
+        private float nextDoorRegistryRefresh;
+        private const float DoorRegistryDebounce = 0.35f;
         private SlopCityDoor nearbyDoor;
         private SlopCitySandbox sandbox;
         private SlopCityCityMedia cityMedia;
@@ -63,6 +66,10 @@ namespace SlopCity
         private Bounds homeBounds;
         private bool hasHomeBounds;
         private string currentDistrictName = "HOME / DANIEL'S LOUNGE";
+        private int lastDistrictIndex = -1;
+        private float nextNearbyActionScan;
+        private NearbyAction cachedNearbyAction;
+        private const float NearbyActionScanInterval = 0.15f;
         private enum NearbyAction { None, Sit, Television, Records, Door }
 
         public bool IsPaused => paused;
@@ -128,6 +135,7 @@ namespace SlopCity
                     paused = true;
                     if (playerInput) playerInput.SetGameplayEnabled(false);
                     if (controller) controller.enabled = false;
+                    failedInitFrozen = true;
                     Time.timeScale = 0f;
                     if (!cityMedia) cityMedia = SlopCityCityMedia.Instance;
                     RefreshMediaSuspension();
@@ -301,6 +309,7 @@ namespace SlopCity
             stoodUp = inspectedBroadcast = returnedHome = false;
             System.Array.Clear(visitedBlocks, 0, visitedBlocks.Length);
             VisitedBlockCount = 0;
+            lastDistrictIndex = -1;
             selectedChannel = SlopCityMediaChannel.Broadcast;
             if (media) media.Stop();
             if (sandbox) sandbox.Restart();
@@ -434,7 +443,12 @@ namespace SlopCity
         /// <summary>Full interaction rescan after streamed rooms change; throttled by the building world.</summary>
         public void RefreshWorldInteractions()
         {
-            doors = FindObjectsByType<SlopCityDoor>(FindObjectsSortMode.None);
+            if (Time.unscaledTime >= nextDoorRegistryRefresh)
+            {
+                nextDoorRegistryRefresh = Time.unscaledTime + DoorRegistryDebounce;
+                doors = FindObjectsByType<SlopCityDoor>(FindObjectsSortMode.None);
+                InvalidateNearbyActionCache();
+            }
             if (sandbox) sandbox.RefreshWorldGeometry();
         }
 
@@ -451,9 +465,22 @@ namespace SlopCity
             transform.rotation = Quaternion.Euler(0f, heading, 0f);
             controller.enabled = !externalMovement;
             Physics.SyncTransforms();
+            InvalidateNearbyActionCache();
         }
 
         public void NewContract() { if (initializationComplete && sandbox) sandbox.RerollObjective(); }
+
+        private void InvalidateNearbyActionCache() { nextNearbyActionScan = 0f; }
+
+        private NearbyAction NearbyActionForHud()
+        {
+            if (Time.unscaledTime >= nextNearbyActionScan)
+            {
+                nextNearbyActionScan = Time.unscaledTime + NearbyActionScanInterval;
+                cachedNearbyAction = FindNearbyAction();
+            }
+            return cachedNearbyAction;
+        }
 
         private NearbyAction FindNearbyAction()
         {
@@ -556,6 +583,7 @@ namespace SlopCity
 
         private void PerformInteraction(NearbyAction action)
         {
+            InvalidateNearbyActionCache();
             switch (action)
             {
                 case NearbyAction.Sit: RespawnAtCouch(); break;
@@ -633,15 +661,31 @@ namespace SlopCity
 
         private void UpdateCityProgress()
         {
-            currentDistrictName = IsOutside ? "CITY STREETS" : "HOME / DANIEL'S LOUNGE";
-            if (!IsOutside || districts == null) return;
+            if (!IsOutside)
+            {
+                if (lastDistrictIndex != -1)
+                {
+                    lastDistrictIndex = -1;
+                    currentDistrictName = "HOME / DANIEL'S LOUNGE";
+                }
+                return;
+            }
+            if (districts == null)
+            {
+                if (lastDistrictIndex != -2) { lastDistrictIndex = -2; currentDistrictName = "CITY STREETS"; }
+                return;
+            }
             foreach (SlopCityDistrict district in districts)
             {
                 if (!district) continue;
                 Vector3 offset = transform.position - district.Center;
                 if (!district.ContainsStreetPoint(transform.position) || Mathf.Abs(offset.y) > 4f) continue;
-                currentDistrictName = district.DisplayName;
                 int index = district.Row * 3 + district.Column;
+                if (index != lastDistrictIndex)
+                {
+                    lastDistrictIndex = index;
+                    currentDistrictName = district.DisplayName;
+                }
                 if (index >= 0 && index < visitedBlocks.Length && !visitedBlocks[index])
                 {
                     visitedBlocks[index] = true;
@@ -651,6 +695,7 @@ namespace SlopCity
                 }
                 return;
             }
+            if (lastDistrictIndex != -2) { lastDistrictIndex = -2; currentDistrictName = "CITY STREETS"; }
         }
 
 #if UNITY_WEBGL && !UNITY_EDITOR
@@ -671,7 +716,7 @@ namespace SlopCity
             else if (seated) prompt = key + " GET UP FROM THE COUCH";
             else
             {
-                switch (FindNearbyAction())
+                switch (NearbyActionForHud())
                 {
                     case NearbyAction.Television: prompt = key + " CHOOSE LIVING-ROOM MEDIA"; break;
                     case NearbyAction.Records: prompt = key + " PLAY IN-Q-TEL RAP"; break;
@@ -701,6 +746,7 @@ namespace SlopCity
         private void ShowFeedbackFor(string text,float duration)
         {
             feedback = text; feedbackUntil = Time.unscaledTime + duration;
+            InvalidateNearbyActionCache();
 #if UNITY_WEBGL && !UNITY_EDITOR
             nextBrowserHudRefresh = 0;
 #endif
@@ -742,9 +788,16 @@ namespace SlopCity
         }
         private void OnDisable()
         {
+            if (crowd) crowd.LocalAgentReportRequested -= ShowLocalReport;
             if (media) media.SetSuspended(true);
             if (cityMedia) cityMedia.SetSuspended(true);
-            Time.timeScale = 1f;
+            if (failedInitFrozen)
+            {
+                Time.timeScale = 1f;
+                failedInitFrozen = false;
+            }
+            else if (Application.isQuitting)
+                Time.timeScale = 1f;
             UnlockCursor();
         }
     }

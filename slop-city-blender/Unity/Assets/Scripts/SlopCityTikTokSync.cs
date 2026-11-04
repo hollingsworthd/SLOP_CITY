@@ -53,7 +53,7 @@ namespace SlopCity
         private static readonly Dictionary<string, DownloadWork> activeCacheWork = new Dictionary<string, DownloadWork>(StringComparer.Ordinal);
         private readonly HashSet<string> pinned = new HashSet<string>(StringComparer.Ordinal);
         private float nextRefresh, refreshSeconds = 300;
-        private bool syncing, destroying, cacheUnavailable;
+        private bool syncing, destroying, cacheUnavailable, catalogDirty, publishDeferred;
 #if !UNITY_WEBGL || UNITY_EDITOR
         private bool started, requested;
 #endif
@@ -90,14 +90,36 @@ namespace SlopCity
             // UnityWebRequest handles those and normal desktop file URLs alike.
             yield return LoadBundledCatalog();
             yield return LoadBundledVideoDimensions();
+#if !UNITY_WEBGL || UNITY_EDITOR
+            LoadCatalog();
+            started = true;
+            if (Time.unscaledTime >= nextRefresh) requested = true;
+#endif
             initializationComplete = true;
         }
 
         public void RequestRefresh()
         {
+#if !UNITY_WEBGL || UNITY_EDITOR
+            if (!initializationComplete || destroying) return;
+            requested = true;
+            return;
+#endif
             status = bundledPosts.Count > 0 ? bundledPosts.Count + " bundled offline creator posts."
                 : "Bundled catalogue unavailable; archive clips remain available.";
         }
+
+#if !UNITY_WEBGL || UNITY_EDITOR
+        private void Update()
+        {
+            if (!initializationComplete || destroying || syncing || !started) return;
+            if (requested || Time.unscaledTime >= nextRefresh)
+            {
+                requested = false;
+                mediaCoroutines.Start(this, SyncAccounts());
+            }
+        }
+#endif
 
         private IEnumerator LoadBundledCatalog()
         {
@@ -332,9 +354,7 @@ namespace SlopCity
                         if (pageNumber == MaxPages - 1) account.status = "Listing safety limit reached; catalogue is partial.";
                         yield return new WaitForSecondsRealtime(.15f);
                     }
-                    if (account.complete)
-                        foreach (string key in merged.Keys.Where(key => key.StartsWith(creator + "/", StringComparison.Ordinal)
-                            && !bundledPosts.ContainsKey(key)).ToArray()) merged.Remove(key);
+                    PruneMergedForAccount(merged, creator, fetched, account.complete, receivedPage);
                     foreach (SlopCityTikTokVideo post in fetched.Values)
                     {
                         string key = creator + "/" + post.id;
@@ -349,12 +369,13 @@ namespace SlopCity
                     catalog = new SlopCityTikTokCatalog { syncedAtUtc = DateTime.UtcNow.ToString("O"), bundledAtUtc = catalog.bundledAtUtc,
                         featuredCreator = catalog.featuredCreator, featuredPostId = catalog.featuredPostId, accounts = accounts.ToArray(),
                         videos = merged.Values.OrderByDescending(post => post.createTime).ThenBy(post => post.id, StringComparer.Ordinal).ToArray() };
-                    SaveCatalog();
-                    Publish();
+                    catalogDirty = true;
                 }
                 int photos = catalog.videos.Count(post => post.kind == "slideshow");
                 status = catalog.videos.Length + " TikTok posts / " + photos + " slideshows"
                     + (accounts.All(account => account.complete) ? " / up to date." : " / partial sync; cached posts retained.");
+                publishDeferred = true;
+                CommitDeferredCatalog();
             }
             finally
             {
@@ -387,15 +408,74 @@ namespace SlopCity
         private void TrimCatalogVideos()
         {
             if (catalog?.videos == null || catalog.videos.Length <= MaxRetainedCatalogVideos) return;
-            Array.Sort(catalog.videos, (left, right) =>
+            var kept = new Dictionary<string, SlopCityTikTokVideo>(StringComparer.Ordinal);
+            foreach (SlopCityTikTokVideo post in catalog.videos)
             {
-                int byTime = right.createTime.CompareTo(left.createTime);
-                return byTime != 0 ? byTime : string.CompareOrdinal(left.id, right.id);
-            });
-            catalog.videos = catalog.videos.Take(MaxRetainedCatalogVideos).ToArray();
+                string key = post.creator + "/" + post.id;
+                if (bundledPosts.ContainsKey(key)) kept[key] = post;
+            }
+            foreach (SlopCityTikTokVideo post in catalog.videos.OrderByDescending(item => item.createTime).ThenBy(item => item.id, StringComparer.Ordinal))
+            {
+                string key = post.creator + "/" + post.id;
+                if (kept.Count >= MaxRetainedCatalogVideos && !kept.ContainsKey(key)) continue;
+                kept[key] = post;
+            }
+            catalog.videos = kept.Values.OrderByDescending(post => post.createTime).ThenBy(post => post.id, StringComparer.Ordinal).ToArray();
+        }
+
+        private void PruneMergedForAccount(Dictionary<string, SlopCityTikTokVideo> merged, string creator,
+            Dictionary<string, SlopCityTikTokVideo> fetched, bool complete, bool receivedPage)
+        {
+            if (complete)
+            {
+                foreach (string key in merged.Keys.Where(key => key.StartsWith(creator + "/", StringComparison.Ordinal)
+                    && !bundledPosts.ContainsKey(key)).ToArray())
+                {
+                    string id = key.Substring(creator.Length + 1);
+                    if (!fetched.ContainsKey(id)) merged.Remove(key);
+                }
+                return;
+            }
+            if (receivedPage) TrimMergedDictionary(merged);
+        }
+
+        private void TrimMergedDictionary(Dictionary<string, SlopCityTikTokVideo> merged)
+        {
+            if (merged.Count <= MaxRetainedCatalogVideos) return;
+            var kept = new Dictionary<string, SlopCityTikTokVideo>(StringComparer.Ordinal);
+            foreach (KeyValuePair<string, SlopCityTikTokVideo> entry in merged)
+                if (bundledPosts.ContainsKey(entry.Key)) kept[entry.Key] = entry.Value;
+            foreach (SlopCityTikTokVideo post in merged.Values.OrderByDescending(item => item.createTime).ThenBy(item => item.id, StringComparer.Ordinal))
+            {
+                string key = post.creator + "/" + post.id;
+                if (kept.Count >= MaxRetainedCatalogVideos && !kept.ContainsKey(key)) continue;
+                kept[key] = post;
+            }
+            merged.Clear();
+            foreach (KeyValuePair<string, SlopCityTikTokVideo> entry in kept) merged[entry.Key] = entry.Value;
+        }
+
+        private void CommitDeferredCatalog()
+        {
+            if (catalogDirty)
+            {
+                catalogDirty = false;
+                WriteCatalogToDisk();
+            }
+            if (publishDeferred)
+            {
+                publishDeferred = false;
+                PublishNow();
+            }
         }
 
         private void Publish()
+        {
+            if (syncing) { publishDeferred = true; return; }
+            PublishNow();
+        }
+
+        private void PublishNow()
         {
             TrimCatalogVideos();
             SlopCityCityMedia network = GetComponent<SlopCityCityMedia>();
@@ -423,16 +503,32 @@ namespace SlopCity
 
         private void SaveCatalog()
         {
+            if (syncing) { catalogDirty = true; return; }
+            WriteCatalogToDisk();
+        }
+
+        private void WriteCatalogToDisk()
+        {
             if (string.IsNullOrEmpty(CatalogPath) || cacheUnavailable) return;
+            string temporary = CatalogPath + ".tmp";
             try
             {
                 TrimCatalogVideos();
-                string temporary = CatalogPath + ".tmp";
                 File.WriteAllText(temporary, JsonUtility.ToJson(catalog, true));
+                SlopCityTikTokCatalog verified = JsonUtility.FromJson<SlopCityTikTokCatalog>(File.ReadAllText(temporary));
+                if (verified == null || verified.version != 2 || verified.videos == null)
+                {
+                    DeletePartial(temporary);
+                    return;
+                }
                 if (File.Exists(CatalogPath)) File.Replace(temporary, CatalogPath, null);
                 else File.Move(temporary, CatalogPath);
             }
-            catch (Exception error) { Debug.LogWarning("TikTok catalogue save: " + error.GetType().Name); }
+            catch (Exception error)
+            {
+                DeletePartial(temporary);
+                Debug.LogWarning("TikTok catalogue save: " + error.GetType().Name);
+            }
         }
 
         public void ResolveVideo(SlopCityTikTokVideo post, Action<string> completed, Func<bool> stillNeeded = null)
@@ -459,9 +555,13 @@ namespace SlopCity
             if (destroying) { Complete(completed, null); return; }
             string bundled = BundledUri(post, kind, imageIndex);
             if (!string.IsNullOrEmpty(bundled)) { Complete(completed, bundled); return; }
+#if !UNITY_WEBGL || UNITY_EDITOR
+            ResolveCached(post, kind, filename, imageIndex, completed, CacheDirectory, stillNeeded);
+#else
             // A sealed bundle is the only canonical runtime media source.
             // Missing content stays unavailable; no live lookup or download.
             Complete(completed, null);
+#endif
         }
 
         private bool PrepareCacheDirectory(string directory)
@@ -841,6 +941,7 @@ namespace SlopCity
         }
         private void OnDisable()
         {
+            // Same frame as StopAllCoroutines; see SlopCityMediaCoroutines.DisposeAll.
             StopAllCoroutines();
             mediaCoroutines.DisposeAll();
         }

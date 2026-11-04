@@ -45,6 +45,9 @@ namespace SlopCity
         }
         private BrowserLight[] browserLights;
         private float nextLightBudget;
+        private RenderTexture retainedBloom, retainedBlur;
+        private int retainedBloomWidth, retainedBloomHeight;
+        private RenderTextureFormat retainedBloomFormat;
 #endif
 
         public void Configure(Shader shader)
@@ -64,6 +67,9 @@ namespace SlopCity
         {
             lightweightFinish = true;
             optionalBloomDisabled = true;
+#if UNITY_WEBGL && !UNITY_EDITOR
+            ReleaseRetainedBloom();
+#endif
             if (!view) return;
             view.allowHDR = false;
             view.depthTextureMode = DepthTextureMode.None;
@@ -288,7 +294,14 @@ namespace SlopCity
             }
             finally
             {
-                Release(occlusion); Release(bloom); Release(blur); Release(contactBlur);
+                Release(occlusion);
+#if UNITY_WEBGL && !UNITY_EDITOR
+                if (bloom != retainedBloom) Release(bloom);
+                if (blur != retainedBlur) Release(blur);
+#else
+                Release(bloom); Release(blur);
+#endif
+                Release(contactBlur);
                 Release(reflection); Release(reflectedBlur); Release(graded);
             }
         }
@@ -306,8 +319,20 @@ namespace SlopCity
             int width = Mathf.Clamp(Mathf.CeilToInt(source.width * scale), 1, maximumDimension);
             int height = Mathf.Clamp(Mathf.CeilToInt(source.height * scale), 1, maximumDimension);
             RenderTextureFormat format = view.allowHDR ? RenderTextureFormat.ARGBHalf : RenderTextureFormat.ARGB32;
+#if UNITY_WEBGL && !UNITY_EDITOR
+            if (!retainedBloom || retainedBloomWidth != width || retainedBloomHeight != height || retainedBloomFormat != format)
+            {
+                ReleaseRetainedBloom();
+                retainedBloom = Acquire(width, height, format);
+                retainedBlur = Acquire(width, height, format);
+                retainedBloomWidth = width; retainedBloomHeight = height; retainedBloomFormat = format;
+            }
+            bloom = retainedBloom;
+            blur = retainedBlur;
+#else
             bloom = Acquire(width, height, format);
             blur = Acquire(width, height, format);
+#endif
             // An LDR-only host can still make bright signs glow; allocation pressure
             // removes this optional pass without changing in-world emissive materials.
             material.SetFloat("_BloomThreshold", view.allowHDR ? 1.05f : .70f);
@@ -343,10 +368,20 @@ namespace SlopCity
             catch (System.Exception error) { Debug.LogWarning("City effects target cleanup failed: " + error.Message); }
         }
 
+#if UNITY_WEBGL && !UNITY_EDITOR
+        private void ReleaseRetainedBloom()
+        {
+            Release(retainedBloom); Release(retainedBlur);
+            retainedBloom = retainedBlur = null;
+            retainedBloomWidth = retainedBloomHeight = 0;
+        }
+#endif
+
         private void OnDisable()
         {
             Application.lowMemory -= ReduceMemory;
 #if UNITY_WEBGL && !UNITY_EDITOR
+            ReleaseRetainedBloom();
             // The effect can disable itself after a fallback blit failure. Return every
             // surviving lamp's gameplay mask instead of leaving budgeted lamps hidden.
             if (browserLights != null)

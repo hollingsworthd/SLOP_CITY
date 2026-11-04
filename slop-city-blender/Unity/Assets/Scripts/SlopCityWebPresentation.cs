@@ -33,6 +33,7 @@ namespace SlopCity
             fallbackHeight = 540;
             lastBudget = -1;
             nextAllocation = 0;
+            ReleaseWorld();
         }
 
         public static float DisplayPixelRatio

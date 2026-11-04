@@ -129,13 +129,17 @@ mergeInto(LibraryManager.library, {
     if (context) retire(function () { context.onstatechange = null; });
     WEBAudio.soundsPendingContextResume.length = 0;
     slopCityAudioIntervals.slice().forEach(function (id) {
-      if (retire(function () { Module.clearInterval(id); })) slopCityAudioIntervals.splice(slopCityAudioIntervals.indexOf(id), 1);
+      if (retire(function () { Module.clearInterval(id); })) {
+        var intervalIndex = slopCityAudioIntervals.lastIndexOf(id);
+        if (intervalIndex >= 0) slopCityAudioIntervals.splice(intervalIndex, 1);
+      }
     });
     slopCityAudioDeinitializers.slice().forEach(function (cleanup) {
       if (retire(cleanup)) {
         var index = Module.deinitializers.indexOf(cleanup);
         if (index >= 0) Module.deinitializers.splice(index, 1);
-        slopCityAudioDeinitializers.splice(slopCityAudioDeinitializers.indexOf(cleanup), 1);
+        var deinitIndex = slopCityAudioDeinitializers.lastIndexOf(cleanup);
+        if (deinitIndex >= 0) slopCityAudioDeinitializers.splice(deinitIndex, 1);
       }
     });
     Object.keys(WEBAudio.audioInstances).forEach(function (id) {
@@ -156,7 +160,10 @@ mergeInto(LibraryManager.library, {
       var clean = retire(function () { element.pause(); });
       clean = retire(function () { element.removeAttribute('src'); }) && clean;
       clean = retire(function () { element.load(); }) && clean;
-      if (clean) WEBAudio.audioCache.splice(WEBAudio.audioCache.indexOf(element), 1);
+      if (clean) {
+        var cacheIndex = WEBAudio.audioCache.lastIndexOf(element);
+        if (cacheIndex >= 0) WEBAudio.audioCache.splice(cacheIndex, 1);
+      }
     });
     Object.keys(WEBAudio.pendingAudioSources || {}).forEach(function (id) { delete WEBAudio.pendingAudioSources[id]; });
     if (context && context.state !== 'closed' && typeof context.close === 'function') {
@@ -192,9 +199,14 @@ mergeInto(LibraryManager.library, {
       // immediate stop cancels their future resume, so release that PCM owner.
       if (channel.source && channel.source.isPausedMockNode) delete channel.source;
     } else if (!WEBAudio.contextIsRunning) {
+      slopCityRemovePendingSound(channel);
       WEBAudio.soundsPendingContextResume.forEach(function (sound) {
         if (sound.channel === channel) sound.stopDelay = delay;
       });
+      if (delay === 0) {
+        channel.stop(0);
+        if (channel.source && channel.source.isPausedMockNode) delete channel.source;
+      }
     } else {
       slopCityNativeSoundStop(channelInstance, delay);
     }

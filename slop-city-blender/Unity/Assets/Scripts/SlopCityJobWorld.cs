@@ -25,10 +25,12 @@ namespace SlopCity
             public Transform remotePane,arrivalRoot,installedRoot;
             internal Transform failedAssemblyRoot;
             internal bool assemblyRetirementQueued;
+            internal int assemblyRetirementAttempts;
         }
         private readonly Site[] sites = new Site[40];
         private readonly Collider[] overlaps = new Collider[64];
         private readonly RaycastHit[] groundHits = new RaycastHit[32];
+        private SlopCityDoor[] doorCache = Array.Empty<SlopCityDoor>();
         private MaterialPropertyBlock properties;
         private SlopCitySandbox owner;
         private bool initialized, constructionFailed, hostRetirementQueued;
@@ -309,16 +311,24 @@ namespace SlopCity
         private static bool RetireFailedAssembly(Site site)
         {
             Transform root=site.failedAssemblyRoot;
-            if(!root){site.failedAssemblyRoot=null;site.assemblyRetirementQueued=false;return true;}
+            if(!root){site.failedAssemblyRoot=null;site.assemblyRetirementQueued=false;site.assemblyRetirementAttempts=0;return true;}
             if(!site.assemblyRetirementQueued)
             {
                 Retire(root.gameObject);
                 site.assemblyRetirementQueued=true;
             }
-            // A refused retirement retains its exact owner for another attempt;
-            // an accepted deferred retirement blocks admission until destruction.
-            if(root)return false;
-            site.failedAssemblyRoot=null;site.assemblyRetirementQueued=false;
+            if(root)
+            {
+                site.assemblyRetirementAttempts++;
+                if(site.assemblyRetirementAttempts<120)return false;
+                try
+                {
+                    if(Application.isEditor&&!Application.isPlaying)DestroyImmediate(root.gameObject);
+                    else DestroyImmediate(root.gameObject,true);
+                }
+                catch{return false;}
+            }
+            site.failedAssemblyRoot=null;site.assemblyRetirementQueued=false;site.assemblyRetirementAttempts=0;
             return true;
         }
         private void Dusty(Site site,int mechanic,GameObject target,string category,string label)
@@ -392,6 +402,7 @@ namespace SlopCity
         {
             Vector3 preferred=SlopCityDenseLayout.DistrictPoint(new Vector3(((mechanic%9)%3-1)*40,0,((mechanic%9)/3-1)*40));
             // One deterministic pass, no per-frame scene queries. Existing doors/solid architecture stay clear.
+            doorCache = FindObjectsByType<SlopCityDoor>(FindObjectsSortMode.None);
             bool carWork=mechanic==13||mechanic==18;
             int groundPass=0,bodyPass=0,standingPass=0,doorPass=0,crowdPass=0;
             for(int ring=0;ring<3;ring++)for(int x=0;x<(carWork?23:12);x++)for(int z=0;z<(carWork?1:8);z++)
@@ -474,8 +485,13 @@ namespace SlopCity
             }
             return true;
         }
-        private static bool ClearDoors(Vector3 point)
-        {foreach(var door in UnityEngine.Object.FindObjectsByType<SlopCityDoor>(FindObjectsSortMode.None))if(Mathf.Abs(door.InteractionPoint.y-point.y)<3f&&Vector2.Distance(new Vector2(point.x,point.z),new Vector2(door.InteractionPoint.x,door.InteractionPoint.z))<3f)return false;return true;}
+        private bool ClearDoors(Vector3 point)
+        {
+            foreach (SlopCityDoor door in doorCache)
+                if (door && Mathf.Abs(door.InteractionPoint.y - point.y) < 3f
+                    && Vector2.Distance(new Vector2(point.x, point.z), new Vector2(door.InteractionPoint.x, door.InteractionPoint.z)) < 3f) return false;
+            return true;
+        }
         private static bool ClearCrowd(Vector3 point)
         {
             var crowd=SlopCityCrowd.Instance;if(!crowd)return true;
