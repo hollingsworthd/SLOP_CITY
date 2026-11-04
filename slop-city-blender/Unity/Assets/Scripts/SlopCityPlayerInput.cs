@@ -54,8 +54,8 @@ namespace SlopCity
             if (input && (input.forceTouchControlsForTesting || input.browserTouch || input.UseTouchControls)) return true;
             if (Application.isMobilePlatform) return true;
             try { return SlopCityUsesTouch() != 0; }
-            catch (EntryPointNotFoundException) { return TouchSupported(); }
-            catch (DllNotFoundException) { return TouchSupported(); }
+            catch (System.EntryPointNotFoundException) { return TouchSupported(); }
+            catch (System.DllNotFoundException) { return TouchSupported(); }
         }
 #endif
         private void Awake()
