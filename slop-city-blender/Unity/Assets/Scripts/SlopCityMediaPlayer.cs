@@ -18,6 +18,7 @@ namespace SlopCity
         [SerializeField, Range(0f, 1f)] private float volume = 0.8f;
 
         private const float PrepareTimeoutSeconds = 25f;
+        private static readonly AnimationCurve SpatialAudioRolloff = AnimationCurve.Linear(0f, 1f, 1f, 1f);
 #if UNITY_WEBGL && !UNITY_EDITOR
         private const float MobileDecoderReleaseTimeoutSeconds = 2f;
         private const float MobileDecoderDrainSeconds = .25f;
@@ -66,7 +67,6 @@ namespace SlopCity
         private int webPlaybackGeneration;
         private VideoPlayer.FrameReadyEventHandler webFrameReadyHandler;
         private static SlopCityMediaPlayer mobileDecoderOwner;
-        private static readonly AnimationCurve SpatialAudioRolloff = AnimationCurve.Linear(0f, 1f, 1f, 1f);
         private bool MobileWebBudget
         {
             get

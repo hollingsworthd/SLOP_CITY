@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using UnityEngine;
 
 namespace SlopCity
@@ -535,7 +536,7 @@ namespace SlopCity
                 float scoreB = (tower.originalPosition - spanEnd).sqrMagnitude;
                 if (scoreB < bestB) { bestB = scoreB; b = tower; }
             }
-            if (!a || !b) return;
+            if (a == null || b == null) return;
             Vector3 delta = b.root.position - a.root.position; delta.y = 0;
             // Retain the cabin-width bridge; only its span follows the paired buildings.
             foreach (Transform child in Children(bridge)) ScaleField(child, new Vector3(1, 1, delta.magnitude / length), undo, cache);
