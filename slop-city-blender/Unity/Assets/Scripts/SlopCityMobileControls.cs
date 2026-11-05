@@ -123,7 +123,6 @@ namespace SlopCity
                     buttons[7].GetComponent<Button>().interactable = take;
                 }
             }
-            TryLayout(false);
         }
 
         private void TryLayout(bool force)

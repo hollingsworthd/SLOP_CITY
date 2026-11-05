@@ -6,6 +6,7 @@ using UnityEngine.Events;
 namespace SlopCity
 {
     /// <summary>Clean, standard uGUI overlays: controls, local objectives, menus, and optional touch.</summary>
+    [DefaultExecutionOrder(90)]
     public sealed class SlopCityHud : MonoBehaviour
     {
         // Enlarge desktop text and its surrounding layout together. The overlay
@@ -70,6 +71,13 @@ namespace SlopCity
         public void Configure(Text state, Text prompt, Text controls, Text reticle)
         {
             stateLabel = state; promptLabel = prompt; controlsLabel = controls; crosshair = reticle;
+        }
+
+        private void LateUpdate()
+        {
+            if (!initialized || !input || !input.UseTouchControls) return;
+            Vector2 canvasSize = ((RectTransform)transform).rect.size;
+            if (canvasSize != lastCanvasSize) ApplyResponsiveLayout(true);
         }
 
         private void Update()
@@ -581,7 +589,7 @@ namespace SlopCity
             {
                 if (!force && viewport == lastViewport && canvasSize == lastCanvasSize && safeArea == lastSafeArea) return;
             }
-            else if (!force && viewport == lastViewport && safeArea == lastSafeArea) return;
+            else if (!force && viewport == lastViewport && safeArea == lastSafeArea && canvasSize == lastCanvasSize) return;
             lastViewport = viewport;
             if (!input.UseTouchControls)
             {
