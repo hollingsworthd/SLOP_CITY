@@ -626,6 +626,8 @@ namespace SlopCity
             LayoutMobileGuidance();
             LayoutMobileMenu(width,portrait);
             LayoutMobileSource(width,top,bottom);
+            if (touchControls && touchControls.TryGetComponent(out SlopCityMobileControls mobileControls))
+                mobileControls.RelayoutFromHud();
         }
 
         private void LayoutDesktopCards(Vector2 viewport)

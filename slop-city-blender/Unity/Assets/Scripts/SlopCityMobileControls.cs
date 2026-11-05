@@ -7,6 +7,7 @@ using UnityEngine.Events;
 namespace SlopCity
 {
     /// <summary>Two-thumb controls shared by mobile players and touch browsers.</summary>
+    [DefaultExecutionOrder(100)]
     public sealed class SlopCityMobileControls : MonoBehaviour
     {
         private const int ViewportSlopPixels = 12;
@@ -16,8 +17,10 @@ namespace SlopCity
         private SlopCityPlayerInput input;
         private Rect lastSafe;
         private int lastLayoutWidth, lastLayoutHeight;
-        private float lastPixelRatio, nextSalvageCheck;
+        private float lastPixelRatio, lastLayoutScaleFactor, nextSalvageCheck;
         private bool layoutApplied;
+
+        public void RelayoutFromHud() => TryLayout(true);
         private SlopCityTouchStick moveStick;
         private SlopCityTouchLook touchLook;
         private SlopCityTouchHold touchRun;
@@ -103,7 +106,6 @@ namespace SlopCity
             cleanCaption = AddButton("TouchClean", "CLEAN", source.RequestClean, font).GetComponentInChildren<Text>();
             AddButton("TouchTake", "TAKE", source.RequestPickup, font);
             AddButton("TouchBag", "BAG", source.RequestInventory, font);
-            TryLayout(true);
         }
 
         private void Update()
@@ -143,6 +145,8 @@ namespace SlopCity
                 || Mathf.Abs(lastSafe.yMin - safeArea.yMin) >= ViewportSlopPixels
                 || Mathf.Abs(lastSafe.xMax - safeArea.xMax) >= ViewportSlopPixels
                 || Mathf.Abs(lastSafe.yMax - safeArea.yMax) >= ViewportSlopPixels) return true;
+            float scaleFactor = GetComponentInParent<Canvas>().scaleFactor;
+            if (!Mathf.Approximately(lastLayoutScaleFactor, scaleFactor)) return true;
             return !Mathf.Approximately(lastPixelRatio, pixelRatio)
                 && Mathf.Abs(lastPixelRatio - pixelRatio) >= PixelRatioSlop;
         }
@@ -155,15 +159,12 @@ namespace SlopCity
             if (touchLook) touchLook.CancelGesture();
             if (touchRun) touchRun.CancelGesture();
             if (input) input.ResetContinuousTouch();
-            lastSafe = safeArea;
-            lastLayoutWidth = width;
-            lastLayoutHeight = height;
-            lastPixelRatio = pixelRatio;
-            safe.anchorMin = new Vector2(lastSafe.xMin/width,lastSafe.yMin/height);
-            safe.anchorMax = new Vector2(lastSafe.xMax/width,lastSafe.yMax/height);
+            safe.anchorMin = new Vector2(safeArea.xMin/width,safeArea.yMin/height);
+            safe.anchorMax = new Vector2(safeArea.xMax/width,safeArea.yMax/height);
             safe.offsetMin = safe.offsetMax = Vector2.zero;
             if (rightLook) rightLook.offsetMin = rightLook.offsetMax = Vector2.zero;
             Canvas.ForceUpdateCanvases();
+            if (safe.rect.width < 1f || safe.rect.height < 1f) return;
             float pixelsPerUnit = GetComponentInParent<Canvas>().scaleFactor;
             float button = Mathf.Clamp(Mathf.Min(width,height)*.16f,54f*pixelRatio,88f*pixelRatio)/Mathf.Max(.1f,pixelsPerUnit);
             float gap = button*.18f;
@@ -182,7 +183,19 @@ namespace SlopCity
             Position(buttons[8],new Vector2(1,0),new Vector2(-margin-button*2.5f-gap*2,margin+button*.5f),button);
             for (int i=3;i<6;i++)
                 Position(buttons[i],new Vector2(1,1),new Vector2(-margin-small*.5f-(i-3)*(small+gap*.65f),-margin-small*.5f),small);
+            if (rightLook)
+            {
+                float padWidth = margin + button * 2.5f + gap * 2 + button;
+                float padHeight = margin + button * 1.5f + gap + button;
+                rightLook.offsetMin = new Vector2(0f, padHeight);
+                rightLook.offsetMax = new Vector2(-padWidth, 0f);
+            }
             if (touchActions) touchActions.SetAsLastSibling();
+            lastSafe = safeArea;
+            lastLayoutWidth = width;
+            lastLayoutHeight = height;
+            lastPixelRatio = pixelRatio;
+            lastLayoutScaleFactor = pixelsPerUnit;
             layoutApplied = true;
         }
 
