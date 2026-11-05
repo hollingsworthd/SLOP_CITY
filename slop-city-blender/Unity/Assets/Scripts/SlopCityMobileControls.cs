@@ -1,3 +1,4 @@
+using System.Collections;
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.EventSystems;
@@ -8,11 +9,15 @@ namespace SlopCity
     /// <summary>Two-thumb controls shared by mobile players and touch browsers.</summary>
     public sealed class SlopCityMobileControls : MonoBehaviour
     {
+        private const int ViewportSlopPixels = 12;
+        private const float PixelRatioSlop = 0.05f;
+
         private RectTransform safe, left, ring, rightLook, touchActions;
         private SlopCityPlayerInput input;
         private Rect lastSafe;
         private int lastLayoutWidth, lastLayoutHeight;
         private float lastPixelRatio, nextSalvageCheck;
+        private bool layoutApplied;
         private SlopCityTouchStick moveStick;
         private SlopCityTouchLook touchLook;
         private SlopCityTouchHold touchRun;
@@ -42,20 +47,38 @@ namespace SlopCity
             }
         }
 
+        private void OnEnable()
+        {
+            if (isActiveAndEnabled && safe) StartCoroutine(RelayoutWhenCanvasReady());
+        }
+
+        private IEnumerator RelayoutWhenCanvasReady()
+        {
+            yield return null;
+            Canvas.ForceUpdateCanvases();
+            layoutApplied = false;
+            lastLayoutWidth = lastLayoutHeight = 0;
+            TryLayout(true);
+            yield return null;
+            TryLayout(true);
+        }
+
         private void Build(SlopCityPlayerInput source, Font font)
         {
             input = source;
             safe = Rect("SafeArea", transform);
             disc = MakeDisc();
+            rightLook = Rect("RightSideLook", safe);
+            Fill(rightLook, new Vector2(.5f, 0), Vector2.one);
+            var lookImage = rightLook.gameObject.AddComponent<Image>();
+            lookImage.color = Color.clear;
+            lookImage.raycastTarget = true;
+            touchLook = rightLook.gameObject.AddComponent<SlopCityTouchLook>();
+            touchLook.Configure(source);
             touchActions = Rect("TouchActionPad", safe);
             Fill(touchActions, Vector2.zero, Vector2.one);
             touchActions.gameObject.AddComponent<Image>().color = Color.clear;
             touchActions.GetComponent<Image>().raycastTarget = false;
-            rightLook = Rect("RightSideLook", safe);
-            Fill(rightLook, new Vector2(.5f, 0), Vector2.one);
-            rightLook.gameObject.AddComponent<Image>().color = Color.clear;
-            touchLook = rightLook.gameObject.AddComponent<SlopCityTouchLook>();
-            touchLook.Configure(source);
             left = Rect("LeftSideMove", safe);
             Fill(left, Vector2.zero, new Vector2(.48f,.80f));
             left.gameObject.AddComponent<Image>().color = Color.clear;
@@ -80,7 +103,7 @@ namespace SlopCity
             cleanCaption = AddButton("TouchClean", "CLEAN", source.RequestClean, font).GetComponentInChildren<Text>();
             AddButton("TouchTake", "TAKE", source.RequestPickup, font);
             AddButton("TouchBag", "BAG", source.RequestInventory, font);
-            Layout();
+            TryLayout(true);
         }
 
         private void Update()
@@ -93,18 +116,36 @@ namespace SlopCity
                 if (player && player.Sandbox)
                 {
                     player.Sandbox.SalvageOptions(player.ViewCamera, out _, out bool take, out int cleanStrokes);
-                    // Keep CLEAN responsive so an out-of-reach or unsuitable target
-                    // explains what to do instead of silently swallowing the tap.
                     if (cleanCaption) cleanCaption.text = cleanStrokes < 0 ? "CLEAN"
                         : CleaningCaptions[Mathf.Clamp(cleanStrokes, 0, SlopCitySalvageItem.CleaningStrokes)];
                     buttons[7].GetComponent<Button>().interactable = take;
                 }
             }
-            if (lastSafe != Screen.safeArea || lastLayoutWidth != Screen.width || lastLayoutHeight != Screen.height
-                || !Mathf.Approximately(lastPixelRatio,SlopCityWebPresentation.DisplayPixelRatio)) Layout();
+            TryLayout(false);
         }
 
-        private void Layout() => LayoutForViewport(Screen.width, Screen.height, Screen.safeArea, SlopCityWebPresentation.DisplayPixelRatio);
+        private void TryLayout(bool force)
+        {
+            int width = Screen.width, height = Screen.height;
+            Rect safeArea = Screen.safeArea;
+            float pixelRatio = SlopCityWebPresentation.DisplayPixelRatio;
+            if (width <= 0 || height <= 0) return;
+            if (!force && layoutApplied && !ViewportChanged(width, height, safeArea, pixelRatio)) return;
+            LayoutForViewport(width, height, safeArea, pixelRatio);
+        }
+
+        private bool ViewportChanged(int width, int height, Rect safeArea, float pixelRatio)
+        {
+            if (!layoutApplied) return true;
+            if (Mathf.Abs(lastLayoutWidth - width) >= ViewportSlopPixels
+                || Mathf.Abs(lastLayoutHeight - height) >= ViewportSlopPixels) return true;
+            if (Mathf.Abs(lastSafe.xMin - safeArea.xMin) >= ViewportSlopPixels
+                || Mathf.Abs(lastSafe.yMin - safeArea.yMin) >= ViewportSlopPixels
+                || Mathf.Abs(lastSafe.xMax - safeArea.xMax) >= ViewportSlopPixels
+                || Mathf.Abs(lastSafe.yMax - safeArea.yMax) >= ViewportSlopPixels) return true;
+            return !Mathf.Approximately(lastPixelRatio, pixelRatio)
+                && Mathf.Abs(lastPixelRatio - pixelRatio) >= PixelRatioSlop;
+        }
 
         private void LayoutForViewport(int width, int height, Rect safeArea, float pixelRatio)
         {
@@ -117,39 +158,32 @@ namespace SlopCity
             lastSafe = safeArea;
             lastLayoutWidth = width;
             lastLayoutHeight = height;
-            if (width <= 0 || height <= 0) return;
+            lastPixelRatio = pixelRatio;
             safe.anchorMin = new Vector2(lastSafe.xMin/width,lastSafe.yMin/height);
             safe.anchorMax = new Vector2(lastSafe.xMax/width,lastSafe.yMax/height);
             safe.offsetMin = safe.offsetMax = Vector2.zero;
+            if (rightLook) rightLook.offsetMin = rightLook.offsetMax = Vector2.zero;
             Canvas.ForceUpdateCanvases();
-            // Pixel-sized targets keep a comfortable thumb area even on narrow portrait screens.
             float pixelsPerUnit = GetComponentInParent<Canvas>().scaleFactor;
-            lastPixelRatio = pixelRatio;
             float button = Mathf.Clamp(Mathf.Min(width,height)*.16f,54f*pixelRatio,88f*pixelRatio)/Mathf.Max(.1f,pixelsPerUnit);
             float gap = button*.18f;
             float margin = button*.24f;
             ring.sizeDelta = Vector2.one*button*1.8f;
             ring.GetChild(0).GetComponent<RectTransform>().sizeDelta = Vector2.one*button*.72f;
-            // The first touch anywhere in the left region relocates this joystick.
-            ring.anchoredPosition = new Vector2(-left.rect.width*.5f+button*1.25f,-left.rect.height*.5f+button*1.4f);
+            float safeWidth = Mathf.Max(left.rect.width, width * (safe.anchorMax.x - safe.anchorMin.x) * .48f);
+            float safeHeight = Mathf.Max(left.rect.height, height * (safe.anchorMax.y - safe.anchorMin.y) * .80f);
+            ring.anchoredPosition = new Vector2(-safeWidth*.5f+button*1.25f,-safeHeight*.5f+button*1.4f);
             Position(buttons[0],new Vector2(1,0),new Vector2(-margin-button*.5f,margin+button*.5f),button);
             Position(buttons[1],new Vector2(1,0),new Vector2(-margin-button*.5f,margin+button*1.5f+gap),button);
             Position(buttons[2],new Vector2(1,0),new Vector2(-margin-button*1.5f-gap,margin+button*.5f),button);
             float small = button*.80f;
             Position(buttons[6],new Vector2(1,0),new Vector2(-margin-button*1.5f-gap,margin+button*1.5f+gap),button);
-            // Keep all six lower actions in three columns and two rows.
             Position(buttons[7],new Vector2(1,0),new Vector2(-margin-button*2.5f-gap*2,margin+button*1.5f+gap),button);
             Position(buttons[8],new Vector2(1,0),new Vector2(-margin-button*2.5f-gap*2,margin+button*.5f),button);
             for (int i=3;i<6;i++)
                 Position(buttons[i],new Vector2(1,1),new Vector2(-margin-small*.5f-(i-3)*(small+gap*.65f),-margin-small*.5f),small);
-            float padWidth = margin + button * 2.5f + gap * 2 + button;
-            float padHeight = margin + button * 1.5f + gap + button;
-            if (rightLook)
-            {
-                rightLook.offsetMin = new Vector2(0f, padHeight);
-                rightLook.offsetMax = new Vector2(-padWidth, 0f);
-            }
             if (touchActions) touchActions.SetAsLastSibling();
+            layoutApplied = true;
         }
 
         private RectTransform AddButton(string name,string label,UnityAction action,Font font)
@@ -189,8 +223,6 @@ namespace SlopCity
             }
             catch
             {
-                // Build has not received the sprite yet, so OnDestroy cannot own
-                // this texture if pixel upload or sprite creation fails.
                 Destroy(texture);
                 throw;
             }
