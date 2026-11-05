@@ -4,14 +4,15 @@ mergeInto(LibraryManager.library, {
   $slopCityVideoRetryInFlight: {},
 
   $slopCityUsesMobileVideo: function (v) {
-    if (typeof v.slopCityMobilePlayback === 'boolean') return v.slopCityMobilePlayback;
+    if (v && typeof v.slopCityMobilePlayback === 'boolean') return v.slopCityMobilePlayback;
     var touch = 0;
     try { touch = typeof SlopCityUsesTouch === 'function' ? SlopCityUsesTouch() : 0; } catch (_) {}
     var info = typeof Module !== 'undefined' && Module.SystemInfo;
-    v.slopCityMobilePlayback = !!(touch
+    var mobile = !!(touch
       || (info && info.mobile)
       || (info && /^(iPhoneOS|iPadOS)$/.test(info.os)));
-    return v.slopCityMobilePlayback;
+    if (v) v.slopCityMobilePlayback = mobile;
+    return mobile;
   },
 
   $slopCityApplyVideoMute__deps: ['$slopCityUsesMobileVideo', '$slopCityVideoRetryInFlight'],
