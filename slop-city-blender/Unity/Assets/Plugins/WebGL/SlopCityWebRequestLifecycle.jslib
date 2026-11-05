@@ -20,7 +20,7 @@ mergeInto(LibraryManager.library, {
   $slopCityRetiredWebRequests: [],
   $slopCityRetiredWebRequestCap: 64,
 
-  $slopCityEnforceRetiredWebRequestCap__deps: ['$slopCityRetiredWebRequests'],
+  $slopCityEnforceRetiredWebRequestCap__deps: ['$slopCityRetiredWebRequests', '$slopCityRetiredWebRequestCap'],
   $slopCityEnforceRetiredWebRequestCap: function () {
     for (var i = slopCityRetiredWebRequests.length - 1; i >= 0; --i) {
       if (slopCityRetiredWebRequests[i].cleanupFailed) slopCityRetiredWebRequests.splice(i, 1);
