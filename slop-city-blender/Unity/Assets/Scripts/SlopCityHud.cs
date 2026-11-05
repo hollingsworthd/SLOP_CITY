@@ -577,7 +577,11 @@ namespace SlopCity
             Vector2 viewport = new Vector2(Screen.width, Screen.height);
             Vector2 canvasSize = ((RectTransform)transform).rect.size;
             Rect safeArea = Screen.safeArea;
-            if (!force && viewport == lastViewport && canvasSize == lastCanvasSize && safeArea == lastSafeArea) return;
+            if (!input.UseTouchControls)
+            {
+                if (!force && viewport == lastViewport && canvasSize == lastCanvasSize && safeArea == lastSafeArea) return;
+            }
+            else if (!force && viewport == lastViewport && safeArea == lastSafeArea) return;
             lastViewport = viewport;
             if (!input.UseTouchControls)
             {

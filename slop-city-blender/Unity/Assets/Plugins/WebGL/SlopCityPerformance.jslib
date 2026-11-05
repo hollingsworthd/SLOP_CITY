@@ -53,5 +53,17 @@ mergeInto(LibraryManager.library, {
     if (typeof window.slopCityReportPerformance === "function") {
       window.slopCityReportPerformance(fps, frameMs, p95Ms, width, height);
     }
+  },
+  SlopCity_ReportMobileMediaQa__deps: ['$UTF8ToString'],
+  SlopCity_ReportMobileMediaQa: function (activeOrdinal, labelPtr) {
+    if (new URLSearchParams(window.location.search).get("qa") !== "1") return;
+    var label = UTF8ToString(labelPtr);
+    window.slopCityMobileMediaQa = {
+      version: 1,
+      checkedAtUtc: new Date().toISOString(),
+      activeScreenOrdinal: activeOrdinal,
+      activeScreen: label.slice(0, 96),
+      mobileDecoderLimit: 1
+    };
   }
 });

@@ -81,10 +81,16 @@
         duration: finite(video.duration), volume: finite(video.volume), muted: !!video.muted,
         paused: !!video.paused, loop: !!video.loop, readyState: video.readyState,
         width: video.videoWidth, height: video.videoHeight,
+        rejectedDimensions: !!video.slopCityRejectedDimensions,
+        encodedWidth: video.slopCityEncodedWidth || null, encodedHeight: video.slopCityEncodedHeight || null,
         playsInline: !!video.playsInline, connected: !!video.isConnected,
         nativeFullscreen: !!video.webkitDisplayingFullscreen,
         presentationMode: video.webkitPresentationMode || "inline" });
     });
+    var rejectedCount = videos.reduce(function (total, row) { return total + (row.rejectedDimensions ? 1 : 0); }, 0);
+    var mobileMedia = window.slopCityMobileMediaQa || null;
+    var heap = typeof Module !== "undefined" && Module.HEAPU8 && Module.HEAPU8.buffer
+      ? Module.HEAPU8.buffer.byteLength : null;
     if (!output) {
       const parent = document.body || document.documentElement;
       if (!parent) return;
@@ -95,8 +101,9 @@
       output.style.setProperty("display", "none", "important");
       parent.appendChild(output);
     }
-    const json = JSON.stringify({ version: 1, checkedAtUtc: new Date().toISOString(),
-      count: videos.length, videos: videos });
+    const json = JSON.stringify({ version: 2, checkedAtUtc: new Date().toISOString(),
+      count: videos.length, rejectedDimensionVideos: rejectedCount, wasmHeapBytes: heap,
+      mobileMedia: mobileMedia, videos: videos });
     output.textContent = json;
     output.setAttribute("data-snapshot", json);
   }

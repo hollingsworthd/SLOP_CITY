@@ -8,10 +8,10 @@ namespace SlopCity
     /// <summary>Two-thumb controls shared by mobile players and touch browsers.</summary>
     public sealed class SlopCityMobileControls : MonoBehaviour
     {
-        private RectTransform safe, left, ring;
+        private RectTransform safe, left, ring, rightLook, touchActions;
         private SlopCityPlayerInput input;
         private Rect lastSafe;
-        private Vector2 lastSize;
+        private int lastLayoutWidth, lastLayoutHeight;
         private float lastPixelRatio, nextSalvageCheck;
         private SlopCityTouchStick moveStick;
         private SlopCityTouchLook touchLook;
@@ -47,10 +47,14 @@ namespace SlopCity
             input = source;
             safe = Rect("SafeArea", transform);
             disc = MakeDisc();
-            var look = Rect("RightSideLook", safe);
-            Fill(look, new Vector2(.5f, 0), Vector2.one);
-            look.gameObject.AddComponent<Image>().color = Color.clear;
-            touchLook = look.gameObject.AddComponent<SlopCityTouchLook>();
+            touchActions = Rect("TouchActionPad", safe);
+            Fill(touchActions, Vector2.zero, Vector2.one);
+            touchActions.gameObject.AddComponent<Image>().color = Color.clear;
+            touchActions.GetComponent<Image>().raycastTarget = false;
+            rightLook = Rect("RightSideLook", safe);
+            Fill(rightLook, new Vector2(.5f, 0), Vector2.one);
+            rightLook.gameObject.AddComponent<Image>().color = Color.clear;
+            touchLook = rightLook.gameObject.AddComponent<SlopCityTouchLook>();
             touchLook.Configure(source);
             left = Rect("LeftSideMove", safe);
             Fill(left, Vector2.zero, new Vector2(.48f,.80f));
@@ -96,8 +100,7 @@ namespace SlopCity
                     buttons[7].GetComponent<Button>().interactable = take;
                 }
             }
-            RectTransform rect = (RectTransform)transform;
-            if (lastSafe != Screen.safeArea || lastSize != rect.rect.size
+            if (lastSafe != Screen.safeArea || lastLayoutWidth != Screen.width || lastLayoutHeight != Screen.height
                 || !Mathf.Approximately(lastPixelRatio,SlopCityWebPresentation.DisplayPixelRatio)) Layout();
         }
 
@@ -112,7 +115,8 @@ namespace SlopCity
             if (touchRun) touchRun.CancelGesture();
             if (input) input.ResetContinuousTouch();
             lastSafe = safeArea;
-            lastSize = ((RectTransform)transform).rect.size;
+            lastLayoutWidth = width;
+            lastLayoutHeight = height;
             if (width <= 0 || height <= 0) return;
             safe.anchorMin = new Vector2(lastSafe.xMin/width,lastSafe.yMin/height);
             safe.anchorMax = new Vector2(lastSafe.xMax/width,lastSafe.yMax/height);
@@ -138,11 +142,19 @@ namespace SlopCity
             Position(buttons[8],new Vector2(1,0),new Vector2(-margin-button*2.5f-gap*2,margin+button*.5f),button);
             for (int i=3;i<6;i++)
                 Position(buttons[i],new Vector2(1,1),new Vector2(-margin-small*.5f-(i-3)*(small+gap*.65f),-margin-small*.5f),small);
+            float padWidth = margin + button * 2.5f + gap * 2 + button;
+            float padHeight = margin + button * 1.5f + gap + button;
+            if (rightLook)
+            {
+                rightLook.offsetMin = new Vector2(0f, padHeight);
+                rightLook.offsetMax = new Vector2(-padWidth, 0f);
+            }
+            if (touchActions) touchActions.SetAsLastSibling();
         }
 
         private RectTransform AddButton(string name,string label,UnityAction action,Font font)
         {
-            var rect = Rect(name,safe);
+            var rect = Rect(name,touchActions ? touchActions : safe);
             var image = rect.gameObject.AddComponent<Image>(); image.sprite=disc; image.color=new Color(.04f,.085f,.105f,.60f);
             var button=rect.gameObject.AddComponent<Button>();
             button.navigation=new Navigation { mode=Navigation.Mode.None };
