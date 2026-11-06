@@ -45,6 +45,8 @@ namespace SlopCity
         }
         private BrowserLight[] browserLights;
         private float nextLightBudget;
+        private float nextBrowserLightDiscovery;
+        private const float BrowserLightDiscoveryInterval = 2f;
         private RenderTexture retainedBloom, retainedBlur;
         private int retainedBloomWidth, retainedBloomHeight;
         private RenderTextureFormat retainedBloomFormat;
@@ -166,24 +168,14 @@ namespace SlopCity
 #if UNITY_WEBGL && !UNITY_EDITOR
         private void Update()
         {
-            if (!view || Time.unscaledTime < nextLightBudget) return;
-            nextLightBudget = Time.unscaledTime + .5f;
-            if (browserLights == null)
+            if (!view) return;
+            if (browserLights == null || Time.unscaledTime >= nextBrowserLightDiscovery)
             {
-                Light[] lights = FindObjectsByType<Light>(FindObjectsInactive.Include, FindObjectsSortMode.None);
-                browserLights = new BrowserLight[lights.Length];
-                for (int i = 0; i < lights.Length; i++)
-                {
-                    Light lamp = lights[i];
-                    browserLights[i] = new BrowserLight { light = lamp, cullingMask = lamp.cullingMask };
-                    if (lamp.type == LightType.Directional)
-                    {
-                        lamp.shadows = LightShadows.Hard;
-                        lamp.shadowCustomResolution = 1024;
-                    }
-                    else lamp.shadows = LightShadows.None;
-                }
+                nextBrowserLightDiscovery = Time.unscaledTime + BrowserLightDiscoveryInterval;
+                RefreshBrowserLights();
             }
+            if (Time.unscaledTime < nextLightBudget) return;
+            nextLightBudget = Time.unscaledTime + .5f;
             // Preserve Light.enabled for gameplay switches, but render at most eight
             // nearby local lights. Distant emissive signs retain their authored glow.
             foreach (BrowserLight entry in browserLights)
@@ -207,6 +199,40 @@ namespace SlopCity
                 if (best < 0) break;
                 browserLights[best].light.cullingMask = browserLights[best].cullingMask;
             }
+        }
+
+        private void RefreshBrowserLights()
+        {
+            Light[] lights = FindObjectsByType<Light>(FindObjectsInactive.Include, FindObjectsSortMode.None);
+            bool unchanged = browserLights != null && browserLights.Length == lights.Length;
+            if (unchanged)
+            {
+                for (int i = 0; i < lights.Length; i++)
+                {
+                    bool found = false;
+                    foreach (BrowserLight entry in browserLights)
+                        if (entry.light == lights[i]) { found = true; break; }
+                    if (!found) { unchanged = false; break; }
+                }
+            }
+            if (unchanged) return;
+            BrowserLight[] refreshed = new BrowserLight[lights.Length];
+            for (int i = 0; i < lights.Length; i++)
+            {
+                Light lamp = lights[i];
+                int originalMask = lamp.cullingMask;
+                if (browserLights != null)
+                    foreach (BrowserLight entry in browserLights)
+                        if (entry.light == lamp) { originalMask = entry.cullingMask; break; }
+                refreshed[i] = new BrowserLight { light = lamp, cullingMask = originalMask };
+                if (lamp.type == LightType.Directional)
+                {
+                    lamp.shadows = LightShadows.Hard;
+                    lamp.shadowCustomResolution = 1024;
+                }
+                else lamp.shadows = LightShadows.None;
+            }
+            browserLights = refreshed;
         }
 #endif
 

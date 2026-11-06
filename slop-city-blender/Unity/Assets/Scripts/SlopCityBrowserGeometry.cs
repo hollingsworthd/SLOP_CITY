@@ -43,6 +43,27 @@ namespace SlopCity
             foreach (Entry entry in entries)
                 if (entry.renderer) bounds[entry.renderer] = entry.localBounds;
         }
+
+        /// <summary>Copy only bounds that can be reached by the local browser scenery index.</summary>
+        public void CopyNearTo(Dictionary<Renderer, Bounds> bounds, Vector3 origin, float maximumSquaredDistance)
+        {
+            foreach (Entry entry in entries)
+                if (entry.renderer && entry.renderer.gameObject.activeInHierarchy
+                    && WorldBounds(entry.renderer.transform,entry.localBounds).SqrDistance(origin) <= maximumSquaredDistance)
+                    bounds[entry.renderer] = entry.localBounds;
+        }
+
+        // Static batching can replace Renderer.bounds with a batch-wide AABB.
+        // The serialized pre-batch local bound is the only safe locality measure.
+        private static Bounds WorldBounds(Transform transform, Bounds local)
+        {
+            Matrix4x4 matrix = transform.localToWorldMatrix;
+            Vector3 x = matrix.MultiplyVector(Vector3.right * local.extents.x);
+            Vector3 y = matrix.MultiplyVector(Vector3.up * local.extents.y);
+            Vector3 z = matrix.MultiplyVector(Vector3.forward * local.extents.z);
+            return new Bounds(matrix.MultiplyPoint3x4(local.center),
+                new Vector3(Mathf.Abs(x.x) + Mathf.Abs(y.x) + Mathf.Abs(z.x), Mathf.Abs(x.y) + Mathf.Abs(y.y) + Mathf.Abs(z.y), Mathf.Abs(x.z) + Mathf.Abs(y.z) + Mathf.Abs(z.z)) * 2f);
+        }
     }
 }
 #endif

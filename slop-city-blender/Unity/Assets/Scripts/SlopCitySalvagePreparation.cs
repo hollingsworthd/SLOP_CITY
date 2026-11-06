@@ -19,6 +19,8 @@ namespace SlopCity
         private readonly HashSet<int> admittedInteriors = new HashSet<int>();
         private readonly HashSet<int> liveInteriors = new HashSet<int>();
         private readonly List<SlopCityInteriorFurnishing> interiorScratch = new List<SlopCityInteriorFurnishing>();
+        private readonly List<SlopCitySalvageItem> mailboxRegistry = new List<SlopCitySalvageItem>(9);
+        private bool mailboxRegistryInitialized;
         private Predicate<int> retiredInterior;
         private static readonly string[] DustyRoomParts =
         {
@@ -34,6 +36,10 @@ namespace SlopCity
             "_Toilet", "_Toilet_Cistern", "_Washbasin", "_Bathroom_Mirror", "_Towel_Rail",
             "_Shower_Riser", "_Shower_Head", "_Shower_Screen", "_Plant"
         };
+        private static readonly string[] BedAttachments = { "_Mattress", "_Headboard", "_Blanket", "_Pillow" };
+        private static readonly string[] SofaAttachments = { "_Sofa_Back", "_Sofa_Arm", "_Seat_Cushion" };
+        private static readonly string[] GenericAttachments = { "_Back", "_Legs" };
+        private static readonly string[] CounterPartNames = { "Counter_Top", "Counter_Signal" };
 
         public static void Prepare(Transform city)
         {
@@ -46,7 +52,7 @@ namespace SlopCity
                 PreparePosters(city);
                 GroupCounterParts(city);
                 PreparePawnCounter(city);
-                PrepareMailboxes(city);
+                owner.PrepareMailboxes(city);
                 PrepareLooseObjects(city);
                 owner.prepared = true;
             }
@@ -181,11 +187,17 @@ namespace SlopCity
                 bool bed = root.name.EndsWith("_Double_Bed", StringComparison.Ordinal), sofa = root.name.EndsWith("_Sofa", StringComparison.Ordinal);
                 string prefix = bed ? root.name.Substring(0, root.name.Length - "_Double_Bed".Length)
                     : sofa ? root.name.Substring(0, root.name.Length - "_Sofa".Length) : root.name;
-                var names = bed ? new[] { "_Mattress", "_Headboard", "_Blanket", "_Pillow" }
-                    : sofa ? new[] { "_Sofa_Back", "_Sofa_Arm", "_Seat_Cushion" } : new[] { "_Back", "_Legs" };
+                string[] names = bed ? BedAttachments : sofa ? SofaAttachments : GenericAttachments;
                 if (root.parent)
-                    foreach (Transform sibling in root.parent.Cast<Transform>().ToArray())
-                        if (names.Any(suffix => sibling.name == prefix + suffix) && !SlopCitySalvageItem.HasProtectedContents(sibling)) sibling.SetParent(root, true);
+                    // Descend so moving a sibling never invalidates an unvisited
+                    // child index. This keeps the original snapshot semantics
+                    // without allocating a LINQ array for every streamed room.
+                    for (int child = root.parent.childCount - 1; child >= 0; child--)
+                    {
+                        Transform sibling = root.parent.GetChild(child);
+                        if (IsFurnitureAttachment(sibling.name, prefix, names)
+                            && !SlopCitySalvageItem.HasProtectedContents(sibling)) sibling.SetParent(root, true);
+                    }
                 ConfigureItem(root, control.DisplayName, seat ? "furniture" : "stock", true, true, seat ? 24 : 8);
             }
             // These are separate authored boxes/assemblies, not the material-wide
@@ -197,6 +209,14 @@ namespace SlopCity
                         ConfigureDustyPart(part, part.name.Replace('_', ' '));
                         break;
                     }
+        }
+        private static bool IsFurnitureAttachment(string name, string prefix, string[] suffixes)
+        {
+            foreach (string suffix in suffixes)
+                if (name.Length == prefix.Length + suffix.Length
+                    && string.CompareOrdinal(name, 0, prefix, 0, prefix.Length) == 0
+                    && string.CompareOrdinal(name, prefix.Length, suffix, 0, suffix.Length) == 0) return true;
+            return false;
         }
 
         private static void PrepareDustyWorld(Transform city)
@@ -298,10 +318,11 @@ namespace SlopCity
 
         private static void GroupCounterParts(Transform city)
         {
-            foreach (Transform counter in city.GetComponentsInChildren<Transform>(true).Where(item => item.name == "Service_Counter").ToArray())
+            foreach (Transform counter in city.GetComponentsInChildren<Transform>(true))
             {
+                if (counter.name != "Service_Counter") continue;
                 if (!counter.parent) continue;
-                foreach (string name in new[] { "Counter_Top", "Counter_Signal" })
+                foreach (string name in CounterPartNames)
                 {
                     Transform part = counter.parent.Find(name);
                     if (part) part.SetParent(counter, true);
@@ -421,14 +442,47 @@ namespace SlopCity
             sign.isStatic = true;
         }
 
-        private static void PrepareMailboxes(Transform city)
+        /// <summary>Copies the city-owned mailbox registry without a global scene search.</summary>
+        internal static void CopyPreparedMailboxes(Transform city, List<SlopCitySalvageItem> destination)
         {
+            destination.Clear();
+            if (!city) return;
+            SlopCitySalvagePreparation owner = city.GetComponent<SlopCitySalvagePreparation>();
+            if (owner) { owner.CopyMailboxRegistry(destination); return; }
+            foreach (SlopCitySalvageItem item in city.GetComponentsInChildren<SlopCitySalvageItem>(true))
+                if (IsMailbox(item)) destination.Add(item);
+        }
+        private void CopyMailboxRegistry(List<SlopCitySalvageItem> destination)
+        {
+            if (!mailboxRegistryInitialized) RebuildMailboxRegistry();
+            for (int index = mailboxRegistry.Count - 1; index >= 0; index--)
+                if (!IsMailbox(mailboxRegistry[index])) mailboxRegistry.RemoveAt(index);
+            destination.AddRange(mailboxRegistry);
+        }
+        private void RebuildMailboxRegistry()
+        {
+            mailboxRegistry.Clear();
+            foreach (SlopCitySalvageItem item in GetComponentsInChildren<SlopCitySalvageItem>(true)) RegisterMailbox(item);
+            mailboxRegistryInitialized = true;
+        }
+        private void RegisterMailbox(SlopCitySalvageItem item)
+        {
+            if (IsMailbox(item) && !mailboxRegistry.Contains(item)) mailboxRegistry.Add(item);
+        }
+        private static bool IsMailbox(SlopCitySalvageItem item)
+            => item && item.Category == "mailbox" && item.name == "Salvage_Mailbox";
+        private void PrepareMailboxes(Transform city)
+        {
+            mailboxRegistry.Clear();
+            mailboxRegistryInitialized = true;
             MeshFilter donor = city.GetComponentsInChildren<MeshFilter>(true).FirstOrDefault(filter => filter.name == "Lamp_Base" && filter.sharedMesh);
             if (!donor) throw new InvalidOperationException("Physical mailboxes require an existing shared unit-cube prop mesh.");
             Material metal = donor.GetComponent<Renderer>().sharedMaterial;
             foreach (SlopCityDistrict district in city.GetComponentsInChildren<SlopCityDistrict>(true))
             {
-                if (district.Index < 0 || district.Index > 8 || district.transform.Find("Salvage_Mailbox")) continue;
+                if (district.Index < 0 || district.Index > 8) continue;
+                Transform existing = district.transform.Find("Salvage_Mailbox");
+                if (existing) { RegisterMailbox(existing.GetComponent<SlopCitySalvageItem>()); continue; }
                 // Existing lamps at the sidewalk edge establish a verified clear curb strip.
                 Transform lamp = district.GetComponentsInChildren<Transform>(true).FirstOrDefault(part => part.name == "Street_Lamp");
                 Vector3 point = lamp ? lamp.localPosition + new Vector3(0, 0, 1.15f) : new Vector3(-13, 0, -10.85f);
@@ -437,6 +491,7 @@ namespace SlopCity
                 Box(root, "Mailbox_Body", new Vector3(0, .97f, 0), new Vector3(.68f, .55f, .43f), donor.sharedMesh, metal);
                 Box(root, "Mailbox_Lid", new Vector3(0, 1.26f, 0), new Vector3(.73f, .05f, .47f), donor.sharedMesh, metal);
                 ConfigureItem(root, "Street mailbox", "mailbox", true, true, 20);
+                RegisterMailbox(root.GetComponent<SlopCitySalvageItem>());
             }
         }
 

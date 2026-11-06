@@ -10,7 +10,6 @@ namespace SlopCity
     {
         private const string RootName = "SlopCity_Work_Utilities";
         private static readonly Collider[] overlaps = new Collider[64];
-        private static Mesh cubeMesh;
         public static int UtilityCount { get; private set; }
         public static int RareCount { get; private set; }
         public static int JunctionCount { get; private set; }
@@ -27,14 +26,25 @@ namespace SlopCity
             if (!city) { UtilityCount = RareCount = JunctionCount = MaintenancePanelCount = 0; return; }
 
             Transform existing = city.Find(RootName);
-            TallyUtilityJunctions(city, configure: existing == null);
-            if (existing) { Count(existing); return; }
+            if (existing)
+            {
+                var existingResources = existing.GetComponent<SlopCityUtilityResources>();
+                if (existingResources == null || !existingResources.TryGetJunctionCount(out int junctions))
+                {
+                    TallyUtilityJunctions(city, configure: false);
+                    if (existingResources) existingResources.RememberJunctionCount(JunctionCount);
+                }
+                else JunctionCount = junctions;
+                Count(existing); return;
+            }
             Physics.SyncTransforms();
             Transform root = new GameObject(RootName).transform;
             root.SetParent(city, false);
             var resources = root.gameObject.AddComponent<SlopCityUtilityResources>();
             try
             {
+                TallyUtilityJunctions(city, configure: true);
+                resources.RememberJunctionCount(JunctionCount);
                 Material steel = Material(resources, "Municipal weathered steel", new Color(.22f, .28f, .27f), .45f);
                 Material ceramic = Material(resources, "Municipal ceramic", new Color(.64f, .68f, .61f), .12f);
                 Material dark = Material(resources, "Municipal control face", new Color(.035f, .065f, .060f), .08f);
@@ -90,7 +100,7 @@ namespace SlopCity
                 root.gameObject.SetActive(false);
                 if (Application.isPlaying) UnityEngine.Object.Destroy(root.gameObject);
                 else UnityEngine.Object.DestroyImmediate(root.gameObject);
-                UtilityCount = RareCount = MaintenancePanelCount = 0;
+                UtilityCount = RareCount = JunctionCount = MaintenancePanelCount = 0;
                 Debug.LogWarning("City utilities could not fully initialize: " + error.Message);
             }
         }
@@ -320,16 +330,11 @@ namespace SlopCity
             // One simple body collider per prop; decorative faces never obstruct movement.
             GameObject shape = new GameObject(label);
             shape.transform.SetParent(parent, false); shape.transform.localPosition = position; shape.transform.localScale = size;
-            // Reuse Unity's built-in primitive mesh without leaving deferred decorative colliders.
-            if (!cubeMesh)
-            {
-                GameObject primitive = GameObject.CreatePrimitive(PrimitiveType.Cube);
-                cubeMesh = primitive.GetComponent<MeshFilter>().sharedMesh;
-                primitive.SetActive(false);
-                if (Application.isPlaying) UnityEngine.Object.Destroy(primitive);
-                else UnityEngine.Object.DestroyImmediate(primitive);
-            }
-            shape.AddComponent<MeshFilter>().sharedMesh = cubeMesh;
+            // The generated root owns its borrowed primitive handle. Do not retain
+            // a city mesh through a process-wide static after this root retires.
+            SlopCityUtilityResources resources = parent.GetComponentInParent<SlopCityUtilityResources>();
+            if (!resources) throw new InvalidOperationException("Utility geometry requires its generated resource owner.");
+            shape.AddComponent<MeshFilter>().sharedMesh = resources.CubeMesh;
             Renderer renderer = shape.AddComponent<MeshRenderer>(); renderer.sharedMaterial = material;
             renderer.shadowCastingMode = ShadowCastingMode.Off;
             if (collision) shape.AddComponent<BoxCollider>();
@@ -340,6 +345,33 @@ namespace SlopCity
     internal sealed class SlopCityUtilityResources : MonoBehaviour
     {
         private readonly List<Material> materials = new List<Material>();
+        private Mesh cubeMesh;
+        private int junctionCount;
+        private bool junctionCountKnown;
+        internal Mesh CubeMesh
+        {
+            get
+            {
+                if (cubeMesh) return cubeMesh;
+                GameObject primitive = GameObject.CreatePrimitive(PrimitiveType.Cube);
+                try { return cubeMesh = primitive.GetComponent<MeshFilter>().sharedMesh; }
+                finally
+                {
+                    primitive.SetActive(false);
+                    if (Application.isPlaying) Destroy(primitive); else DestroyImmediate(primitive);
+                }
+            }
+        }
+        internal void RememberJunctionCount(int count)
+        {
+            junctionCount = Mathf.Max(0, count);
+            junctionCountKnown = true;
+        }
+        internal bool TryGetJunctionCount(out int count)
+        {
+            count = junctionCount;
+            return junctionCountKnown;
+        }
         internal void Own(Material material)
         {
             try { materials.Add(material); }
@@ -354,6 +386,9 @@ namespace SlopCity
             foreach (Material material in materials)
                 if (material) { if (Application.isPlaying) Destroy(material); else DestroyImmediate(material); }
             materials.Clear();
+            // This is Unity's shared primitive mesh, so drop the owned reference
+            // rather than destroying the engine asset itself.
+            cubeMesh = null;
         }
     }
 }

@@ -20,23 +20,24 @@
   <script src="slop-city-inline-video.js?v={{{ PRODUCT_VERSION }}}"></script>
   <script src="slop-city-media-diagnostics.js?v={{{ PRODUCT_VERSION }}}"></script>
   <style>
-    :root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #e1e7e6; background: #090d10; --muted: #8b999d; --accent: #adecc8; --line: #273238; }
+    :root { color-scheme: dark; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; color: #e1e7e6; background: #090d10; --muted: #8b999d; --accent: #adecc8; --line: #273238; --slop-viewport-height: 100dvh; --slop-toolbar-content-height: 56px; --slop-footer-content-height: 44px; --slop-toolbar-height: calc(var(--slop-toolbar-content-height) + env(safe-area-inset-top)); --slop-footer-height: calc(var(--slop-footer-content-height) + env(safe-area-inset-bottom)); }
     * { box-sizing: border-box; }
+    html, body { width: 100%; min-height: var(--slop-viewport-height); }
     body { margin: 0; overflow: hidden; overscroll-behavior: none; }
     button, select { font: inherit; cursor: pointer; }
     #fps { margin-left: auto; color: var(--accent); font-size: 10px; white-space: nowrap; }
     .resolution { max-width: 118px; }
     button:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 5px; }
     [hidden] { display: none !important; }
-    .toolbar { height: 56px; display: flex; align-items: center; gap: 18px; padding: 0 24px; border-bottom: 1px solid var(--line); }
+    .toolbar { height: var(--slop-toolbar-height); display: flex; align-items: center; gap: 18px; padding: env(safe-area-inset-top) max(24px, env(safe-area-inset-right)) 0 max(24px, env(safe-area-inset-left)); border-bottom: 1px solid var(--line); }
     .wordmark { font-size: 15px; letter-spacing: .14em; font-weight: 800; white-space: nowrap; }
     .edition { font-size: 10px; letter-spacing: .1em; color: var(--muted); }
     .toolbar-actions { display: flex; gap: 10px; }
     .tool { background: transparent; color: #c2cdce; border: 1px solid #354148; padding: 8px 12px; font-size: 11px; }
     .tool:hover { border-color: var(--accent); color: #fff; }
     .tool:disabled { opacity: .35; cursor: default; }
-    #stage { position: relative; height: calc(100vh - 100px); height: calc(100dvh - 100px); min-height: 220px; background: #080b0e; }
-    #stage:fullscreen { height: 100vh; width: 100vw; }
+    #stage { position: relative; height: max(1px, calc(var(--slop-viewport-height) - var(--slop-toolbar-height) - var(--slop-footer-height))); background: #080b0e; }
+    #stage:fullscreen { height: var(--slop-viewport-height); width: 100vw; }
     #unity-canvas { touch-action: none; -webkit-user-select: none; user-select: none; display: block; width: 100%; height: 100%; outline: none; background: #080b0e; }
     #gate { position: absolute; inset: 0; display: grid; place-items: center; overflow: auto; padding: 30px; background: radial-gradient(ellipse at 73% 26%, #18372d70, transparent 52%), linear-gradient(135deg, #0e171e 0%, #090c11 67%); }
     #gate::before { content: ""; position: absolute; inset: 0; pointer-events: none; opacity: .23; background-image: linear-gradient(#a9cbc811 1px, transparent 1px), linear-gradient(90deg, #a9cbc811 1px, transparent 1px); background-size: 64px 64px; }
@@ -65,7 +66,7 @@
     #error { max-width: 600px; color: #ffc9b0; font-size: 12px; line-height: 1.7; }
     #error pre { max-height: 110px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 10px; color: #a7b2b6; }
     #error .tool { margin-top: 10px; }
-    #controls { position: absolute; z-index: 2; top: 14px; right: 18px; width: min(340px, calc(100% - 36px)); padding: 22px; background: #10181df5; border: 1px solid #40524c; box-shadow: 0 8px 32px #0008; font-size: 12px; }
+    #controls { position: absolute; z-index: 2; top: max(14px, env(safe-area-inset-top)); right: max(18px, env(safe-area-inset-right)); width: min(340px, calc(100% - max(36px, calc(env(safe-area-inset-left) + env(safe-area-inset-right) + 24px)))); max-height: calc(100% - max(28px, calc(env(safe-area-inset-top) + env(safe-area-inset-bottom) + 16px))); overflow: auto; padding: 22px; background: #10181df5; border: 1px solid #40524c; box-shadow: 0 8px 32px #0008; font-size: 12px; }
     #controls h2 { margin: 0 0 16px; font-size: 12px; letter-spacing: .12em; }
     #controls dl { display: grid; grid-template-columns: auto 1fr; gap: 12px 24px; margin: 0; }
     #controls dt { color: var(--accent); }
@@ -76,14 +77,17 @@
     #media-support p { margin: 10px 0; }
     #media-support .tool { min-height: 44px; }
     #media-support .media-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
-    #media-support.floating { position: absolute; z-index: 3; right: 14px; bottom: 14px; width: min(380px, calc(100% - 28px)); max-height: calc(100% - 28px); overflow: auto; margin: 0; box-shadow: 0 8px 32px #0008; }
+    #media-scrim { position: absolute; z-index: 3; inset: 0; border: 0; background: #020607aa; cursor: default; }
+    #media-support.floating { position: absolute; z-index: 4; inset: max(14px, env(safe-area-inset-top)) max(14px, env(safe-area-inset-right)) max(14px, env(safe-area-inset-bottom)) max(14px, env(safe-area-inset-left)); width: min(380px, calc(100% - max(28px, calc(env(safe-area-inset-left) + env(safe-area-inset-right) + 16px)))); max-height: calc(100% - max(28px, calc(env(safe-area-inset-top) + env(safe-area-inset-bottom) + 16px))); overflow: auto; margin: auto; box-shadow: 0 8px 32px #0008; }
     #media-copy-status { display: block; color: var(--accent); }
-    footer { height: 44px; display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 0 24px; border-top: 1px solid var(--line); color: var(--muted); font-size: 9px; letter-spacing: .05em; }
+    footer { height: var(--slop-footer-height); display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 0 max(24px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(24px, env(safe-area-inset-left)); border-top: 1px solid var(--line); color: var(--muted); font-size: 9px; letter-spacing: .05em; }
     #status { color: #a4beb0; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     #media-help { color: var(--accent); border: 0; background: none; padding: 0 4px; min-height: 44px; font-size: 10px; white-space: nowrap; }
     footer .site-address { white-space: nowrap; }
-    @media (max-width: 620px) { .toolbar { padding: 0 14px; gap: 10px; } .edition, .footer-controls { display: none; } .wordmark { font-size: 11px; letter-spacing: .03em; } .resolution { max-width: 78px; } #help { display: none; } .toolbar-actions { gap: 6px; } .tool { padding: 8px; font-size: 10px; } footer { padding: 0 14px; } .gate-content { padding: 10px 0; } .intro { font-size: 12px; } }
+    .touch-ui #help, .touch-ui #controls { display: none !important; }
+    @media (max-width: 620px) { .toolbar { padding: env(safe-area-inset-top) max(14px, env(safe-area-inset-right)) 0 max(14px, env(safe-area-inset-left)); gap: 10px; } .edition, .footer-controls { display: none; } .wordmark { font-size: 11px; letter-spacing: .03em; } .resolution { max-width: 78px; } .toolbar-actions { gap: 6px; } .tool { padding: 8px; font-size: 10px; } footer { padding: 0 max(14px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(14px, env(safe-area-inset-left)); } .gate-content { padding: 10px 0; } .intro { font-size: 12px; } }
     @media (max-height: 600px) { h1 { font-size: 54px; } .eyebrow { margin-bottom: 14px; } .intro { margin-bottom: 18px; } .gate-content { padding: 8px 0; } .hint { margin-top: 14px; } }
+    @media (max-height: 360px) { :root { --slop-toolbar-content-height: 44px; --slop-footer-content-height: 36px; } .toolbar { gap: 8px; } .toolbar-actions { gap: 5px; } .tool { padding: 6px 8px; } #media-help { min-height: 36px; } .gate-content { padding: 0; } .gate-content .intro, .gate-content .hint { display: none; } #media-support.floating { padding: 14px; } }
     /* Desktop copy should remain readable at ordinary browser window sizes. */
     @media (min-width: 621px) {
       .desktop-ui .wordmark { font-size: 19px; letter-spacing: .08em; }
@@ -112,13 +116,14 @@
     <span class="edition">v{{{ PRODUCT_VERSION }}}</span>
     <output id="fps" aria-label="Game frame rate" title="Measured Unity frame rate">— FPS</output>
     <div class="toolbar-actions">
-      <select class="tool resolution" id="resolution" aria-label="City detail" title="City detail. Menus and HUD always use full display resolution."><option value="540">Low · 540p</option><option value="720" selected>Fast · 720p</option><option value="1080">Sharp · 1080p</option><option value="0">Native</option></select>
+      <select class="tool resolution" id="resolution" aria-label="City detail" title="City detail. Menus and HUD always use full display resolution."><option value="540">Low · 540p</option><option value="720" selected>Fast · 720p</option><option value="1080">Sharp · 1080p</option><option id="native-resolution" value="0">Native</option></select>
       <button class="tool" id="help" aria-expanded="false" aria-controls="controls">Controls</button>
       <button class="tool" id="fullscreen" disabled>Fullscreen ↗</button>
     </div>
   </header>
   <main id="stage" aria-label="SLOP CITY™ game">
     <canvas id="unity-canvas" width="{{{ WIDTH }}}" height="{{{ HEIGHT }}}" tabindex="-1" aria-label="SLOP CITY™. Use WASD to move and your mouse to look. Press Escape to release the mouse."></canvas>
+    <button id="media-scrim" type="button" hidden aria-label="Close media help"></button>
     <section id="gate" aria-label="Launch game">
       <div class="gate-content">
         <p class="eyebrow">MACHINE PUBLISHERS / v{{{ PRODUCT_VERSION }}}</p>
@@ -127,9 +132,9 @@
           <div class="publisher"><img src="Brand/machine-publishers.png" width="400" height="400" alt="Machine Publishers official seal">MACHINE PUBLISHERS</div>
         </div>
         <p class="intro">Take on 40 different jobs in a city full of Smiths.<br>Polish dusty objects, collect salvage and sell it at Signal Yard Pawn Shop.<br>Follow dispatch beams, ride the subway and explore inside the buildings.</p>
-        <section id="media-support" aria-labelledby="media-support-title" hidden>
+        <section id="media-support" role="dialog" aria-modal="false" aria-labelledby="media-support-title" tabindex="-1" hidden>
           <h2 id="media-support-title">No video or sound?</h2>
-          <p id="media-support-message">Tap the city once to allow video and sound. Check the volume and playback controls in MEDIA.</p>
+          <p id="media-support-message">Tap the city once to allow video and sound. Check the in-world TV controls for volume and playback.</p>
           <p>Inside TikTok? Open its menu and choose <strong>Open in browser</strong>, if available. Or copy <a class="site-address" href="https://slopcity.org/">SLOPCITY.org</a> and open it in Safari or Chrome.</p>
           <div class="media-actions"><button class="tool" id="media-copy">Copy game link</button><button class="tool" id="media-dismiss">Close</button></div>
           <output id="media-copy-status" role="status"></output>
@@ -163,13 +168,11 @@
         <dt>F / TAKE</dt><dd>Pick up a removable object</dd>
         <dt>I / BAG</dt><dd>Open your inventory; sell at Signal Yard Pawn Shop</dd>
         <dt>Q</dt><dd>New job</dd>
-        <dt>T / SIGNAL</dt><dd>Replay the intercepted transmission</dd>
-        <dt>M</dt><dd>Media controls</dd>
         <dt>R</dt><dd>Return to couch</dd>
         <dt>H</dt><dd>Toggle HUD</dd>
         <dt>Esc</dt><dd>Pause / release mouse</dd>
       </dl>
-      <p>Choose PLAY to begin. Touch controls appear automatically on phones and tablets; landscape gives you more room. Follow white-rabbit traces and intercepted transmissions to find your job.</p>
+      <p>Choose PLAY to begin. Touch controls appear when your device can touch the city; a mouse or trackpad can still look around on hybrid devices. Follow white-rabbit traces and intercepted transmissions to find your job.</p>
     </aside>
   </main>
   <footer><a class="site-address" href="license.html" target="_blank" rel="noopener noreferrer">AGPLv3+ / Trademarks</a><span id="status" role="status">CITY READY</span><button id="media-help" aria-expanded="false" aria-controls="media-support">Media help</button><a class="site-address" href="https://slopcity.org/">SLOPCITY.org</a><span class="footer-controls">WASD MOVE · MOUSE LOOK · E INTERACT · ESC PAUSE</span></footer>
@@ -182,6 +185,9 @@
     const loading = document.getElementById("loading");
     const status = document.getElementById("status");
     const fullscreen = document.getElementById("fullscreen");
+    // Do not advertise a control mapping the host cannot actually honor.
+    const fullscreenAvailable = typeof stage.requestFullscreen === "function" && document.fullscreenEnabled !== false;
+    fullscreen.hidden = !fullscreenAvailable;
     let graphicsLost = false;
     let sessionFailed = false;
     let startupWatch = null;
@@ -206,10 +212,32 @@
       try { return typeof window.matchMedia === "function" ? window.matchMedia(query) : null; }
       catch (_) { return null; }
     }
-    const pointerQuery = mediaQuery('(pointer: coarse)');
-    const touchDevice = navigator.maxTouchPoints > 0 && (!pointerQuery || pointerQuery.matches);
-    window.slopCityTouchControls = touchDevice || /(?:^|[?&])touch=1(?:&|$)/.test(location.search);
-    document.documentElement.classList.toggle("desktop-ui", !window.slopCityTouchControls);
+    function queryMatches(query) {
+      const result = mediaQuery(query);
+      return !!(result && result.matches);
+    }
+    // This is the one input-capability decision shared by the shell, plugins
+    // and Unity. `any-*` intentionally includes hybrid hardware: touch controls
+    // can be available without taking mouse/trackpad look away.
+    const forcedTouch = /(?:^|[?&])touch=1(?:&|$)/.test(location.search);
+    const touchPoints = Number(navigator.maxTouchPoints) || 0;
+    const mediaQueriesAvailable = typeof window.matchMedia === "function";
+    const inputCapabilities = Object.freeze({
+      touch: forcedTouch || touchPoints > 0 || queryMatches("(any-pointer: coarse)"),
+      // A desktop without matchMedia remains a mouse-first shell rather than
+      // silently losing pointer lock solely because capability queries are gone.
+      finePointer: queryMatches("(any-pointer: fine)") || (!mediaQueriesAvailable && !forcedTouch && touchPoints === 0),
+      coarsePointer: queryMatches("(any-pointer: coarse)"),
+      forcedTouch: forcedTouch
+    });
+    window.slopCityInputCapabilities = inputCapabilities;
+    window.slopCityTouchControls = inputCapabilities.touch;
+    window.slopCityFinePointer = inputCapabilities.finePointer;
+    // Fine-pointer activity, unlike capability, is a deliberate current input
+    // mode. This lets a hybrid player switch between touch and trackpad safely.
+    window.slopCityFinePointerActive = false;
+    document.documentElement.classList.toggle("touch-ui", inputCapabilities.touch);
+    document.documentElement.classList.toggle("desktop-ui", !inputCapabilities.touch);
     if (window.slopCityTouchControls) {
       document.getElementById("launch-hint").innerHTML = "Left thumb moves. Right thumb looks.<br>Turn your phone sideways for more room. Choose PLAY to enable sound.";
       canvas.setAttribute("aria-label", "SLOP CITY™. Left thumb moves, right thumb looks. Use the on-screen jump, interact and pause buttons.");
@@ -225,6 +253,40 @@
     let densityCleanup = null;
     let unityLoaderScript = null;
     let shellHooksDisposed = false;
+    let viewportSyncFrame = 0;
+    let viewportSettleTimer = null;
+    let settledViewportKey = "";
+
+    function readVisualViewport() {
+      const viewport = window.visualViewport;
+      const width = viewport && Number.isFinite(viewport.width) ? viewport.width : window.innerWidth;
+      const height = viewport && Number.isFinite(viewport.height) ? viewport.height : window.innerHeight;
+      return { width: Math.max(1, width || 1), height: Math.max(1, height || 1) };
+    }
+
+    function applyViewportGeometry() {
+      viewportSyncFrame = 0;
+      if (graphicsLost || sessionFailed) return;
+      const viewport = readVisualViewport();
+      document.documentElement.style.setProperty("--slop-viewport-height", viewport.height + "px");
+      document.documentElement.style.setProperty("--slop-viewport-width", viewport.width + "px");
+      resizeGame();
+      const key = Math.round(viewport.width) + "x" + Math.round(viewport.height);
+      if (viewportSettleTimer !== null) clearTimeout(viewportSettleTimer);
+      viewportSettleTimer = setTimeout(function () {
+        viewportSettleTimer = null;
+        if (graphicsLost || sessionFailed || key === settledViewportKey) return;
+        settledViewportKey = key;
+        // Consumers that own gesture state can reset once after rotation/chrome
+        // animation settles instead of interpreting every transient resize.
+        window.dispatchEvent(new CustomEvent("slopcityviewportsettled", { detail: viewport }));
+      }, 120);
+    }
+
+    function scheduleViewportGeometry() {
+      if (graphicsLost || sessionFailed || viewportSyncFrame) return;
+      viewportSyncFrame = requestAnimationFrame(applyViewportGeometry);
+    }
 
     function removeUnityLoaderScript() {
       if (!unityLoaderScript) return;
@@ -259,8 +321,15 @@
       catch (error) { console.warn("Display observer cleanup failed.", error); }
       try { if (densityCleanup) { densityCleanup(); densityCleanup = null; } }
       catch (error) { console.warn("Display density cleanup failed.", error); }
-      window.removeEventListener("resize", resizeGame);
-      document.removeEventListener("fullscreenchange", resizeGame);
+      if (viewportSyncFrame) { cancelAnimationFrame(viewportSyncFrame); viewportSyncFrame = 0; }
+      if (viewportSettleTimer !== null) { clearTimeout(viewportSettleTimer); viewportSettleTimer = null; }
+      window.removeEventListener("resize", scheduleViewportGeometry);
+      window.removeEventListener("orientationchange", scheduleViewportGeometry);
+      if (window.visualViewport) {
+        window.visualViewport.removeEventListener("resize", scheduleViewportGeometry);
+        window.visualViewport.removeEventListener("scroll", scheduleViewportGeometry);
+      }
+      document.removeEventListener("fullscreenchange", scheduleViewportGeometry);
       document.removeEventListener("pointerlockchange", onPointerLockChange);
     }
 
@@ -294,6 +363,8 @@
       } catch (error) { console.warn("Navigation video cleanup failed.", error); }
       try { if (module.slopCityDisposeOwnedAudio) module.slopCityDisposeOwnedAudio(); }
       catch (error) { console.warn("Session audio cleanup failed.", error); }
+      try { if (module.slopCityClearMemoryDiagnostics) module.slopCityClearMemoryDiagnostics(); }
+      catch (error) { console.warn("Session diagnostics cleanup failed.", error); }
       try { if (module.pauseMainLoop) module.pauseMainLoop(); }
       catch (error) { console.warn("Navigation frame cleanup failed.", error); }
       // Quit cannot finish on a paused/fatal engine. Retire loader/framework
@@ -377,15 +448,24 @@
     });
 
     const resolution = document.getElementById("resolution");
+    const nativeResolution = document.getElementById("native-resolution");
     const performanceOutput = document.getElementById("fps");
-    if (window.slopCityTouchControls) resolution.value = "540";
+    if (window.slopCityTouchControls) {
+      resolution.value = "540";
+      nativeResolution.disabled = true;
+      nativeResolution.textContent = "Native (desktop only)";
+    }
     function resizeGame() {
       if (graphicsLost || sessionFailed) return;
       const bounds = canvas.getBoundingClientRect();
       const density = Number(window.devicePixelRatio);
       const ratio = Number.isFinite(density) && density > 0 ? Math.max(1, density) : 1;
       // UI is drawn at display resolution. Only the world camera uses the selected budget.
-      window.slopCitySceneRenderHeight = Number(resolution.value);
+      // Native world rendering is intentionally unavailable with touch controls:
+      // display pixels and scene render targets have separate memory costs.
+      const requestedRenderHeight = Number(resolution.value);
+      window.slopCitySceneRenderHeight = window.slopCityTouchControls
+        ? (requestedRenderHeight > 0 ? requestedRenderHeight : 540) : requestedRenderHeight;
       // Touch displays need a total-pixel bound as well as a per-axis device
       // limit: a retina tablet otherwise retains several full-size color/depth
       // surfaces even when its world camera is set to 540p. A 720p-sized UI
@@ -403,10 +483,15 @@
       canvas.dataset.displayResolution = width + "x" + height;
       canvas.dataset.pixelRatio = String(safeRatio);
     }
-    try { if (typeof ResizeObserver === "function") { displayObserver = new ResizeObserver(resizeGame); displayObserver.observe(stage); } }
+    try { if (typeof ResizeObserver === "function") { displayObserver = new ResizeObserver(scheduleViewportGeometry); displayObserver.observe(stage); } }
     catch (error) { console.warn("Using window resize events for the city display.", error); }
-    window.addEventListener("resize", resizeGame);
-    document.addEventListener("fullscreenchange", resizeGame);
+    window.addEventListener("resize", scheduleViewportGeometry);
+    window.addEventListener("orientationchange", scheduleViewportGeometry);
+    if (window.visualViewport) {
+      window.visualViewport.addEventListener("resize", scheduleViewportGeometry);
+      window.visualViewport.addEventListener("scroll", scheduleViewportGeometry);
+    }
+    document.addEventListener("fullscreenchange", scheduleViewportGeometry);
     function watchDisplayDensity() {
       if (graphicsLost || sessionFailed) return;
       const query = mediaQuery("(resolution: " + (window.devicePixelRatio || 1) + "dppx)");
@@ -414,7 +499,7 @@
       const changed = function () {
         if (typeof query.removeEventListener === "function") query.removeEventListener("change", changed);
         else if (typeof query.removeListener === "function") query.removeListener(changed);
-        resizeGame(); watchDisplayDensity();
+        scheduleViewportGeometry(); watchDisplayDensity();
       };
       if (typeof query.addEventListener === "function") query.addEventListener("change", changed, {once: true});
       else if (typeof query.addListener === "function") query.addListener(changed);
@@ -424,24 +509,35 @@
       };
     }
     watchDisplayDensity();
-    resolution.addEventListener("change", function () { resizeGame(); canvas.focus(); });
-    resizeGame();
+    resolution.addEventListener("change", function () { scheduleViewportGeometry(); canvas.focus(); });
+    scheduleViewportGeometry();
+    let lastPerformanceRoundedFps = null, lastPerformanceFrameTenths = null, lastPerformanceP95Tenths = null;
+    let lastPerformanceWorldWidth = null, lastPerformanceWorldHeight = null, lastPerformanceWidth = null, lastPerformanceHeight = null;
+    const roundedPerformanceValue = (value, multiplier) => Number.isFinite(value) ? Math.round(value * multiplier) : null;
     window.slopCityReportPerformance = function (fps, frameMs, p95Ms, width, height) {
-      performanceOutput.textContent = Math.round(fps) + " FPS";
       const presentation = window.slopCityPresentation;
       const worldWidth = presentation ? presentation.worldWidth : width;
       const worldHeight = presentation ? presentation.worldHeight : height;
-      performanceOutput.title = frameMs.toFixed(1) + " ms average / " + p95Ms.toFixed(1) + " ms p95 / city " + worldWidth + " × " + worldHeight + " / UI " + width + " × " + height;
-      performanceOutput.dataset.fps = fps.toFixed(2);
-      performanceOutput.dataset.frameMs = frameMs.toFixed(2);
-      performanceOutput.dataset.p95Ms = p95Ms.toFixed(2);
-      performanceOutput.dataset.resolution = width + "x" + height;
-      performanceOutput.dataset.worldResolution = worldWidth + "x" + worldHeight;
+      const roundedFps=roundedPerformanceValue(fps,1),frameTenths=roundedPerformanceValue(frameMs,10),p95Tenths=roundedPerformanceValue(p95Ms,10);
+      const currentWidth=roundedPerformanceValue(width,1),currentHeight=roundedPerformanceValue(height,1),currentWorldWidth=roundedPerformanceValue(worldWidth,1),currentWorldHeight=roundedPerformanceValue(worldHeight,1);
+      if(roundedFps===lastPerformanceRoundedFps&&frameTenths===lastPerformanceFrameTenths&&p95Tenths===lastPerformanceP95Tenths
+        &&currentWorldWidth===lastPerformanceWorldWidth&&currentWorldHeight===lastPerformanceWorldHeight&&currentWidth===lastPerformanceWidth&&currentHeight===lastPerformanceHeight)return;
+      lastPerformanceRoundedFps=roundedFps;lastPerformanceFrameTenths=frameTenths;lastPerformanceP95Tenths=p95Tenths;
+      lastPerformanceWorldWidth=currentWorldWidth;lastPerformanceWorldHeight=currentWorldHeight;lastPerformanceWidth=currentWidth;lastPerformanceHeight=currentHeight;
+      const fpsHundredths=roundedPerformanceValue(fps,100),frameHundredths=roundedPerformanceValue(frameMs,100),p95Hundredths=roundedPerformanceValue(p95Ms,100);
+      const decimal=(value,divisor,places)=>value===null?"—":(value/divisor).toFixed(places),integer=value=>value===null?"—":String(value);
+      performanceOutput.textContent=integer(roundedFps)+" FPS";
+      performanceOutput.title=decimal(frameTenths,10,1)+" ms average / "+decimal(p95Tenths,10,1)+" ms p95 / city "+integer(currentWorldWidth)+" × "+integer(currentWorldHeight)+" / UI "+integer(currentWidth)+" × "+integer(currentHeight);
+      performanceOutput.dataset.fps=decimal(fpsHundredths,100,2);
+      performanceOutput.dataset.frameMs=decimal(frameHundredths,100,2);
+      performanceOutput.dataset.p95Ms=decimal(p95Hundredths,100,2);
+      performanceOutput.dataset.resolution=integer(currentWidth)+"x"+integer(currentHeight);
+      performanceOutput.dataset.worldResolution=integer(currentWorldWidth)+"x"+integer(currentWorldHeight);
     };
 
     // Embedded browsers can reject pointer capture. Unity's generated bridge does
     // not consume the request promise, so handle that expected rejection here.
-    if (canvas.requestPointerLock && !window.slopCityTouchControls) {
+    if (canvas.requestPointerLock) {
       const captureMouse = canvas.requestPointerLock.bind(canvas);
       const captureUnavailable = function () {
         if (graphicsLost || sessionFailed) return;
@@ -630,7 +726,7 @@
           resizeGame();
           gate.hidden = true;
           document.dispatchEvent(new CustomEvent("slopcityready"));
-          fullscreen.disabled = false;
+          fullscreen.disabled = !fullscreenAvailable;
           status.textContent = "CITY CONNECTED / CHOOSE PLAY TO BEGIN";
           canvas.focus();
           // The in-game PLAY button supplies a fresh user gesture for sound and pointer lock.
@@ -662,19 +758,25 @@
       if (controls.hidden && unityInstance) canvas.focus();
     });
     fullscreen.addEventListener("click", function () {
-      if (!unityInstance || graphicsLost || sessionFailed) return;
+      if (!fullscreenAvailable || !unityInstance || graphicsLost || sessionFailed) return;
       const unavailable = function () { if (!sessionFailed) status.textContent = "FULLSCREEN UNAVAILABLE IN THIS BROWSER"; };
       try {
-        const result = stage.requestFullscreen ? stage.requestFullscreen() : unityInstance.SetFullscreen(1);
+        const result = stage.requestFullscreen();
         if (result && typeof result.catch === "function") result.catch(unavailable);
       } catch (error) { unavailable(); }
     });
     function onPointerLockChange() {
       if (graphicsLost || sessionFailed) return;
-      if (unityInstance && !window.slopCityTouchControls) status.textContent = document.pointerLockElement === canvas ? "CITY CONNECTED" : "CITY CONNECTED / MOUSE RELEASED";
+      if (unityInstance && window.slopCityFinePointerActive) status.textContent = document.pointerLockElement === canvas ? "CITY CONNECTED" : "CITY CONNECTED / MOUSE RELEASED";
     }
     document.addEventListener("pointerlockchange", onPointerLockChange);
-    canvas.addEventListener("pointerdown", function () {
+    canvas.addEventListener("pointerdown", function (event) {
+      const finePointer = event && (event.pointerType === "mouse" || event.pointerType === "pen");
+      if (finePointer) window.slopCityFinePointerActive = true;
+      else if (event && event.pointerType === "touch") {
+        window.slopCityFinePointerActive = false;
+        if (document.pointerLockElement === canvas && document.exitPointerLock) document.exitPointerLock();
+      }
       if (graphicsLost || sessionFailed) return;
       if (unityInstance && window.slopCityTouchControls) status.textContent = "CITY CONNECTED / TOUCH CONTROLS ACTIVE";
     });

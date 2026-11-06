@@ -29,6 +29,10 @@ namespace SlopCity
         private readonly List<InventoryEntry> inventory = new List<InventoryEntry>();
         private readonly List<InventoryEntry> pawnStock = new List<InventoryEntry>();
         private readonly Dictionary<string, SalvageRecord> objectRecords = new Dictionary<string, SalvageRecord>();
+        // Surface piece state is restored as streamed surfaces arrive. Keep the
+        // saved rows grouped by their immutable surface owner so a newly admitted
+        // facade does not inspect every other saved object in the city.
+        private readonly Dictionary<string, List<SalvageRecord>> surfaceRecordsByOwner = new Dictionary<string, List<SalvageRecord>>();
         private readonly Dictionary<string, SlopCitySalvageItem> salvageObjects = new Dictionary<string, SlopCitySalvageItem>();
         private readonly List<string> deadSalvageIds = new List<string>();
         private readonly RaycastHit[] salvageHits = new RaycastHit[64];
@@ -85,6 +89,7 @@ namespace SlopCity
         {
             SlopCitySalvageItem.Admitted -= AdmitSalvage;
             SlopCitySalvageItem.Admitted += AdmitSalvage;
+            surfaceRecordsByOwner.Clear();
             if (progress.inventory != null)
                 foreach (InventoryEntry entry in progress.inventory)
                     if (entry != null && ValidObjectId(entry.id) && !string.IsNullOrEmpty(entry.category)
@@ -100,7 +105,11 @@ namespace SlopCity
             if (progress.objects != null)
                 foreach (SalvageRecord record in progress.objects)
                     if (record != null && ValidObjectId(record.id) && objectRecords.Count < MaximumObjectRecords)
-                    { var copy = record.Copy(); copy.clean = Mathf.Clamp(copy.clean, 0, 4); objectRecords[copy.id] = copy; }
+                    {
+                        var copy = record.Copy(); copy.clean = Mathf.Clamp(copy.clean, 0, 4);
+                        objectRecords[copy.id] = copy;
+                    }
+            RebuildSurfaceRecordIndex();
         }
         private static bool ValidObjectId(string id) => !string.IsNullOrEmpty(id) && id.Length < 2048;
         private void CaptureSalvageProgress()
@@ -160,9 +169,10 @@ namespace SlopCity
                 surface.BeginSavedStateRestore();
                 try
                 {
-                    foreach (SalvageRecord state in objectRecords.Values)
-                        if (surface.TryGetPart(state.id, out int part))
-                        { surface.ApplySavedState(part, state.clean, state.removed); }
+                    if (surfaceRecordsByOwner.TryGetValue(item.StableId, out List<SalvageRecord> states))
+                        foreach (SalvageRecord state in states)
+                            if (surface.TryGetPart(state.id, out int part))
+                            { surface.ApplySavedState(part, state.clean, state.removed); }
                 }
                 finally { surface.EndSavedStateRestore(); }
             }
@@ -335,8 +345,28 @@ namespace SlopCity
         }
         private SalvageRecord RecordObject(string id)
         {
-            if (!objectRecords.TryGetValue(id, out SalvageRecord record)) objectRecords[id] = record = new SalvageRecord { id = id };
+            if (!objectRecords.TryGetValue(id, out SalvageRecord record))
+            {
+                objectRecords[id] = record = new SalvageRecord { id = id };
+                IndexSurfaceRecord(record);
+            }
             return record;
+        }
+        private void IndexSurfaceRecord(SalvageRecord record)
+        {
+            if (record == null || string.IsNullOrEmpty(record.id)) return;
+            const string marker = "/piece/";
+            int divider = record.id.LastIndexOf(marker, StringComparison.Ordinal);
+            if (divider <= 0) return;
+            string owner = record.id.Substring(0, divider);
+            if (!surfaceRecordsByOwner.TryGetValue(owner, out List<SalvageRecord> records))
+                surfaceRecordsByOwner.Add(owner, records = new List<SalvageRecord>());
+            records.Add(record);
+        }
+        private void RebuildSurfaceRecordIndex()
+        {
+            surfaceRecordsByOwner.Clear();
+            foreach (SalvageRecord record in objectRecords.Values) IndexSurfaceRecord(record);
         }
         private static void ApplySurface(SalvageTarget target, SalvageRecord state)
         {
@@ -370,6 +400,7 @@ namespace SlopCity
                 {
                     inventory.Clear(); inventory.AddRange(transactionInventory); pawnStock.Clear(); pawnStock.AddRange(transactionPawnStock);
                     objectRecords.Clear(); foreach (KeyValuePair<string, SalvageRecord> pair in transactionRecords) objectRecords[pair.Key] = pair.Value;
+                    RebuildSurfaceRecordIndex();
                     progress.credits = oldCredits; RestoreUniqueJobState(oldJobs); CaptureSalvageProgress();
                     InvalidateSalvageAimCache();
                     try { restoreWorld?.Invoke(); } catch (Exception exception) { Debug.LogWarning("SLOP CITY: Visual rollback will retry on admission: " + exception.Message); }

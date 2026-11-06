@@ -39,6 +39,7 @@ namespace SlopCity
         private bool cleaningRequest;
         private int retiringDisposeFailures;
         private bool retiringDisposeAbandonedWarned;
+        private float nextRetiringDisposeAttempt;
         private bool queuedNavigatePending;
         private string queuedNavigatePath = "";
         private bool queuedNavigateFile;
@@ -167,27 +168,31 @@ namespace SlopCity
             if (retiringRequest == null && retiringHandler == null)
             {
                 retiringDisposeFailures = 0;
+                nextRetiringDisposeAttempt = 0f;
+                retiringDisposeAbandonedWarned = false;
                 return;
             }
+            if (Time.unscaledTime < nextRetiringDisposeAttempt) return;
             DisposeRequest(null, null);
             if (retiringRequest != null || retiringHandler != null)
             {
-                retiringDisposeFailures++;
+                retiringDisposeFailures = Mathf.Min(120, retiringDisposeFailures + 1);
+                // A broken host Dispose must not turn an owned native request into
+                // an unreachable allocation. Keep this one reader blocked and
+                // retry with bounded backoff instead of abandoning its owners.
+                nextRetiringDisposeAttempt = Time.unscaledTime + Mathf.Min(2f, .05f * retiringDisposeFailures);
                 if (retiringDisposeFailures >= 120)
                 {
                     if (!retiringDisposeAbandonedWarned)
                     {
                         Debug.LogWarning(
-                            "Source download cleanup was abandoned after repeated failures; one native request may remain.",
+                            "Source download cleanup is still retrying after repeated failures; public source navigation remains paused.",
                             this);
                         retiringDisposeAbandonedWarned = true;
                     }
-                    retiringRequest = null;
-                    retiringHandler = null;
-                    retiringDisposeFailures = 0;
                 }
             }
-            else retiringDisposeFailures = 0;
+            else { retiringDisposeFailures = 0; nextRetiringDisposeAttempt = 0f; retiringDisposeAbandonedWarned = false; }
             TryRunQueuedNavigate();
         }
         private void OnDisable()

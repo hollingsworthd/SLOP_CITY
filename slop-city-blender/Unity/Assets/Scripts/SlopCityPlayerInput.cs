@@ -36,17 +36,53 @@ namespace SlopCity
             {
                 Touch touch = Input.GetTouch(i);
                 if (touch.fingerId == pointerId)
-                    return touch.phase != TouchPhase.Ended && touch.phase != TouchPhase.Canceled;
+                    return touch.phase == TouchPhase.Began || touch.phase == TouchPhase.Moved || touch.phase == TouchPhase.Stationary;
+            }
+            return false;
+#elif ENABLE_INPUT_SYSTEM
+            var touchscreen = UnityEngine.InputSystem.Touchscreen.current;
+            if (touchscreen == null) return false;
+            foreach (var touch in touchscreen.touches)
+            {
+                if (touch.touchId.ReadValue() != pointerId) continue;
+                var phase = touch.phase.ReadValue();
+                return phase == UnityEngine.InputSystem.TouchPhase.Began
+                    || phase == UnityEngine.InputSystem.TouchPhase.Moved
+                    || phase == UnityEngine.InputSystem.TouchPhase.Stationary;
             }
             return false;
 #else
-            return true;
+            return false;
 #endif
         }
         public bool UseTouchControls => Application.isMobilePlatform || forceTouchControlsForTesting || browserTouch;
         private bool browserTouch = false;
 #if UNITY_WEBGL && !UNITY_EDITOR
         [DllImport("__Internal")] private static extern int SlopCityUsesTouch();
+        [DllImport("__Internal")] private static extern int SlopCityFinePointerActive();
+        [DllImport("__Internal")] private static extern int SlopCityMediaHelpModalOpen();
+
+        /// <summary>Touch UI can remain visible while a user-selected mouse/trackpad owns look.</summary>
+        internal bool WantsPointerLook
+        {
+            get
+            {
+                if (!UseTouchControls) return true;
+                try { return SlopCityFinePointerActive() != 0; }
+                catch (System.EntryPointNotFoundException) { return false; }
+                catch (System.DllNotFoundException) { return false; }
+            }
+        }
+
+        internal bool BrowserModalOpen
+        {
+            get
+            {
+                try { return SlopCityMediaHelpModalOpen() != 0; }
+                catch (System.EntryPointNotFoundException) { return false; }
+                catch (System.DllNotFoundException) { return false; }
+            }
+        }
 
         /// <summary>Match jslib mobile video rules before input Awake and without touch UI.</summary>
         internal static bool BrowserUsesMobileMediaBudget(SlopCityPlayerInput input)
@@ -57,6 +93,10 @@ namespace SlopCity
             catch (System.EntryPointNotFoundException) { return TouchSupported(); }
             catch (System.DllNotFoundException) { return TouchSupported(); }
         }
+#endif
+#if !UNITY_WEBGL || UNITY_EDITOR
+        internal bool WantsPointerLook => !UseTouchControls;
+        internal bool BrowserModalOpen => false;
 #endif
         private void Awake()
         {
@@ -95,6 +135,10 @@ namespace SlopCity
             touchMovement = touchLook = Vector2.zero;
             sprintRequested = false;
         }
+
+        // A geometry transition discards look already accumulated by its old
+        // surface without invalidating a new gesture that begins after relayout.
+        internal void ClearTouchLook() { touchLook = Vector2.zero; }
 
         public void SetGameplayEnabled(bool enabled)
         {
@@ -140,14 +184,20 @@ namespace SlopCity
         public Vector2 ReadLook()
         {
             if (!gameplayEnabled) { touchLook = Vector2.zero; return Vector2.zero; }
-            // Dragging the same fraction of the display produces the same turn on phones/tablets.
-            Vector2 look = touchLook * (126f / Mathf.Max(1, Screen.height));
+            // Normalize each axis independently.  A drag over the same fraction of
+            // its axis produces the same yaw/pitch after an orientation change.
+            Vector2 look = new Vector2(
+                touchLook.x * (126f / Mathf.Max(1, Screen.width)),
+                touchLook.y * (126f / Mathf.Max(1, Screen.height)));
             touchLook = Vector2.zero;
 #if ENABLE_LEGACY_INPUT_MANAGER
-            if (!UseTouchControls && Cursor.lockState == CursorLockMode.Locked)
+            // Touch controls are a presentation choice.  A real pointer can still
+            // own a locked cursor on hybrid devices, while unlocked touch gestures
+            // cannot contribute duplicate mouse deltas.
+            if (WantsPointerLook && Cursor.lockState == CursorLockMode.Locked)
                 look += new Vector2(Input.GetAxisRaw("Mouse X"), Input.GetAxisRaw("Mouse Y"));
 #elif ENABLE_INPUT_SYSTEM
-            if (!UseTouchControls && Cursor.lockState == CursorLockMode.Locked && UnityEngine.InputSystem.Mouse.current != null)
+            if (WantsPointerLook && Cursor.lockState == CursorLockMode.Locked && UnityEngine.InputSystem.Mouse.current != null)
                 look += UnityEngine.InputSystem.Mouse.current.delta.ReadValue() * .1f;
 #endif
             return look;
@@ -276,6 +326,7 @@ namespace SlopCity
         private Vector2 origin;
         private int pointer = int.MinValue;
         private uint resetVersion;
+        private uint layoutGeneration, gestureGeneration;
         public void Configure(SlopCityPlayerInput source, RectTransform knob)
         {
             input = source; thumb = knob; surface = GetComponent<RectTransform>();
@@ -284,12 +335,28 @@ namespace SlopCity
         {
             Configure(source, knob); ring = baseRing;
         }
+        public void SetLayoutGeneration(uint value)
+        {
+            layoutGeneration = value;
+            if (pointer != int.MinValue && gestureGeneration != layoutGeneration)
+            {
+                if (input) input.SetTouchMovement(Vector2.zero);
+                if (thumb) thumb.anchoredPosition = Vector2.zero;
+            }
+        }
+        public void CancelGestureBeforeLayout(uint currentGeneration)
+        {
+            if (pointer != int.MinValue && gestureGeneration != currentGeneration) ResetStick();
+        }
         public void OnPointerDown(PointerEventData data)
         {
+            if (data.pointerId < 0) return;
             ReconcileGesture();
+            if (pointer != int.MinValue && gestureGeneration != layoutGeneration) ResetStick();
             if ((pointer != int.MinValue && pointer != data.pointerId) || !input || !input.GameplayEnabled) return;
             // A fresh down can reuse an interrupted gesture's numeric finger ID.
             pointer = data.pointerId;
+            gestureGeneration = layoutGeneration;
             resetVersion = input.TouchResetVersion;
             if (ring && RectTransformUtility.ScreenPointToLocalPointInRectangle(surface, data.position, data.pressEventCamera, out origin))
             {
@@ -302,8 +369,9 @@ namespace SlopCity
         }
         public void OnDrag(PointerEventData data)
         {
+            if (data.pointerId < 0) return;
             ReconcileGesture();
-            if (data.pointerId == pointer) UpdateStick(data);
+            if (data.pointerId == pointer && gestureGeneration == layoutGeneration) UpdateStick(data);
         }
         private void LateUpdate() { ReconcileGesture(); }
         private void ReconcileGesture()
@@ -322,7 +390,7 @@ namespace SlopCity
             input.SetTouchMovement(axis);
             if (thumb) thumb.anchoredPosition = axis * radius;
         }
-        public void OnPointerUp(PointerEventData data) { if (pointer == data.pointerId) ResetStick(); }
+        public void OnPointerUp(PointerEventData data) { if (data.pointerId >= 0 && pointer == data.pointerId) ResetStick(); }
         public void CancelGesture() { ResetStick(); }
         private void OnDisable() { ResetStick(); }
         private void OnApplicationFocus(bool focused) { if (!focused) ResetStick(); }
@@ -340,17 +408,30 @@ namespace SlopCity
         private SlopCityPlayerInput input;
         private int pointer = int.MinValue;
         private uint resetVersion;
+        private uint layoutGeneration, gestureGeneration;
         public void Configure(SlopCityPlayerInput source) { input = source; }
+        public void SetLayoutGeneration(uint value)
+        {
+            layoutGeneration = value;
+            if (pointer != int.MinValue && gestureGeneration != layoutGeneration && input) input.ClearTouchLook();
+        }
+        public void CancelGestureBeforeLayout(uint currentGeneration)
+        {
+            if (pointer != int.MinValue && gestureGeneration != currentGeneration) CancelGesture();
+        }
         public void OnPointerDown(PointerEventData data)
         {
+            if (data.pointerId < 0) return;
             ReconcileGesture();
+            if (pointer != int.MinValue && gestureGeneration != layoutGeneration) CancelGesture();
             if ((pointer == int.MinValue || pointer == data.pointerId) && input && input.GameplayEnabled)
-            { pointer = data.pointerId; resetVersion = input.TouchResetVersion; }
+            { pointer = data.pointerId; gestureGeneration = layoutGeneration; resetVersion = input.TouchResetVersion; }
         }
         public void OnDrag(PointerEventData data)
         {
+            if (data.pointerId < 0) return;
             ReconcileGesture();
-            if (pointer == data.pointerId && input) input.AddTouchLook(data.delta);
+            if (pointer == data.pointerId && gestureGeneration == layoutGeneration && input) input.AddTouchLook(data.delta);
         }
         private void LateUpdate() { ReconcileGesture(); }
         private void ReconcileGesture()
@@ -358,7 +439,7 @@ namespace SlopCity
             if (pointer != int.MinValue && (!input || !input.GameplayEnabled
                 || resetVersion != input.TouchResetVersion || !SlopCityPlayerInput.TouchIsActive(pointer))) CancelGesture();
         }
-        public void OnPointerUp(PointerEventData data) { if (pointer == data.pointerId) pointer = int.MinValue; }
+        public void OnPointerUp(PointerEventData data) { if (data.pointerId >= 0 && pointer == data.pointerId) pointer = int.MinValue; }
         public void CancelGesture() { pointer = int.MinValue; }
         private void OnDisable() { pointer = int.MinValue; }
         private void OnApplicationFocus(bool focused) { if (!focused) pointer = int.MinValue; }

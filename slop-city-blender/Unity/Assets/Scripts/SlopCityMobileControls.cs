@@ -12,15 +12,19 @@ namespace SlopCity
     {
         private const int ViewportSlopPixels = 12;
         private const float PixelRatioSlop = 0.05f;
+        private const float GeometrySettleSeconds = .12f;
 
         private RectTransform safe, left, ring, rightLook, touchActions;
         private SlopCityPlayerInput input;
         private Rect lastSafe;
         private int lastLayoutWidth, lastLayoutHeight;
-        private float lastPixelRatio, lastLayoutScaleFactor, nextSalvageCheck;
-        private bool layoutApplied;
+        private float lastPixelRatio, lastLayoutScaleFactor, nextSalvageCheck, geometrySettleAt;
+        private bool layoutApplied, geometrySettlePending;
+        private uint layoutGeneration = 1;
 
-        public void RelayoutFromHud() => TryLayout(true);
+        // HUD can ask after its scaler changes, but it must not evict a just-started
+        // two-thumb gesture when the effective geometry did not change.
+        public void RelayoutFromHud() => TryLayout(false);
         private SlopCityTouchStick moveStick;
         private SlopCityTouchLook touchLook;
         private SlopCityTouchHold touchRun;
@@ -60,10 +64,9 @@ namespace SlopCity
             yield return null;
             Canvas.ForceUpdateCanvases();
             layoutApplied = false;
+            geometrySettlePending = false;
             lastLayoutWidth = lastLayoutHeight = 0;
-            TryLayout(true);
-            yield return null;
-            TryLayout(true);
+            TryLayout(false);
         }
 
         private void Build(SlopCityPlayerInput source, Font font)
@@ -106,6 +109,7 @@ namespace SlopCity
             cleanCaption = AddButton("TouchClean", "CLEAN", source.RequestClean, font).GetComponentInChildren<Text>();
             AddButton("TouchTake", "TAKE", source.RequestPickup, font);
             AddButton("TouchBag", "BAG", source.RequestInventory, font);
+            ApplyTouchLayoutGeneration();
         }
 
         private void Update()
@@ -123,6 +127,7 @@ namespace SlopCity
                     buttons[7].GetComponent<Button>().interactable = take;
                 }
             }
+            TryLayout(false);
         }
 
         private void TryLayout(bool force)
@@ -131,8 +136,29 @@ namespace SlopCity
             Rect safeArea = Screen.safeArea;
             float pixelRatio = SlopCityWebPresentation.DisplayPixelRatio;
             if (width <= 0 || height <= 0) return;
-            if (!force && layoutApplied && !ViewportChanged(width, height, safeArea, pixelRatio)) return;
-            LayoutForViewport(width, height, safeArea, pixelRatio);
+            bool changed = !layoutApplied || ViewportChanged(width, height, safeArea, pixelRatio);
+            if (changed || force)
+            {
+                // Apply each intermediate browser geometry immediately, but do not
+                // throw away held controls until the visual viewport has stopped
+                // settling. Mobile browsers commonly report several dimensions
+                // while rotating or dismissing their chrome.
+                bool hadLayout = layoutApplied;
+                LayoutForViewport(width, height, safeArea, pixelRatio);
+                if (hadLayout && changed)
+                {
+                    unchecked { layoutGeneration++; if (layoutGeneration == 0) layoutGeneration = 1; }
+                    ApplyTouchLayoutGeneration();
+                    geometrySettlePending = true;
+                    geometrySettleAt = Time.unscaledTime + GeometrySettleSeconds;
+                }
+                return;
+            }
+            if (geometrySettlePending && Time.unscaledTime >= geometrySettleAt)
+            {
+                geometrySettlePending = false;
+                CancelHeldGestures();
+            }
         }
 
         private bool ViewportChanged(int width, int height, Rect safeArea, float pixelRatio)
@@ -150,14 +176,24 @@ namespace SlopCity
                 && Mathf.Abs(lastPixelRatio - pixelRatio) >= PixelRatioSlop;
         }
 
+        private void ApplyTouchLayoutGeneration()
+        {
+            if (moveStick) moveStick.SetLayoutGeneration(layoutGeneration);
+            if (touchLook) touchLook.SetLayoutGeneration(layoutGeneration);
+            if (touchRun) touchRun.SetLayoutGeneration(layoutGeneration);
+        }
+
+        private void CancelHeldGestures()
+        {
+            // Cancel only touches that predate the settled geometry. A player who
+            // began a new two-thumb gesture after the final relayout keeps it.
+            if (moveStick) moveStick.CancelGestureBeforeLayout(layoutGeneration);
+            if (touchLook) touchLook.CancelGestureBeforeLayout(layoutGeneration);
+            if (touchRun) touchRun.CancelGestureBeforeLayout(layoutGeneration);
+        }
+
         private void LayoutForViewport(int width, int height, Rect safeArea, float pixelRatio)
         {
-            // Rotation/resizing invalidates held gestures, but a completed button
-            // click must remain queued until the player consumes it.
-            if (moveStick) moveStick.CancelGesture();
-            if (touchLook) touchLook.CancelGesture();
-            if (touchRun) touchRun.CancelGesture();
-            if (input) input.ResetContinuousTouch();
             safe.anchorMin = new Vector2(safeArea.xMin/width,safeArea.yMin/height);
             safe.anchorMax = new Vector2(safeArea.xMax/width,safeArea.yMax/height);
             safe.offsetMin = safe.offsetMax = Vector2.zero;
@@ -165,14 +201,24 @@ namespace SlopCity
             Canvas.ForceUpdateCanvases();
             if (safe.rect.width < 1f || safe.rect.height < 1f) return;
             float pixelsPerUnit = GetComponentInParent<Canvas>().scaleFactor;
-            float button = Mathf.Clamp(Mathf.Min(width,height)*.16f,54f*pixelRatio,88f*pixelRatio)/Mathf.Max(.1f,pixelsPerUnit);
+            // RectTransform coordinates are Canvas-local.  Do not mix backing-pixel
+            // Screen dimensions with them: on high-DPR displays that can place the
+            // floating stick outside its move surface.
+            float safeWidth = left.rect.width;
+            float safeHeight = left.rect.height;
+            float button = Mathf.Clamp(Mathf.Min(safeWidth, safeHeight) * .16f, 44f, 72f);
             float gap = button*.18f;
             float margin = button*.24f;
-            ring.sizeDelta = Vector2.one*button*1.8f;
+            float ringSize = Mathf.Min(button * 1.8f,
+                Mathf.Max(1f, Mathf.Min(safeWidth, safeHeight) - button * .4f));
+            ring.sizeDelta = Vector2.one*ringSize;
             ring.GetChild(0).GetComponent<RectTransform>().sizeDelta = Vector2.one*button*.72f;
-            float safeWidth = Mathf.Max(left.rect.width, width * (safe.anchorMax.x - safe.anchorMin.x) * .48f);
-            float safeHeight = Mathf.Max(left.rect.height, height * (safe.anchorMax.y - safe.anchorMin.y) * .80f);
-            ring.anchoredPosition = new Vector2(-safeWidth*.5f+button*1.25f,-safeHeight*.5f+button*1.4f);
+            float ringRadius = ringSize * .5f;
+            float ringX = Mathf.Clamp(-safeWidth*.5f+button*1.25f,
+                -safeWidth*.5f+ringRadius, safeWidth*.5f-ringRadius);
+            float ringY = Mathf.Clamp(-safeHeight*.5f+button*1.4f,
+                -safeHeight*.5f+ringRadius, safeHeight*.5f-ringRadius);
+            ring.anchoredPosition = new Vector2(ringX, ringY);
             Position(buttons[0],new Vector2(1,0),new Vector2(-margin-button*.5f,margin+button*.5f),button);
             Position(buttons[1],new Vector2(1,0),new Vector2(-margin-button*.5f,margin+button*1.5f+gap),button);
             Position(buttons[2],new Vector2(1,0),new Vector2(-margin-button*1.5f-gap,margin+button*.5f),button);
@@ -182,13 +228,11 @@ namespace SlopCity
             Position(buttons[8],new Vector2(1,0),new Vector2(-margin-button*2.5f-gap*2,margin+button*.5f),button);
             for (int i=3;i<6;i++)
                 Position(buttons[i],new Vector2(1,1),new Vector2(-margin-small*.5f-(i-3)*(small+gap*.65f),-margin-small*.5f),small);
-            if (rightLook)
-            {
-                float padWidth = margin + button * 2.5f + gap * 2 + button;
-                float padHeight = margin + button * 1.5f + gap + button;
-                rightLook.offsetMin = new Vector2(0f, padHeight);
-                rightLook.offsetMax = new Vector2(-padWidth, 0f);
-            }
+            // Action buttons are ordered above this layer and win their own
+            // raycasts.  Clipping this target around them creates a negative-width
+            // look surface on narrow portrait devices and leaves a sliver in
+            // landscape, so keep the whole safe-area right half available.
+            if (rightLook) rightLook.offsetMin = rightLook.offsetMax = Vector2.zero;
             if (touchActions) touchActions.SetAsLastSibling();
             lastSafe = safeArea;
             lastLayoutWidth = width;
@@ -248,12 +292,22 @@ namespace SlopCity
         private SlopCityPlayerInput input;
         private int pointer=int.MinValue;
         private uint resetVersion;
+        private uint layoutGeneration, gestureGeneration;
         public void Configure(SlopCityPlayerInput source){input=source;}
+        public void SetLayoutGeneration(uint value)
+        {
+            layoutGeneration=value;
+            if(pointer!=int.MinValue&&gestureGeneration!=layoutGeneration&&input)input.RequestSprint(false);
+        }
+        public void CancelGestureBeforeLayout(uint currentGeneration)
+        { if(pointer!=int.MinValue&&gestureGeneration!=currentGeneration)Release(); }
         public void OnPointerDown(PointerEventData data)
         {
+            if(data.pointerId<0)return;
             ReconcileGesture();
+            if(pointer!=int.MinValue&&gestureGeneration!=layoutGeneration)Release();
             if((pointer!=int.MinValue&&pointer!=data.pointerId)||!input||!input.GameplayEnabled)return;
-            pointer=data.pointerId;resetVersion=input.TouchResetVersion;input.RequestSprint(true);
+            pointer=data.pointerId;gestureGeneration=layoutGeneration;resetVersion=input.TouchResetVersion;input.RequestSprint(true);
         }
         private void LateUpdate(){ReconcileGesture();}
         private void ReconcileGesture()
@@ -261,7 +315,7 @@ namespace SlopCity
             if(pointer!=int.MinValue&&(!input||!input.GameplayEnabled
                 ||resetVersion!=input.TouchResetVersion||!SlopCityPlayerInput.TouchIsActive(pointer)))Release();
         }
-        public void OnPointerUp(PointerEventData data){if(pointer==data.pointerId)Release();}
+        public void OnPointerUp(PointerEventData data){if(data.pointerId>=0&&pointer==data.pointerId)Release();}
         public void CancelGesture(){Release();}
         private void OnDisable(){Release();}
         private void OnApplicationFocus(bool focused){if(!focused)Release();}

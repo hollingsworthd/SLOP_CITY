@@ -23,9 +23,14 @@ mergeInto(LibraryManager.library, {
   $slopCityEnforceRetiredWebRequestCap__deps: ['$slopCityRetiredWebRequests', '$slopCityRetiredWebRequestCap'],
   $slopCityEnforceRetiredWebRequestCap: function () {
     for (var i = slopCityRetiredWebRequests.length - 1; i >= 0; --i) {
-      if (slopCityRetiredWebRequests[i].cleanupFailed) slopCityRetiredWebRequests.splice(i, 1);
+      var token = slopCityRetiredWebRequests[i];
+      // A failed native free may still own its temporary Wasm buffer. Keep the
+      // token reachable for the next release attempt; never satisfy a cap by
+      // discarding the only owner of that allocation.
+      if (token.retired && token.transportRetired && !token.progressDepth
+        && !token.options.tempBuffer) slopCityRetiredWebRequests.splice(i, 1);
     }
-    while (slopCityRetiredWebRequests.length > slopCityRetiredWebRequestCap) slopCityRetiredWebRequests.shift();
+    return slopCityRetiredWebRequests.length <= slopCityRetiredWebRequestCap;
   },
 
   $slopCityClearWebRequestTimer__deps: ['$wr'],
@@ -34,9 +39,9 @@ mergeInto(LibraryManager.library, {
   },
 
   $slopCityForgetRetiredWebRequest__deps: ['$slopCityRetiredWebRequests'],
-  $slopCityForgetRetiredWebRequest: function (token, force) {
+  $slopCityForgetRetiredWebRequest: function (token) {
     if (!token.retired || !token.transportRetired || token.progressDepth || token.options.tempBuffer) {
-      if (!(force && token.cleanupFailed)) return;
+      return;
     }
     var index = slopCityRetiredWebRequests.indexOf(token);
     if (index >= 0) slopCityRetiredWebRequests.splice(index, 1);
@@ -116,7 +121,9 @@ mergeInto(LibraryManager.library, {
   JS_WebRequest_Create__deps: ['$slopCityNativeWebRequestCreate', '$slopCityWebRequestsDisposed', '$slopCityEnforceRetiredWebRequestCap'],
   JS_WebRequest_Create: function (url, method) {
     if (slopCityWebRequestsDisposed) return 0;
-    slopCityEnforceRetiredWebRequestCap();
+    // Backpressure is safer than dropping a token which can still own a Wasm
+    // progress buffer after a host cleanup failure.
+    if (!slopCityEnforceRetiredWebRequestCap()) return 0;
     return slopCityNativeWebRequestCreate(url, method);
   },
 

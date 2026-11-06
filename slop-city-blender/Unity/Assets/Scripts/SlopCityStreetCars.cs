@@ -20,14 +20,20 @@ namespace SlopCity
         public int AddedCarCount => cars.Count;
         public IReadOnlyList<SlopCityInteractable> Cars => cars;
 
-        public static SlopCityStreetCars Ensure(SlopCityFirstPerson player) => Ensure(player ? player.transform : null);
+        public static SlopCityStreetCars Ensure(SlopCityFirstPerson player)
+            => Ensure(player ? player.transform : null, player ? player.Districts : null);
 
-        public static SlopCityStreetCars Ensure(Transform player)
+        public static SlopCityStreetCars Ensure(Transform player) => Ensure(player, null);
+
+        private static SlopCityStreetCars Ensure(Transform player, SlopCityDistrict[] districts)
         {
-            SlopCityDistrict[] districts = FindObjectsByType<SlopCityDistrict>(FindObjectsSortMode.None);
+            // The normal player path already owns the configured district registry.
+            // Keep the scene query only for isolated callers and lightweight tools.
+            if (districts == null || districts.Length == 0)
+                districts = FindObjectsByType<SlopCityDistrict>(FindObjectsSortMode.None);
             Transform city = null;
             foreach (SlopCityDistrict district in districts)
-                if (district.transform.parent && district.transform.parent.name == "SlopCity_NineBlocks"
+                if (district && district.transform.parent && district.transform.parent.name == "SlopCity_NineBlocks"
                     && (!player || district.gameObject.scene == player.gameObject.scene))
                 { city = district.transform.parent; break; }
             // Do not introduce city props into unrelated scenes or lightweight fixtures.
@@ -57,7 +63,7 @@ namespace SlopCity
                 if (item.Kind == SlopCityInteractionKind.Car && item.name == "Parked_CityCar"
                     && !item.transform.IsChildOf(transform) && SafeTemplate(item.transform)) templates.Add(item);
             if (templates.Count == 0) return;
-            templates.Sort((a, b) => string.CompareOrdinal(TemplateKey(a.transform), TemplateKey(b.transform)));
+            templates.Sort(CompareTemplates);
             if (cachedDoors == null) cachedDoors = city.GetComponentsInChildren<SlopCityDoor>();
             SlopCityCrowd crowd = city.GetComponentInChildren<SlopCityCrowd>();
             Physics.SyncTransforms();
@@ -65,7 +71,7 @@ namespace SlopCity
             {
                 SlopCityDistrict district = null;
                 foreach (SlopCityDistrict item in districts)
-                    if (item.transform.parent == city && item.Index == districtIndex)
+                    if (item && item.transform.parent == city && item.Index == districtIndex)
                     { district = item; break; }
                 if (!district) continue;
                 SlopCityInteractable source = templates[cars.Count % templates.Count];
@@ -92,9 +98,14 @@ namespace SlopCity
             }
         }
 
-        private static string TemplateKey(Transform item) => item.parent.name + "/" + item.name
-            + ":" + item.position.x.ToString("R", System.Globalization.CultureInfo.InvariantCulture)
-            + "," + item.position.z.ToString("R", System.Globalization.CultureInfo.InvariantCulture);
+        private static int CompareTemplates(SlopCityInteractable left, SlopCityInteractable right)
+        {
+            Transform a = left.transform, b = right.transform;
+            int compare = string.CompareOrdinal(a.parent ? a.parent.name : "", b.parent ? b.parent.name : "");
+            if (compare == 0) compare = string.CompareOrdinal(a.name, b.name);
+            if (compare == 0) compare = a.position.x.CompareTo(b.position.x);
+            return compare == 0 ? a.position.z.CompareTo(b.position.z) : compare;
+        }
 
         private static bool IsMedia(Transform item) => item.name.StartsWith("SlopCityMediaScreenAnchor", StringComparison.Ordinal)
             || item.GetComponent<SlopCityCityScreen>() || item.GetComponent<SlopCityMediaPlayer>();

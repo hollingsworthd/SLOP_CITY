@@ -569,6 +569,9 @@ namespace SlopCity
             private bool partyWall;
             private Vector3 partyRight;
             private float partyLow, partyHigh, partyHeight;
+            private readonly List<ArtVertex> partyPolygon = new List<ArtVertex>(8);
+            private readonly List<ArtVertex> partyClipA = new List<ArtVertex>(8);
+            private readonly List<ArtVertex> partyClipB = new List<ArtVertex>(8);
             private struct ArtVertex
             {
                 internal Vector3 point;
@@ -617,14 +620,20 @@ namespace SlopCity
                 {
                     if (roomUv)
                     { ua = roomOffset; ub = roomOffset + new Vector2(roomSpan.x, 0); uc = roomOffset + roomSpan; ud = roomOffset + new Vector2(0, roomSpan.y); }
-                    var polygon = new List<ArtVertex> { new ArtVertex(a, ua), new ArtVertex(b, ub), new ArtVertex(c, uc), new ArtVertex(d, ud) };
+                    partyPolygon.Clear();
+                    partyPolygon.Add(new ArtVertex(a, ua)); partyPolygon.Add(new ArtVertex(b, ub));
+                    partyPolygon.Add(new ArtVertex(c, uc)); partyPolygon.Add(new ArtVertex(d, ud));
                     // Three disjoint exterior regions subtract the hidden rectangle.
                     // Interpolated UVs retain metre texture density and room atlas cells
                     // when a window happens to cross either edge of the shared wall.
-                    AddPolygon(Clip(polygon, partyRight, partyLow, false), normal, singleSided);
-                    AddPolygon(Clip(polygon, partyRight, partyHigh, true), normal, singleSided);
-                    List<ArtVertex> above = Clip(Clip(polygon, partyRight, partyLow, true), partyRight, partyHigh, false);
-                    AddPolygon(Clip(above, Vector3.up, partyHeight, true), normal, singleSided);
+                    Clip(partyPolygon, partyRight, partyLow, false, partyClipA);
+                    AddPolygon(partyClipA, normal, singleSided);
+                    Clip(partyPolygon, partyRight, partyHigh, true, partyClipA);
+                    AddPolygon(partyClipA, normal, singleSided);
+                    Clip(partyPolygon, partyRight, partyLow, true, partyClipA);
+                    Clip(partyClipA, partyRight, partyHigh, false, partyClipB);
+                    Clip(partyClipB, Vector3.up, partyHeight, true, partyClipA);
+                    AddPolygon(partyClipA, normal, singleSided);
                     return;
                 }
                 for (int side = 0; side < (doubleSided && !singleSided ? 2 : 1); side++)
@@ -643,15 +652,16 @@ namespace SlopCity
                     triangles.Add(first); triangles.Add(first + 2); triangles.Add(first + y);
                 }
             }
-            private static List<ArtVertex> Clip(List<ArtVertex> polygon, Vector3 axis, float edge, bool greater)
+            private static void Clip(IList<ArtVertex> polygon, Vector3 axis, float edge, bool greater, List<ArtVertex> result)
             {
-                var result = new List<ArtVertex>();
-                if (polygon.Count == 0) return result;
+                result.Clear();
+                if (polygon.Count == 0) return;
                 ArtVertex previous = polygon[polygon.Count - 1];
                 float previousDistance = Vector3.Dot(previous.point, axis) - edge;
                 bool previousInside = greater ? previousDistance >= 0 : previousDistance <= 0;
-                foreach (ArtVertex current in polygon)
+                for (int index = 0; index < polygon.Count; index++)
                 {
+                    ArtVertex current = polygon[index];
                     float distance = Vector3.Dot(current.point, axis) - edge;
                     bool inside = greater ? distance >= 0 : distance <= 0;
                     if (inside != previousInside)
@@ -663,7 +673,6 @@ namespace SlopCity
                     if (inside) result.Add(current);
                     previous = current; previousDistance = distance; previousInside = inside;
                 }
-                return result;
             }
             private void AddPolygon(List<ArtVertex> polygon, Vector3 normal, bool singleSided)
             {

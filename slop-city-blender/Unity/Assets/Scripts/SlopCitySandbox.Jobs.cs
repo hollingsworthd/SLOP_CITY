@@ -38,7 +38,10 @@ namespace SlopCity
         private SlopCityJobWorld uniqueWorld;
         private readonly Transform[] uniqueRoutes = new Transform[40];
         private readonly SlopCityInteractable[] uniqueMailboxes = new SlopCityInteractable[3];
+        private readonly List<SlopCitySalvageItem> uniqueMailboxScratch = new List<SlopCitySalvageItem>(9);
+        private readonly HashSet<string> uniqueMailboxIds = new HashSet<string>();
         private readonly SlopCityCityScreen[] uniqueScreens = new SlopCityCityScreen[40];
+        private readonly List<SlopCityCityScreen> uniqueScreenScratch = new List<SlopCityCityScreen>();
         private readonly Dictionary<Transform,UniqueVehicleRecord> uniqueVehicleCache = new Dictionary<Transform,UniqueVehicleRecord>();
         private float uniqueWaterTick;
         private readonly float[] uniqueScreenRetryAt = new float[40];
@@ -52,7 +55,53 @@ namespace SlopCity
             RestoreMailContents();
         }
         public UniqueJobState CaptureUniqueJobState()
-        { return JsonUtility.FromJson<UniqueJobState>(JsonUtility.ToJson(uniqueJobState)); }
+        { return CopyUniqueJobState(uniqueJobState); }
+        private static UniqueJobState CopyUniqueJobState(UniqueJobState source)
+        {
+            if(source==null)return new UniqueJobState();
+            var copy=new UniqueJobState { version=source.version,pendingLegacyCargo=source.pendingLegacyCargo };
+            if(source.records!=null)
+            {
+                copy.records=new UniqueJobRecord[source.records.Length];
+                for(int index=0;index<copy.records.Length;index++)copy.records[index]=CopyUniqueJobRecord(source.records[index]);
+            }
+            else copy.records=null;
+            if(source.vehicles!=null)
+            {
+                copy.vehicles=new UniqueVehicleRecord[source.vehicles.Length];
+                for(int index=0;index<copy.vehicles.Length;index++)
+                {
+                    UniqueVehicleRecord record=source.vehicles[index];
+                    if(record!=null)copy.vehicles[index]=new UniqueVehicleRecord{id=record.id,fuel=record.fuel,driven=record.driven};
+                }
+            }
+            else copy.vehicles=null;
+            if(source.mail!=null)
+            {
+                copy.mail=new UniqueMailRecord[source.mail.Length];
+                for(int index=0;index<copy.mail.Length;index++)
+                {
+                    UniqueMailRecord record=source.mail[index];
+                    if(record!=null)copy.mail[index]=new UniqueMailRecord{id=record.id,parcel=record.parcel,letters=record.letters};
+                }
+            }
+            else copy.mail=null;
+            return copy;
+        }
+        private static UniqueJobRecord CopyUniqueJobRecord(UniqueJobRecord source)
+        {
+            if(source==null)return null;
+            return new UniqueJobRecord
+            {
+                id=source.id,screenId=source.screenId,vehicleId=source.vehicleId,run=source.run,phase=source.phase,
+                issued=source.issued,residentId=source.residentId,values=source.values==null?null:(int[])source.values.Clone(),
+                replacements=source.replacements==null?null:(int[])source.replacements.Clone(),
+                sourceIds=source.sourceIds==null?null:(string[])source.sourceIds.Clone(),transportedId=source.transportedId,
+                completed=source.completed,awarded=source.awarded,ridden=source.ridden,installed=source.installed,
+                installedPosition=source.installedPosition,installedRotation=source.installedRotation,observedTime=source.observedTime,
+                startPosition=source.startPosition,arrivalRotation=source.arrivalRotation
+            };
+        }
         public void RestoreUniqueJobState(UniqueJobState saved)
         {
             var next=new UniqueJobState { records=new UniqueJobRecord[40] };
@@ -60,7 +109,7 @@ namespace SlopCity
             {
                 string id=SlopCityJobCatalog.All[i].id;
                 UniqueJobRecord record=saved?.version==2&&saved.records!=null?Array.Find(saved.records,r=>r!=null&&r.id==id):null;
-                record=record==null?NewUnique(i,1):JsonUtility.FromJson<UniqueJobRecord>(JsonUtility.ToJson(record));
+                record=record==null?NewUnique(i,1):CopyUniqueJobRecord(record);
                 record.run=Mathf.Clamp(record.run,1,1000000000);record.phase=Mathf.Clamp(record.phase,0,100);
                 if(record.values==null||record.values.Length!=24)record=NewUnique(i,record.run);
                 if(record.replacements==null||record.replacements.Length!=16)record.replacements=new int[16];
@@ -467,7 +516,8 @@ namespace SlopCity
             if(Time.unscaledTime<uniqueScreenRetryAt[i])return null;uniqueScreenRetryAt[i]=Time.unscaledTime+.5f;
             var site=uniqueWorld.Get(i);if(site==null)return null;
             SlopCityCityScreen best=null;float distance=float.PositiveInfinity;
-            foreach(var screen in FindObjectsByType<SlopCityCityScreen>(FindObjectsSortMode.None))
+            SlopCityCityScreen.CopyActiveScreens(uniqueScreenScratch);
+            foreach(var screen in uniqueScreenScratch)
             {
                 if(!screen||!screen.isActiveAndEnabled||screen.IsFeatured||screen.AudioOnly)continue;
                 Vector3 origin=UniqueRecord(i).ridden?UniqueRecord(i).startPosition:site.root.position;
@@ -717,35 +767,61 @@ namespace SlopCity
             // Existing v2 saves carry delivered bits and their exact addresses. Never rebind them here.
             foreach(int mechanic in PostalMechanics)
             {var r=UniqueRecord(mechanic);for(int address=0;address<3;address++)if((r.values[2]&(1<<address))!=0)RememberMailContent(r.sourceIds[8+address],mechanic==0);}
-            var boxes=FindObjectsByType<SlopCitySalvageItem>(FindObjectsInactive.Include,FindObjectsSortMode.None);
+            CopyKnownMailboxes();
+            ShowKnownMailContents();
+        }
+        private void ShowKnownMailContents()
+        {
             foreach(var delivered in uniqueJobState.mail)
-            {var box=Array.Find(boxes,item=>item.Category=="mailbox"&&item.StableId==delivered.id);if(!box)continue;if(delivered.parcel)uniqueWorld.ShowMailboxContent(box.transform,true);if(delivered.letters)uniqueWorld.ShowMailboxContent(box.transform,false);}
+            {
+                SlopCitySalvageItem box=FindKnownMailbox(delivered.id,false);
+                if(!box)continue;
+                if(delivered.parcel)uniqueWorld.ShowMailboxContent(box.transform,true);
+                if(delivered.letters)uniqueWorld.ShowMailboxContent(box.transform,false);
+            }
         }
         private static readonly int[] PostalMechanics={0,2};
         private static int PendingMailboxAddress(int mechanic,UniqueJobRecord r)
             =>mechanic==0?1:(r.values[2]&1)==0?0:(r.values[2]&2)==0?1:2;
         private void BindMailboxes(int mechanic)
         {
-            var r=UniqueRecord(mechanic);var boxes=new List<SlopCitySalvageItem>();
-            foreach(var box in FindObjectsByType<SlopCitySalvageItem>(FindObjectsInactive.Include,FindObjectsSortMode.None))
-                if(box.Category=="mailbox"&&box.name=="Salvage_Mailbox")boxes.Add(box);
-            boxes.Sort((a,b)=>StringComparer.Ordinal.Compare(a.StableId,b.StableId));
-            var used=new HashSet<string>();for(int i=0;i<3;i++)if(!string.IsNullOrEmpty(r.sourceIds[8+i]))used.Add(r.sourceIds[8+i]);
+            var r=UniqueRecord(mechanic);CopyKnownMailboxes();
+            uniqueMailboxScratch.Sort((a,b)=>StringComparer.Ordinal.Compare(a.StableId,b.StableId));
+            uniqueMailboxIds.Clear();for(int i=0;i<3;i++)if(!string.IsNullOrEmpty(r.sourceIds[8+i]))uniqueMailboxIds.Add(r.sourceIds[8+i]);
             for(int i=0;i<3;i++)
             {
                 SlopCitySalvageItem box=null;string saved=r.sourceIds[8+i];
-                if(!string.IsNullOrEmpty(saved))box=boxes.Find(candidate=>candidate.StableId==saved);
+                if(!string.IsNullOrEmpty(saved))box=FindKnownMailbox(saved,false);
                 else
                 {
-                    box=boxes.Find(candidate=>candidate.gameObject.activeInHierarchy&&!used.Contains(candidate.StableId));
-                    if(!box)box=boxes.Find(candidate=>!used.Contains(candidate.StableId));
-                    if(box){r.sourceIds[8+i]=box.StableId;used.Add(box.StableId);}
+                    box=FindAvailableMailbox(true);
+                    if(!box)box=FindAvailableMailbox(false);
+                    if(box){r.sourceIds[8+i]=box.StableId;uniqueMailboxIds.Add(box.StableId);}
                 }
                 if(!box){uniqueMailboxes[i]=null;continue;}
                 var item=box.GetComponent<SlopCityInteractable>();if(!item)item=box.gameObject.AddComponent<SlopCityInteractable>();
                 item.Configure(SlopCityInteractionKind.Inspect,"Address "+(i+1)+" mailbox",true);item.ConfigureInteractionPoint(box.WorldBounds.center);
                 var device=box.GetComponent<SlopCityJobDevice>();if(!device)device=box.gameObject.AddComponent<SlopCityJobDevice>();device.BindExternal(uniqueWorld,mechanic,i+1);uniqueMailboxes[i]=item;
             }
+            ShowKnownMailContents();
+        }
+        private void CopyKnownMailboxes()
+        {
+            Transform city=uniqueWorld&&uniqueWorld.transform.parent?uniqueWorld.transform.parent:GameObject.Find("SlopCity_NineBlocks")?.transform;
+            SlopCitySalvagePreparation.CopyPreparedMailboxes(city,uniqueMailboxScratch);
+        }
+        private SlopCitySalvageItem FindKnownMailbox(string id,bool activeOnly)
+        {
+            if(string.IsNullOrEmpty(id))return null;
+            foreach(SlopCitySalvageItem candidate in uniqueMailboxScratch)
+                if(candidate&&candidate.StableId==id&&(!activeOnly||candidate.gameObject.activeInHierarchy))return candidate;
+            return null;
+        }
+        private SlopCitySalvageItem FindAvailableMailbox(bool activeOnly)
+        {
+            foreach(SlopCitySalvageItem candidate in uniqueMailboxScratch)
+                if(candidate&&(!activeOnly||candidate.gameObject.activeInHierarchy)&&!uniqueMailboxIds.Contains(candidate.StableId))return candidate;
+            return null;
         }
         private bool TryUniqueResidentWaypoint(out Vector3 position,out string label)
         {

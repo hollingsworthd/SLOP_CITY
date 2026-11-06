@@ -11,6 +11,7 @@ namespace SlopCity
         public sealed class Site
         {
             public Transform root, movingPart, gauge, treatment, poster, bench, actuator;
+            public Renderer posterText;
             public Transform[] litter = new Transform[3], guard = new Transform[3], hose = new Transform[3];
             public SlopCityJobDevice[] controls = new SlopCityJobDevice[ControlCount];
             public Renderer[] indicators = new Renderer[3];
@@ -30,17 +31,28 @@ namespace SlopCity
         private readonly Site[] sites = new Site[40];
         private readonly Collider[] overlaps = new Collider[64];
         private readonly RaycastHit[] groundHits = new RaycastHit[32];
+        private static SlopCityJobWorld knownWorld;
         private SlopCityDoor[] doorCache = Array.Empty<SlopCityDoor>();
+        private bool doorCacheReady;
         private MaterialPropertyBlock properties;
+        private static Material workLabelMaterial;
         private SlopCitySandbox owner;
         private bool initialized, constructionFailed, hostRetirementQueued;
         private Vector3 candidateCarStaging;
         public Site Get(int mechanic) => initialized && mechanic >= 0 && mechanic < sites.Length ? sites[mechanic] : null;
         public static SlopCityJobWorld Ensure(SlopCitySandbox sandbox)
         {
+            if (knownWorld && knownWorld.owner == sandbox)
+            {
+                if(knownWorld.initialized)return knownWorld;
+                if(!knownWorld.constructionFailed)throw new InvalidOperationException("Physical worksites are already being constructed.");
+                knownWorld.Release(sandbox);
+                if(knownWorld)throw new InvalidOperationException("Failed physical worksites are still retiring.");
+            }
             foreach (var candidate in UnityEngine.Object.FindObjectsByType<SlopCityJobWorld>(FindObjectsInactive.Include,FindObjectsSortMode.None))
             {
                 if(candidate.owner!=sandbox)continue;
+                knownWorld=candidate;
                 if(candidate.initialized)return candidate;
                 if(!candidate.constructionFailed)throw new InvalidOperationException("Physical worksites are already being constructed.");
                 candidate.Release(sandbox);
@@ -53,8 +65,10 @@ namespace SlopCity
             try
             {
                 world = host.AddComponent<SlopCityJobWorld>(); world.owner = sandbox;
+                knownWorld = world;
                 var city = GameObject.Find("SlopCity_NineBlocks"); if (city) host.transform.SetParent(city.transform, false);
                 SlopCityInteriorGeometry.Initialize();
+                world.CaptureDoorCache();
                 for (int i = 0; i < sitesLength; i++) world.Build(i);
                 world.initialized = true;
                 return world;
@@ -65,6 +79,10 @@ namespace SlopCity
                 else Retire(host);
                 throw;
             }
+        }
+        private void OnDestroy()
+        {
+            if(ReferenceEquals(knownWorld,this))knownWorld=null;
         }
         private void RetireFailedHost()
         {
@@ -180,7 +198,7 @@ namespace SlopCity
                 {
                     Box(site.root,"Poster_Frame",new Vector3(0,1.05f,.38f),new Vector3(1.75f,1.2f,.1f),SlopCityInteriorGeometry.Wood,true);
                     site.poster=Box(site.root,"Protected_Poster_Face",new Vector3(0,1.05f,.31f),new Vector3(1.59f,1.06f,.025f),SlopCityInteriorGeometry.Wall,false).transform;
-                    Label(site.poster,"NEIGHBOURS MAKE\nTHIS CITY\n\nTURN THE AMBER VALVE",new Vector3(-.71f,.4f,-.021f),.08f);
+                    site.posterText=Label(site.poster,"NEIGHBOURS MAKE\nTHIS CITY\n\nTURN THE AMBER VALVE",new Vector3(-.71f,.4f,-.021f),.08f).GetComponent<Renderer>();
                     site.movingPart=Box(site.root,"Dusty_Notice_Cover",new Vector3(0,1.05f,.275f),new Vector3(1.59f,1.06f,.015f),SlopCityInteriorGeometry.Glass,false).transform;
                     Dusty(site,mechanic,site.movingPart.gameObject,"notice_cover","Dusty notice cover");
                 }
@@ -385,7 +403,7 @@ namespace SlopCity
                 if(site.arrivalRoot)foreach(Transform part in site.arrivalRoot)if(part.name=="Replacement_Frame")part.gameObject.SetActive((state.installed&1)==0||Vector3.Distance(site.arrivalRoot.position,site.installedRoot.position)>.01f);
             }
             if(site.poster)site.poster.gameObject.SetActive(mechanic!=17||state.values[0]>0||(state.installed&1)!=0);
-            if(mechanic==36&&site.poster)foreach(var lettering in site.poster.GetComponentsInChildren<TextMesh>(true))lettering.GetComponent<Renderer>().enabled=owner.SalvageCleanStrokes(site.dustyId)>=4;
+            if(mechanic==36&&site.posterText)site.posterText.enabled=owner.SalvageCleanStrokes(site.dustyId)>=4;
             if(site.actuator)site.actuator.localRotation=Quaternion.Euler(90,0,state.values[0]*.9f);
             if(mechanic==35&&site.lamps[0]){site.lamps[0].enabled=state.values[3]>=2&&state.values[2]+state.values[3]<=6;site.lamps[0].intensity=Mathf.Min(1f,state.values[3]*.2f);}
             if(mechanic==5)for(int i=0;i<3;i++)if(site.pieces[i])Tint(site.pieces[i].GetComponent<Renderer>(),Color.Lerp(Color.red,Color.green,state.values[i+2]/100f));
@@ -402,7 +420,7 @@ namespace SlopCity
         {
             Vector3 preferred=SlopCityDenseLayout.DistrictPoint(new Vector3(((mechanic%9)%3-1)*40,0,((mechanic%9)/3-1)*40));
             // One deterministic pass, no per-frame scene queries. Existing doors/solid architecture stay clear.
-            doorCache = FindObjectsByType<SlopCityDoor>(FindObjectsSortMode.None);
+            if(!doorCacheReady)CaptureDoorCache();
             bool carWork=mechanic==13||mechanic==18;
             int groundPass=0,bodyPass=0,standingPass=0,doorPass=0,crowdPass=0;
             for(int ring=0;ring<3;ring++)for(int x=0;x<(carWork?23:12);x++)for(int z=0;z<(carWork?1:8);z++)
@@ -492,6 +510,11 @@ namespace SlopCity
                     && Vector2.Distance(new Vector2(point.x, point.z), new Vector2(door.InteractionPoint.x, door.InteractionPoint.z)) < 3f) return false;
             return true;
         }
+        private void CaptureDoorCache()
+        {
+            doorCache=FindObjectsByType<SlopCityDoor>(FindObjectsSortMode.None);
+            doorCacheReady=true;
+        }
         private static bool ClearCrowd(Vector3 point)
         {
             var crowd=SlopCityCrowd.Instance;if(!crowd)return true;
@@ -541,7 +564,8 @@ namespace SlopCity
             {
                 root.localRotation=Quaternion.Euler(0,180,0);
                 var label=root.gameObject.AddComponent<TextMesh>();label.font=Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");label.text=text;label.characterSize=size;label.fontSize=32;label.color=Color.white;
-                root.GetComponent<MeshRenderer>().sharedMaterial=label.font.material;return label;
+                if(!workLabelMaterial)workLabelMaterial=label.font.material;
+                root.GetComponent<MeshRenderer>().sharedMaterial=workLabelMaterial;return label;
             }
             catch {Retire(root.gameObject);throw;}
         }

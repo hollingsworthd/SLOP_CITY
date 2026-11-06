@@ -43,7 +43,6 @@ namespace SlopCity
         private float yaw;
         private float pitch;
         private float verticalSpeed;
-        private float ignoreLookUntil;
         private readonly RaycastHit[] lineOfSightHits = new RaycastHit[48];
         private string feedback;
         private float feedbackUntil;
@@ -206,19 +205,37 @@ namespace SlopCity
             }
             if (started && !paused && playerInput.ConsumeInventory()) { sandbox.OpenInventory(); return; }
 #if UNITY_WEBGL && !UNITY_EDITOR
-            if (!paused && !playerInput.UseTouchControls)
+            // The browser's media-help panel is a real pause modal, rather than a
+            // touch-intercepting overlay over a live city. SetPaused clears any
+            // held move/look/run state before the panel blocks the canvas.
+            if (!paused && playerInput.BrowserModalOpen)
+            {
+                SetPaused(true);
+                RefreshHud();
+                return;
+            }
+            if (!paused)
             {
                 bool locked = Cursor.lockState == CursorLockMode.Locked;
-                if (browserCursorLocked && !locked)
+                bool wantsPointerLook = playerInput.WantsPointerLook;
+                if (browserCursorLocked && !locked && wantsPointerLook)
                 {
                     SetPaused(true);
                     RefreshHud();
                     return;
                 }
-                browserCursorLocked = locked;
+                browserCursorLocked = locked && wantsPointerLook;
 #if ENABLE_LEGACY_INPUT_MANAGER
-                // Retry only on a player click if the browser deferred the first request.
-                if (!locked && Input.GetMouseButtonDown(0))
+                // A touch screen can keep its controls visible; lock only after a
+                // fine pointer explicitly chose look on a hybrid device.
+                if (wantsPointerLook && !locked && Input.GetMouseButtonDown(0))
+                {
+                    Cursor.lockState = CursorLockMode.Locked;
+                    Cursor.visible = false;
+                }
+#elif ENABLE_INPUT_SYSTEM
+                var mouse = UnityEngine.InputSystem.Mouse.current;
+                if (wantsPointerLook && !locked && mouse != null && mouse.leftButton.wasPressedThisFrame)
                 {
                     Cursor.lockState = CursorLockMode.Locked;
                     Cursor.visible = false;
@@ -259,7 +276,6 @@ namespace SlopCity
             if (!paused)
             {
                 Vector2 look = playerInput.ReadLook();
-                if (Time.unscaledTime < ignoreLookUntil) look = Vector2.zero;
                 yaw += look.x * mouseSensitivity;
                 pitch = Mathf.Clamp(pitch - look.y * mouseSensitivity, -75f, 75f);
                 transform.rotation = Quaternion.Euler(0f, yaw, 0f);
@@ -348,8 +364,7 @@ namespace SlopCity
             RefreshMediaSuspension();
             Time.timeScale = value ? 0f : 1f;
             playerInput.SetGameplayEnabled(!value);
-            if (!value) ignoreLookUntil = Time.unscaledTime + 0.1f;
-            if (value || playerInput.UseTouchControls) UnlockCursor();
+            if (value || !playerInput.WantsPointerLook) UnlockCursor();
             else { Cursor.lockState = CursorLockMode.Locked; Cursor.visible = false; }
             if (hud) hud.SetMenu(value, started);
             if (!value && EventSystem.current) EventSystem.current.SetSelectedGameObject(null);
@@ -784,6 +799,13 @@ namespace SlopCity
         }
         private void OnEnable()
         {
+            // OnDisable releases this listener while a scene-owned player is
+            // parked. Restore exactly one subscription when that player returns.
+            if (crowd)
+            {
+                crowd.LocalAgentReportRequested -= ShowLocalReport;
+                crowd.LocalAgentReportRequested += ShowLocalReport;
+            }
             if (initializationComplete) RefreshMediaSuspension();
         }
         private void OnDisable()

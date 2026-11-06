@@ -133,6 +133,14 @@ namespace SlopCity
             foreach (SlopCityCityScreen screen in ActiveScreens)
                 if (screen) media.RegisterScreen(screen);
         }
+        /// <summary>Copies the enabled screen registry for non-media consumers without a scene-wide discovery pass.</summary>
+        internal static void CopyActiveScreens(List<SlopCityCityScreen> destination)
+        {
+            destination.Clear();
+            PruneActiveScreens();
+            foreach (SlopCityCityScreen screen in ActiveScreens)
+                if (screen && screen.isActiveAndEnabled) destination.Add(screen);
+        }
 
         private void OnEnable() { PruneActiveScreens(); ActiveScreens.Add(this); TryRegister(); }
         private void Start() { TryRegister(); }

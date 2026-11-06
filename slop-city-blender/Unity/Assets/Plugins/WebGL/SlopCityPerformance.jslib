@@ -9,6 +9,13 @@ mergeInto(LibraryManager.library, {
   $slopCityClearMemoryDiagnostics__postset: "Module['slopCityClearMemoryDiagnostics'] = slopCityClearMemoryDiagnostics;",
   $slopCityClearMemoryDiagnostics: function () {
     delete Module['slopCityMemoryTextureSupport'];
+    delete window.slopCityMobileMediaQa;
+    var output = document.getElementById("slop-city-memory-diagnostics");
+    if (output) {
+      output.textContent = "";
+      output.removeAttribute("data-snapshot");
+      output.remove();
+    }
   },
 
   SlopCity_ReportMemory__deps: ['$GL'],

@@ -8,15 +8,20 @@
   const entries = new Map();
   const seen = new WeakSet();
   const weak = typeof window.WeakRef === "function";
+  // QA telemetry must never become the owner keeping a detached decoder alive.
+  // Browsers without WeakRef simply run without this optional diagnostic.
+  if (!weak) return;
   let nextId = 1;
   let output;
+  let interval = null;
+  let lastSnapshot = "";
 
   function track(element) {
     if (!element || String(element.tagName).toLowerCase() !== "video"
         || (element.namespaceURI && element.namespaceURI !== "http://www.w3.org/1999/xhtml")
         || seen.has(element)) return element;
     seen.add(element);
-    entries.set(nextId++, { ref: weak ? new window.WeakRef(element) : element,
+    entries.set(nextId++, { ref: new window.WeakRef(element),
       createdAt: Date.now(), hadSource: false });
     return element;
   }
@@ -63,11 +68,10 @@
   function sample() {
     const videos = [];
     entries.forEach(function (entry, id) {
-      const video = weak ? entry.ref.deref() : entry.ref;
+      const video = entry.ref.deref();
       if (!video) { untrack(video, id); return; }
       // Decoder teardown is authoritative. Some browsers retain currentSrc
       // after removeAttribute('src')/load(), so it cannot prove a live resource.
-      // Prune even without WeakRef, where this registry owns a strong reference.
       if (video.slopCityDestroyed === true) { untrack(video, id); return; }
       // Unity destroys a decoder by assigning src="". Its resolved .src can
       // then be the page URL, so consult the raw attribute first.
@@ -101,23 +105,39 @@
       output.style.setProperty("display", "none", "important");
       parent.appendChild(output);
     }
-    const json = JSON.stringify({ version: 2, checkedAtUtc: new Date().toISOString(),
+    const snapshot = { version: 1,
       count: videos.length, rejectedDimensionVideos: rejectedCount, wasmHeapBytes: heap,
-      mobileMedia: mobileMedia, videos: videos });
-    output.textContent = json;
-    output.setAttribute("data-snapshot", json);
+      mobileMedia: mobileMedia, videos: videos };
+    // A stable report means no DOM/string churn. The next changed source, media
+    // state, or decoder list writes a fresh authoritative snapshot.
+    const fingerprint = JSON.stringify(snapshot);
+    if (fingerprint === lastSnapshot) return;
+    lastSnapshot = fingerprint;
+    // Keep one canonical text value. The private operator shell reads text first
+    // and retains an attribute fallback for already-published runtimes.
+    output.textContent = JSON.stringify(Object.assign({ checkedAtUtc: new Date().toISOString() }, snapshot));
   }
+  function stopSampling() {
+    if (interval !== null) { clearInterval(interval); interval = null; }
+  }
+  function startSampling() {
+    if (document.hidden || interval !== null) return;
+    sample();
+    interval = window.setInterval(sample, 1000);
+  }
+  function onVisibilityChange() { if (document.hidden) stopSampling(); else startSampling(); }
   window.slopCityMediaDiagnosticsVersion = 1;
-  sample();
-  const interval = window.setInterval(sample, 250);
+  document.addEventListener("visibilitychange", onVisibilityChange);
+  startSampling();
   window.slopCityDisposeMediaDiagnostics = function () {
-    clearInterval(interval);
+    stopSampling();
+    document.removeEventListener("visibilitychange", onVisibilityChange);
     entries.clear();
     if (output) {
-      output.removeAttribute("data-snapshot");
       output.textContent = "";
       output.remove();
       output = null;
     }
+    lastSnapshot = "";
   };
 })();

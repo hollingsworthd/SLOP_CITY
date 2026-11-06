@@ -27,6 +27,7 @@ namespace SlopCity
         [SerializeField] private bool originalForceRenderingOff;
         private bool[] removed;
         private byte[] clean;
+        private Dictionary<int, int> partBySuffixHash;
         private Mesh working;
         private List<int> scratch;
         private Color32[] colors;
@@ -51,6 +52,12 @@ namespace SlopCity
         private long failedAdmissionOwnedBytes;
         private static long ownedBytes;
         private sealed class Finish { public Material material; public int users; public bool owned; public OwnedEdit owner; }
+        private sealed class PreparedGeometry
+        {
+            public Bounds[] parts;
+            public int[] starts, lengths, indices, fixedIndices, originalTriangleParts;
+            public string[] suffixes;
+        }
         private static readonly Dictionary<Material, Finish> Finishes = new Dictionary<Material, Finish>();
         public int PartCount => parts.Length;
         public Mesh SourceMesh => source;
@@ -71,6 +78,28 @@ namespace SlopCity
             long bytes = mesh.GetIndexCount(0) * (mesh.indexFormat == IndexFormat.UInt16 ? 2L : 4L);
             foreach (var attribute in mesh.GetVertexAttributes()) bytes += (long)mesh.vertexCount * attribute.dimension * FormatBytes(attribute.format);
             if (bytes > MaximumChunkBytes) throw new InvalidOperationException("Mutable mesh exceeds its explicit chunk ceiling: " + filter.name);
+            PreparedGeometry prepared = PrepareGeometry(mesh,window,filter.name);
+            if (prepared == null) return false;
+            source = mesh; target = filter; display = renderer; geometryBytes = bytes;
+            parts = prepared.parts; starts = prepared.starts; lengths = prepared.lengths; suffixes = prepared.suffixes;
+            indices = prepared.indices; fixedIndices = prepared.fixedIndices; originalTriangleParts = prepared.originalTriangleParts;
+            BuildPartSuffixHash();
+            // Both the readable working Mesh color stream and our retained upload
+            // array own four bytes per vertex. The index scratch is separate too.
+            editBytes = geometryBytes + (long)mesh.vertexCount * 8 + (long)mesh.GetIndexCount(0) * sizeof(int);
+            collision = filter.GetComponent<MeshCollider>();
+            if (!collision) collision = filter.gameObject.AddComponent<MeshCollider>();
+            collision.sharedMesh = source; collision.convex = false; collision.isTrigger = false;
+            originalCollisionEnabled = collision.enabled;
+            originalForceRenderingOff = display.forceRenderingOff;
+            authoredMaterial = renderer.sharedMaterial;
+            BindMaterial();
+            return true;
+        }
+
+        /// <summary>Build exact persistent arrays without retaining per-group index lists beside their outputs.</summary>
+        private static PreparedGeometry PrepareGeometry(Mesh mesh, bool window, string name)
+        {
             Vector3[] vertices = mesh.vertices;
             int[] triangles = mesh.triangles;
             var groups = new int[vertices.Length];
@@ -85,26 +114,24 @@ namespace SlopCity
             for (int index = 0; index < triangles.Length; index += 3)
             { Union(groups, triangles[index], triangles[index + 1]); Union(groups, triangles[index], triangles[index + 2]); }
             var bounds = new Dictionary<int, Bounds>();
-            var grouped = new Dictionary<int, List<int>>();
+            var indexCounts = new Dictionary<int, int>();
             for (int index = 0; index < triangles.Length; index++)
             {
                 int vertex = triangles[index], group = Find(groups, vertex);
-                if (!grouped.TryGetValue(group, out var list)) grouped[group] = list = new List<int>();
-                list.Add(vertex);
+                indexCounts.TryGetValue(group, out int count); indexCounts[group] = count + 1;
                 if (bounds.TryGetValue(group, out Bounds box)) { box.Encapsulate(vertices[vertex]); bounds[group] = box; }
                 else bounds[group] = new Bounds(vertices[vertex], Vector3.zero);
             }
-            var ordered = new List<int>(grouped.Keys);
+            var ordered = new List<int>(indexCounts.Keys);
             ordered.Sort((left, right) =>
             {
                 Vector3 a = bounds[left].center, b = bounds[right].center;
                 int compare = a.x.CompareTo(b.x); if (compare == 0) compare = a.y.CompareTo(b.y);
                 if (compare == 0) compare = a.z.CompareTo(b.z); return compare == 0 ? left.CompareTo(right) : compare;
             });
-            var boxes = new List<Bounds>(); var firsts = new List<int>(); var counts = new List<int>();
-            var ids = new List<string>(); var mutable = new List<int>(); var retained = new List<int>();
             var unique = new HashSet<string>();
             var partByGroup = new Dictionary<int, int>();
+            int partCount = 0, mutableCount = 0, fixedCount = 0;
             foreach (int group in ordered)
             {
                 Bounds box = bounds[group]; Vector3 size = box.size;
@@ -112,32 +139,50 @@ namespace SlopCity
                 // huge combined masses and thin printed marks are never floor pickups.
                 bool eligible = window || (size.y > .18f && Mathf.Max(size.x, size.z) > .15f
                     && size.y >= Mathf.Min(size.x, size.z) * 1.5f && size.y < 8f && Mathf.Max(size.x, size.z) < 12f);
-                if (!eligible) { retained.AddRange(grouped[group]); continue; }
+                if (!eligible) { fixedCount += indexCounts[group]; continue; }
                 string id = PositionKey(box.center) + "_" + PositionKey(box.size);
-                if (!unique.Add(id)) throw new InvalidOperationException("Ambiguous coincident salvage parts: " + filter.name);
-                partByGroup[group] = boxes.Count;
-                boxes.Add(box); firsts.Add(mutable.Count); counts.Add(grouped[group].Count); ids.Add(id);
-                mutable.AddRange(grouped[group]);
+                if (!unique.Add(id)) throw new InvalidOperationException("Ambiguous coincident salvage parts: " + name);
+                partByGroup[group] = partCount++;
+                mutableCount += indexCounts[group];
             }
-            if (boxes.Count == 0) return false;
-            if (boxes.Count > MaximumPartsPerChunk) throw new InvalidOperationException("Mutable mesh has too many logical pieces: " + filter.name);
-            source = mesh; target = filter; display = renderer; geometryBytes = bytes;
-            parts = boxes.ToArray(); starts = firsts.ToArray(); lengths = counts.ToArray(); suffixes = ids.ToArray();
-            indices = mutable.ToArray(); fixedIndices = retained.ToArray();
-            originalTriangleParts = new int[triangles.Length / 3];
-            for (int triangle = 0; triangle < originalTriangleParts.Length; triangle++)
-                originalTriangleParts[triangle] = partByGroup.TryGetValue(Find(groups, triangles[triangle * 3]), out int part) ? part : -1;
-            // Both the readable working Mesh color stream and our retained upload
-            // array own four bytes per vertex. The index scratch is separate too.
-            editBytes = geometryBytes + (long)mesh.vertexCount * 8 + (long)triangles.Length * sizeof(int);
-            collision = filter.GetComponent<MeshCollider>();
-            if (!collision) collision = filter.gameObject.AddComponent<MeshCollider>();
-            collision.sharedMesh = source; collision.convex = false; collision.isTrigger = false;
-            originalCollisionEnabled = collision.enabled;
-            originalForceRenderingOff = display.forceRenderingOff;
-            authoredMaterial = renderer.sharedMaterial;
-            BindMaterial();
-            return true;
+            if (partCount == 0) return null;
+            if (partCount > MaximumPartsPerChunk) throw new InvalidOperationException("Mutable mesh has too many logical pieces: " + name);
+
+            var prepared = new PreparedGeometry
+            {
+                parts = new Bounds[partCount], starts = new int[partCount], lengths = new int[partCount], suffixes = new string[partCount],
+                indices = new int[mutableCount], fixedIndices = new int[fixedCount], originalTriangleParts = new int[triangles.Length / 3]
+            };
+            var mutableWrites = new Dictionary<int, int>(partCount);
+            var fixedWrites = new Dictionary<int, int>(ordered.Count - partCount);
+            int mutableOffset = 0, fixedOffset = 0;
+            foreach (int group in ordered)
+            {
+                int count = indexCounts[group];
+                if (partByGroup.TryGetValue(group, out int part))
+                {
+                    Bounds box = bounds[group];
+                    prepared.parts[part] = box; prepared.starts[part] = mutableOffset; prepared.lengths[part] = count;
+                    prepared.suffixes[part] = PositionKey(box.center) + "_" + PositionKey(box.size);
+                    mutableWrites[group] = mutableOffset; mutableOffset += count;
+                }
+                else { fixedWrites[group] = fixedOffset; fixedOffset += count; }
+            }
+            for (int index = 0; index < triangles.Length; index++)
+            {
+                int group = Find(groups,triangles[index]);
+                if (partByGroup.ContainsKey(group))
+                {
+                    int write = mutableWrites[group]; prepared.indices[write] = triangles[index]; mutableWrites[group] = write + 1;
+                }
+                else
+                {
+                    int write = fixedWrites[group]; prepared.fixedIndices[write] = triangles[index]; fixedWrites[group] = write + 1;
+                }
+            }
+            for (int triangle = 0; triangle < prepared.originalTriangleParts.Length; triangle++)
+                prepared.originalTriangleParts[triangle] = partByGroup.TryGetValue(Find(groups,triangles[triangle * 3]), out int part) ? part : -1;
+            return prepared;
         }
 
         private void Awake() { BindMaterial(); }
@@ -215,11 +260,39 @@ namespace SlopCity
             int offset = owner.Length + marker.Length;
             if (id.Length <= offset || string.CompareOrdinal(id, 0, owner, 0, owner.Length) != 0
                 || string.CompareOrdinal(id, owner.Length, marker, 0, marker.Length) != 0) return false;
-            int length = id.Length - offset;
-            for (int index = 0; index < suffixes.Length; index++)
-                if (suffixes[index].Length == length && string.CompareOrdinal(id, offset, suffixes[index], 0, length) == 0)
-                { part = index; return true; }
+            if (partBySuffixHash == null || partBySuffixHash.Count == 0) BuildPartSuffixHash();
+            int length = id.Length - offset, hash = SuffixHash(id, offset);
+            if (partBySuffixHash.TryGetValue(hash, out int candidate) && candidate >= 0
+                && suffixes[candidate].Length == length
+                && string.CompareOrdinal(id, offset, suffixes[candidate], 0, length) == 0)
+            { part = candidate; return true; }
+            // The hash table marks a collision with -1. Preserve exact matching
+            // rather than treating a rare collision as a missing saved part.
+            if (candidate < 0)
+                for (int index = 0; index < suffixes.Length; index++)
+                    if (suffixes[index].Length == length && string.CompareOrdinal(id, offset, suffixes[index], 0, length) == 0)
+                    { part = index; return true; }
             return false;
+        }
+        private void BuildPartSuffixHash()
+        {
+            partBySuffixHash = new Dictionary<int, int>(suffixes.Length);
+            for (int index = 0; index < suffixes.Length; index++)
+            {
+                int hash = SuffixHash(suffixes[index], 0);
+                if (partBySuffixHash.TryGetValue(hash, out int previous)
+                    && (previous < 0 || !string.Equals(suffixes[previous], suffixes[index], StringComparison.Ordinal))) partBySuffixHash[hash] = -1;
+                else partBySuffixHash[hash] = index;
+            }
+        }
+        private static int SuffixHash(string value, int start)
+        {
+            unchecked
+            {
+                int hash = 17;
+                for (int index = start; index < value.Length; index++) hash = hash * 31 + value[index];
+                return hash;
+            }
         }
         public Bounds PartWorldBounds(int part)
         {

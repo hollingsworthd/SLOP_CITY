@@ -70,6 +70,11 @@ namespace SlopCity
         private Vector3 vehicleEntryPosition;
 #if (UNITY_WEBGL && !UNITY_EDITOR) || SLOP_CITY_WEB_INTERACTION_TEST
         private const float WebSceneryCellSize = 8f;
+        // The browser fallback only needs nearby colliderless scenery. Retaining the
+        // whole streamed city here keeps destroyed-floor renderers alive needlessly.
+        private const float WebSceneryIndexRadius = 30f;
+        private const float WebSceneryRebuildDistance = 12f;
+        private const float WebSceneryDirtyRebuildDelay = .2f;
         private readonly Dictionary<Vector3Int, List<int>> webSceneryGrid = new Dictionary<Vector3Int, List<int>>();
         private readonly List<int> webSceneryFallback = new List<int>();
         private readonly List<int> webSceneryCandidates = new List<int>();
@@ -81,6 +86,9 @@ namespace SlopCity
         private int[] webScenerySeen = Array.Empty<int>();
         private int webSceneryQuery;
         private bool webSceneryReady, webSceneryWarning;
+        private bool webSceneryCenterValid, webSceneryDirty;
+        private Vector3 webSceneryCenter;
+        private float webSceneryNextRebuildAt;
         private const int WebTargetHitCapacity = 384;
         private readonly RaycastHit[] webTargetHits = new RaycastHit[WebTargetHitCapacity];
         private Camera webTargetCamera;
@@ -533,7 +541,14 @@ namespace SlopCity
             AdvanceContract();
         }
 
-        private void OnDestroy() { ClearElevatorTravel(); SlopCitySalvageItem.Admitted -= AdmitSalvage; if (uniqueWorld) uniqueWorld.Release(this); }
+        private void OnDestroy()
+        {
+            ClearElevatorTravel(); SlopCitySalvageItem.Admitted -= AdmitSalvage;
+#if (UNITY_WEBGL && !UNITY_EDITOR) || SLOP_CITY_WEB_INTERACTION_TEST
+            ClearWebScenery();
+#endif
+            if (uniqueWorld) uniqueWorld.Release(this);
+        }
 
         public void AwardForInteraction(int credits, int experience = 0, int parts = 0)
         {
@@ -1022,6 +1037,11 @@ namespace SlopCity
         {
             if (!initialized) return;
             RefreshSalvageLight();
+#if (UNITY_WEBGL && !UNITY_EDITOR) || SLOP_CITY_WEB_INTERACTION_TEST
+            // Streamed rooms can replace colliderless surfaces. Coalesce their
+            // rebuild instead of retaining every previously loaded renderer.
+            webSceneryDirty = true;
+#endif
             aimed = default;
             nextTargetAt = 0f;
             InvalidateSalvageAimCache();
@@ -1033,10 +1053,11 @@ namespace SlopCity
             // A refresh can replace scenery before allocation or native reads fail.
             // Never query the previous index against a different renderer array.
             webSceneryReady = false;
-#endif
+#else
             // Diegetic guidance is visual only, never an inspectable city object.
             scenery = Array.FindAll(FindObjectsByType<Renderer>(FindObjectsSortMode.None),
                 renderer => renderer && !renderer.GetComponentInParent<SlopCityRabbitTrail>());
+#endif
             // Older scene exports get sensible interactions without requiring a rebuild.
             if (!legacyStreetInteractionsPrepared)
             {
@@ -1083,20 +1104,49 @@ namespace SlopCity
                 }
             }
 #if (UNITY_WEBGL && !UNITY_EDITOR) || SLOP_CITY_WEB_INTERACTION_TEST
-            RebuildWebScenery();
+            RebuildWebSceneryNear(user ? user.position : Vector3.zero);
 #endif
             nextRefreshAt = Time.time + 15f;
         }
 
 #if (UNITY_WEBGL && !UNITY_EDITOR) || SLOP_CITY_WEB_INTERACTION_TEST
-        private void RebuildWebScenery()
+        // Keep the parameterless hook for the focused interaction harness and
+        // callers that need the current player-centered index.
+        private void RebuildWebScenery() { RebuildWebSceneryNear(user ? user.position : Vector3.zero); }
+
+        private void RebuildWebSceneryNear(Vector3 origin)
         {
             webSceneryReady = false;
             try
             {
-                // Serialized bounds are copied again below. Drop references to rooms
-                // destroyed by streaming before adding the currently loaded renderers.
+                float maximumSquaredDistance = WebSceneryIndexRadius * WebSceneryIndexRadius;
+                // Static batching rewrites Renderer.bounds. Seed the authored map
+                // first so locality is determined from serialized pre-batch bounds.
                 webAuthoredBounds.Clear();
+                foreach (SlopCityBrowserGeometry geometry in FindObjectsByType<SlopCityBrowserGeometry>(FindObjectsSortMode.None))
+                    geometry.CopyNearTo(webAuthoredBounds,origin,maximumSquaredDistance);
+                Renderer[] loaded = FindObjectsByType<Renderer>(FindObjectsSortMode.None);
+                var nearby = new List<Renderer>();
+                foreach (Renderer renderer in loaded)
+                {
+                    if (!renderer || renderer.GetComponentInParent<SlopCityRabbitTrail>()
+                        || renderer.GetComponentInParent<SlopCityCrowd>()
+                        || (user && renderer.transform.IsChildOf(user))) continue;
+                    bool authored = webAuthoredBounds.ContainsKey(renderer);
+                    // A BrowserGeometry child missing from the nearby authored map
+                    // belongs to a distant static batch, regardless of its batch AABB.
+                    if (!authored && renderer.GetComponentInParent<SlopCityBrowserGeometry>()) continue;
+                    if (!authored && (renderer.isPartOfStaticBatch || renderer.bounds.SqrDistance(origin) > maximumSquaredDistance)) continue;
+                    nearby.Add(renderer);
+                }
+                // Do not retain the full streamed renderer scan: the physics ray
+                // still owns exact nearby colliders and crowd targeting separately.
+                scenery = nearby.ToArray();
+                webSceneryCenter = origin;
+                webSceneryCenterValid = true;
+                webSceneryDirty = false;
+                // Drop references to rooms destroyed by streaming before adding the
+                // current local renderer set. The authored map above is already bounded.
                 webSceneryGrid.Clear();
                 webSceneryFallback.Clear();
                 webSceneryBounds = new Bounds[scenery.Length];
@@ -1106,10 +1156,6 @@ namespace SlopCity
                 webScenerySeen = new int[scenery.Length];
                 webSceneryQuery = 0;
                 webTargetFrame = -1;
-                // Build-scene metadata retains authored bounds before Unity rewrites
-                // static-batched vertices and replaces localBounds with batch AABBs.
-                foreach (SlopCityBrowserGeometry geometry in FindObjectsByType<SlopCityBrowserGeometry>(FindObjectsSortMode.None))
-                    geometry.CopyTo(webAuthoredBounds);
                 for (int index = 0; index < scenery.Length; index++)
                 {
                     Renderer renderer = scenery[index];
@@ -1154,21 +1200,42 @@ namespace SlopCity
                 }
                 webSceneryReady = true;
                 webSceneryWarning = false;
+                webSceneryNextRebuildAt = Time.unscaledTime + WebSceneryDirtyRebuildDelay;
             }
             catch (Exception error)
             {
                 // Physics targeting remains usable when this optional renderer
                 // index cannot be rebuilt. Drop every partial index together.
-                webAuthoredBounds.Clear(); webSceneryGrid.Clear(); webSceneryFallback.Clear(); webSceneryCandidates.Clear();
-                webSceneryBounds = webSceneryLocalBounds = Array.Empty<Bounds>();
-                webSceneryHasLocalBounds = webSceneryMoves = Array.Empty<bool>();
-                webScenerySeen = Array.Empty<int>();
+                ClearWebScenery();
+                webSceneryNextRebuildAt = Time.unscaledTime + 1f;
                 if (!webSceneryWarning)
                 {
                     webSceneryWarning = true;
                     Debug.LogWarning("City scenery targeting is unavailable until the next geometry refresh: " + error.GetType().Name, this);
                 }
             }
+        }
+
+        private void EnsureWebSceneryNear(Vector3 origin)
+        {
+            if (!webSceneryReady && Time.unscaledTime < webSceneryNextRebuildAt) return;
+            bool moved = !webSceneryCenterValid
+                || (origin - webSceneryCenter).sqrMagnitude >= WebSceneryRebuildDistance * WebSceneryRebuildDistance;
+            if (moved || (webSceneryDirty && Time.unscaledTime >= webSceneryNextRebuildAt)
+                || (!webSceneryReady && Time.unscaledTime >= webSceneryNextRebuildAt))
+                RebuildWebSceneryNear(origin);
+        }
+
+        private void ClearWebScenery()
+        {
+            scenery = Array.Empty<Renderer>();
+            webAuthoredBounds.Clear(); webSceneryGrid.Clear(); webSceneryFallback.Clear(); webSceneryCandidates.Clear();
+            webSceneryBounds = webSceneryLocalBounds = Array.Empty<Bounds>();
+            webSceneryHasLocalBounds = webSceneryMoves = Array.Empty<bool>();
+            webScenerySeen = Array.Empty<int>();
+            webSceneryQuery = 0; webSceneryReady = false; webSceneryCenterValid = false;
+            webSceneryDirty = false; webTargetFrame = -1; webTargetCamera = null;
+            webTargetRay = default; webTargetTransform = Matrix4x4.identity;
         }
 
         private static bool TryWebSceneryCells(Bounds bounds, out Vector3Int min, out Vector3Int max)
@@ -1228,6 +1295,9 @@ namespace SlopCity
         {
             if (!camera || !user) return default;
             activeCamera = camera;
+            // Recenter before the per-frame target cache can return an index from
+            // a streamed-out floor or a distant part of the city.
+            EnsureWebSceneryNear(user.position);
             Ray ray = camera.ViewportPointToRay(new Vector3(.5f, .5f, 0f));
             // ViewportPointToRay starts on the near plane. Reach is measured
             // from the player's eye, rather than gaining the near-clip distance.

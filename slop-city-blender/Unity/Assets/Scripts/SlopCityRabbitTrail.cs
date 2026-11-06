@@ -14,6 +14,8 @@ namespace SlopCity
         private SlopCityMatrixHunt signalOwner;
         private bool paused = true;
         private float nextRouteAt, nextTransmissionAt, transmissionUntil, nextBeamAt;
+        private float nextRouteStepAt;
+        private const float RouteStepInterval = .05f;
         private Vector3 plannedTarget;
         private string district, landmark, transmission = "The job receiver is listening.";
         private string hintedJobId, hintedAction;
@@ -74,7 +76,7 @@ namespace SlopCity
             if (!instructionBeamActive)
             {
                 instructionBeamActive = true;
-                nextRouteAt = nextTransmissionAt = 0f;
+                nextRouteAt = nextTransmissionAt = nextRouteStepAt = 0f;
             }
             bool anotherLevel = Mathf.Abs(sandbox.WaypointPosition.y - feet.y) > 2.5f;
             SlopCityInteractable routeTarget = anotherLevel && levelEntrance ? levelEntrance : target;
@@ -95,12 +97,17 @@ namespace SlopCity
                 plannedRouteTarget = routeTarget;
                 plannedTarget = routeDestination;
                 route.Begin(feet, plannedTarget, player.transform, routeTarget.transform);
-                nextRouteAt = Time.time + 2f;
+                nextRouteAt = Time.time + 2f; nextRouteStepAt = 0f;
             }
-            // An unfinished query is bounded by the solver; movement cannot
-            // repeatedly restart it before it produces a route or a failure.
+            // An unfinished query is bounded by the solver; cap physics-heavy
+            // expansion to a stable cadence rather than multiplying it by the
+            // browser frame rate. Movement cannot restart it before completion.
             bool wasFinished = route.Finished;
-            route.Step();
+            if (!wasFinished && Time.unscaledTime >= nextRouteStepAt)
+            {
+                nextRouteStepAt = Time.unscaledTime + RouteStepInterval;
+                route.Step();
+            }
             if (!wasFinished && route.Finished)
             {
                 nextTransmissionAt = 0f;

@@ -91,7 +91,7 @@ mergeInto(LibraryManager.library, {
     clean(function () { jsVideoRemovePendingBlockedVideo(id); });
     delete video.slopCityPlaybackIntent;
     clean(function () { if (video.loopEndPollInterval) clearInterval(video.loopEndPollInterval); delete video.loopEndPollInterval; });
-    clean(function () { slopCityReleaseVideoTexture(video); });
+    clean(function () { if (!slopCityReleaseVideoTexture(video)) complete = false; });
     clean(function () {
       if (video.slopCityLoadedDataListener) video.removeEventListener('loadeddata', video.slopCityLoadedDataListener);
       delete video.slopCityLoadedDataListener;
@@ -161,9 +161,15 @@ mergeInto(LibraryManager.library, {
       video.slopCityRetireAttempts = (video.slopCityRetireAttempts || 0) + 1;
       if (!slopCityRetireVideoDecoder(id, video)) {
         if (video.slopCityRetireAttempts >= 120) {
-          try { slopCityReleaseVideoTexture(video); } catch (_) {}
-          try { if (video.parentNode) video.parentNode.removeChild(video); } catch (_) {}
-          delete slopCityRetiredVideoDecoders[id];
+          // A full failed-texture queue is backpressure, not authority to
+          // discard the decoder's final owner. Keep this bounded active
+          // decoder in the drain until the texture can be transferred.
+          var textureRetired = false;
+          try { textureRetired = slopCityReleaseVideoTexture(video) === true; } catch (_) {}
+          if (textureRetired) {
+            try { if (video.parentNode) video.parentNode.removeChild(video); } catch (_) {}
+            delete slopCityRetiredVideoDecoders[id];
+          }
         }
         return;
       }

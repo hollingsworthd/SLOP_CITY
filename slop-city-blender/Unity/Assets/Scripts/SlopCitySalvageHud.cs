@@ -26,6 +26,8 @@ namespace SlopCity
         private Rect lastSafe;
         private Vector2 lastSize;
         private float nextPrompt;
+        private float nextLayoutAt;
+        private const float LayoutRefreshInterval = .1f;
         public static void Ensure(SlopCityFirstPerson player, SlopCitySandbox sandbox, SlopCityPlayerInput input, Camera camera)
         {
             var hud = player.GetComponent<SlopCitySalvageHud>();
@@ -109,7 +111,14 @@ namespace SlopCity
         private void Update()
         {
             if (!initialized || !player || !input || !panel) return;
-            if (lastSafe != Screen.safeArea || lastSize != new Vector2(Screen.width,Screen.height)) { Layout(); Refresh(); }
+            // Mobile browser chrome can emit several safe-area changes in a row.
+            // Coalesce them before forcing every canvas to resolve its rects.
+            if ((lastSafe != Screen.safeArea || lastSize != new Vector2(Screen.width,Screen.height))
+                && Time.unscaledTime >= nextLayoutAt)
+            {
+                nextLayoutAt = Time.unscaledTime + LayoutRefreshInterval;
+                Layout(); Refresh();
+            }
             if (panel.activeSelf != player.InventoryOpen) panel.SetActive(player.InventoryOpen);
             desktop.SetActive(input.GameplayEnabled && !input.UseTouchControls);
             if (Time.unscaledTime >= nextPrompt)

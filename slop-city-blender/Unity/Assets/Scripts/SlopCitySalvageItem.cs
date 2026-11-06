@@ -19,6 +19,7 @@ namespace SlopCity
         private SlopCityInteractable[] pulseOwners;
         private Color[] baseColors;
         private float[] baseSmoothness;
+        private Dictionary<Renderer, int> rendererIndexes;
         public static event Action<SlopCitySalvageItem> Admitted;
 
         public string StableId => stableId ?? "";
@@ -93,14 +94,16 @@ namespace SlopCity
             SlopCityInteractable[] nextPulseOwners = GetComponentsInChildren<SlopCityInteractable>(true);
             Renderer[] nextRenderers = list.ToArray();
             var nextColors = new Color[nextRenderers.Length]; var nextSmoothness = new float[nextRenderers.Length];
+            var nextRendererIndexes = new Dictionary<Renderer, int>(nextRenderers.Length);
             var nextBlock = new MaterialPropertyBlock();
             for (int i = 0; i < nextRenderers.Length; i++)
             {
+                nextRendererIndexes[nextRenderers[i]] = i;
                 Material material = nextRenderers[i].sharedMaterial;
                 nextColors[i] = material && material.HasProperty("_Color") ? material.GetColor("_Color") : Color.white;
                 nextSmoothness[i] = material && material.HasProperty("_Glossiness") ? material.GetFloat("_Glossiness") : .3f;
             }
-            pulseOwners = nextPulseOwners; renderers = nextRenderers; baseColors = nextColors; baseSmoothness = nextSmoothness;
+            pulseOwners = nextPulseOwners; renderers = nextRenderers; rendererIndexes = nextRendererIndexes; baseColors = nextColors; baseSmoothness = nextSmoothness;
             block = nextBlock; bindingReady = true;
         }
 
@@ -127,7 +130,7 @@ namespace SlopCity
         private void ReapplyRenderer(Renderer renderer)
         {
             if (!renderer || !dustProne || GetComponent<SlopCitySalvageSurface>()) return;
-            Bind(); int index=Array.IndexOf(renderers,renderer);if(index<0)return;
+            Bind(); if (!rendererIndexes.TryGetValue(renderer, out int index)) return;
             renderer.GetPropertyBlock(block);FinishBlock(index,block);renderer.SetPropertyBlock(block);
         }
         public static void ReapplyFinish(Renderer renderer)
@@ -136,14 +139,14 @@ namespace SlopCity
         {
             var owner=renderer?renderer.GetComponentInParent<SlopCitySalvageItem>():null;
             if(!owner||!owner.dustProne||owner.GetComponent<SlopCitySalvageSurface>())return;
-            owner.Bind();int index=Array.IndexOf(owner.renderers,renderer);if(index<0)return;
+            owner.Bind();if (!owner.rendererIndexes.TryGetValue(renderer, out int index)) return;
             owner.baseColors[index]=underlyingColor;owner.FinishBlock(index,properties);
         }
         public static Color UndustedColor(Renderer renderer, Color fallback)
         {
             var owner=renderer?renderer.GetComponentInParent<SlopCitySalvageItem>():null;
             if(!owner||!owner.dustProne||owner.GetComponent<SlopCitySalvageSurface>())return fallback;
-            owner.Bind();int index=Array.IndexOf(owner.renderers,renderer);return index<0?fallback:owner.baseColors[index];
+            owner.Bind();return owner.rendererIndexes.TryGetValue(renderer, out int index) ? owner.baseColors[index] : fallback;
         }
 
         public static string SourceIdentity(Transform target)

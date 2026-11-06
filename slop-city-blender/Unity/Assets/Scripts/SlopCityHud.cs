@@ -61,6 +61,7 @@ namespace SlopCity
         private float lastGuidancePixelRatio;
         private string lastMobileObjective, lastMobileReputation, lastMobileTransmission, lastMobilePrompt;
         private RectTransform sourceViewport;
+        private RectTransform mobileMenuViewport;
         private RectTransform desktopMenuViewport;
         private RectTransform desktopMediaViewport;
         private static readonly Color Ink = new Color(.026f,.041f,.055f,.94f);
@@ -222,7 +223,7 @@ namespace SlopCity
                 }
                 owner = null;
                 gameplayLayer = menu = sourceCard = touchControls = null;
-                menuCard = sourceViewport = desktopMenuViewport = desktopMediaViewport = null;
+                menuCard = sourceViewport = mobileMenuViewport = desktopMenuViewport = desktopMediaViewport = null;
                 lastViewport = lastCanvasSize = lastGuidanceSize = Vector2.zero;
                 lastMobileObjective = lastMobileReputation = lastMobileTransmission = lastMobilePrompt = null;
                 throw;
@@ -439,6 +440,8 @@ namespace SlopCity
             if (visible && EventSystem.current && !input.UseTouchControls)
                 EventSystem.current.SetSelectedGameObject(playButton.gameObject);
             ApplyResponsiveLayout(true);
+            if (visible && mobileMenuViewport && mobileMenuViewport.TryGetComponent(out ScrollRect mobileMenuScroll))
+                mobileMenuScroll.verticalNormalizedPosition = 1f;
             ApplyModalVisibility();
         }
 
@@ -463,6 +466,7 @@ namespace SlopCity
             if (!initialized) return;
             sourceBrowser.Hide();
             menu.SetActive(false); sourceCard.SetActive(true);
+            ApplyResponsiveLayout(true);
             ApplyModalVisibility();
             if (EventSystem.current && returnToLoungeButton)
                 EventSystem.current.SetSelectedGameObject(returnToLoungeButton.gameObject);
@@ -621,8 +625,7 @@ namespace SlopCity
             // invalidates this cache next frame even when the screen size is unchanged.
             lastCanvasSize = size;
             lastSafeArea = safeArea;
-            float width = size.x, top = (Screen.height - safeArea.yMax) * size.y / Mathf.Max(1,Screen.height);
-            float bottom = safeArea.yMin * size.y / Mathf.Max(1,Screen.height);
+            Rect safeFrame = CanvasSafeFrame(size);
             Transform map = gameplayLayer.transform.Find("CityMap"); if (map) map.gameObject.SetActive(false);
             districtName.gameObject.SetActive(false); homeDistance.gameObject.SetActive(false); nowPlaying.gameObject.SetActive(false);
             if (controlsLabel) controlsLabel.gameObject.SetActive(false);
@@ -632,8 +635,8 @@ namespace SlopCity
             reputation.gameObject.SetActive(false);
             if (stateLabel) stateLabel.gameObject.SetActive(false);
             LayoutMobileGuidance();
-            LayoutMobileMenu(width,portrait);
-            LayoutMobileSource(width,top,bottom);
+            LayoutMobileMenu(safeFrame,portrait);
+            LayoutMobileSource(safeFrame);
             if (touchControls && touchControls.TryGetComponent(out SlopCityMobileControls mobileControls))
                 mobileControls.RelayoutFromHud();
         }
@@ -646,6 +649,15 @@ namespace SlopCity
             RectTransform media = desktopMediaViewport ? (RectTransform)desktopMediaViewport.GetChild(0)
                 : (RectTransform)sourceCard.transform.Find("SourceContent");
             LayoutDesktopCard(sourceCard,media,ref desktopMediaViewport,viewport - new Vector2(48,48),false);
+        }
+
+        /// <summary>Screen.safeArea expressed in this Canvas's local coordinate space.</summary>
+        private static Rect CanvasSafeFrame(Vector2 canvasSize)
+        {
+            Rect safe = Screen.safeArea;
+            float screenWidth = Mathf.Max(1f,Screen.width), screenHeight = Mathf.Max(1f,Screen.height);
+            return new Rect(safe.xMin * canvasSize.x / screenWidth, safe.yMin * canvasSize.y / screenHeight,
+                safe.width * canvasSize.x / screenWidth, safe.height * canvasSize.y / screenHeight);
         }
 
         private static void LayoutDesktopCard(GameObject modal, RectTransform card, ref RectTransform viewport, Vector2 available, bool leftAligned)
@@ -685,10 +697,9 @@ namespace SlopCity
             lastGuidancePixelRatio = pixelRatio;
             lastMobileObjective = objectives.text; lastMobileReputation = reputation.text;
             lastMobileTransmission = transmission.text; lastMobilePrompt = prompt;
-            float left = safe.xMin * size.x / Mathf.Max(1,Screen.width);
-            float right = (Screen.width - safe.xMax) * size.x / Mathf.Max(1,Screen.width);
-            float top = (Screen.height - safe.yMax) * size.y / Mathf.Max(1,Screen.height);
-            float bottom = safe.yMin * size.y / Mathf.Max(1,Screen.height);
+            Rect safeFrame = CanvasSafeFrame(size);
+            float left = safeFrame.xMin, right = size.x - safeFrame.xMax;
+            float top = size.y - safeFrame.yMax, bottom = safeFrame.yMin;
             float textWidth = portrait ? size.x - left - right - 24 : Mathf.Min(380,(size.x - left - right) * .42f);
             if (!portrait)
             {
@@ -726,12 +737,14 @@ namespace SlopCity
             }
         }
 
-        private void LayoutMobileMenu(float viewportWidth, bool portrait)
+        private void LayoutMobileMenu(Rect safeFrame, bool portrait)
         {
             if (!menuCard) return;
+            EnsureMobileMenuViewport(safeFrame);
+            float viewportWidth = safeFrame.width;
             float cardWidth = Mathf.Min(portrait ? 440 : 720,viewportWidth - 24);
             float inner = cardWidth - 32;
-            menuCard.anchorMin = menuCard.anchorMax = menuCard.pivot = new Vector2(.5f,.5f);
+            menuCard.anchorMin = menuCard.anchorMax = menuCard.pivot = new Vector2(.5f,1);
             menuCard.anchoredPosition = Vector2.zero;
             menuCard.sizeDelta = new Vector2(cardWidth,portrait ? (menuStarted ? 548 : 488) : 256);
             foreach (Text text in menuCard.GetComponentsInChildren<Text>(true)) text.fontSize = 16;
@@ -792,6 +805,28 @@ namespace SlopCity
             }
         }
 
+        private void EnsureMobileMenuViewport(Rect safeFrame)
+        {
+            Vector2 canvasSize = ((RectTransform)transform).rect.size;
+            if (!mobileMenuViewport)
+            {
+                mobileMenuViewport = new GameObject("MobileMenuViewport",typeof(RectTransform),typeof(RectMask2D)).GetComponent<RectTransform>();
+                mobileMenuViewport.SetParent(menu.transform,false);
+                // The source reader remains above the scrollable menu when it opens.
+                mobileMenuViewport.SetSiblingIndex(0);
+                ScrollRect scroll = mobileMenuViewport.gameObject.AddComponent<ScrollRect>();
+                scroll.viewport = mobileMenuViewport; scroll.content = menuCard;
+                scroll.horizontal = false; scroll.vertical = true;
+                scroll.movementType = ScrollRect.MovementType.Clamped;
+                scroll.scrollSensitivity = 28;
+                menuCard.SetParent(mobileMenuViewport,false);
+            }
+            const float inset = 12f;
+            mobileMenuViewport.anchorMin = Vector2.zero; mobileMenuViewport.anchorMax = Vector2.one;
+            mobileMenuViewport.offsetMin = new Vector2(safeFrame.xMin + inset,safeFrame.yMin + inset);
+            mobileMenuViewport.offsetMax = new Vector2(safeFrame.xMax - canvasSize.x - inset,safeFrame.yMax - canvasSize.y - inset);
+        }
+
         private static void PlaceTop(Transform value, float x, float down, float width, float height)
         {
             if (!value) return;
@@ -802,9 +837,13 @@ namespace SlopCity
             if (button) button.GetComponentInChildren<Text>().rectTransform.sizeDelta = rect.sizeDelta;
         }
 
-        private void LayoutMobileSource(float viewportWidth, float top, float bottom)
+        private void LayoutMobileSource(Rect safeFrame)
         {
             if (!sourceCard) return;
+            Vector2 canvasSize = ((RectTransform)transform).rect.size;
+            float viewportWidth = safeFrame.width;
+            float left = safeFrame.xMin, right = canvasSize.x - safeFrame.xMax;
+            float top = canvasSize.y - safeFrame.yMax, bottom = safeFrame.yMin;
             RectTransform panel;
             if (!sourceViewport)
             {
@@ -817,7 +856,7 @@ namespace SlopCity
                 returnToLoungeButton.transform.SetParent(sourceCard.transform,false); returnToLoungeButton.transform.SetAsLastSibling();
             }
             panel = (RectTransform)sourceViewport.GetChild(0);
-            sourceViewport.offsetMin = new Vector2(0,66 + bottom); sourceViewport.offsetMax = new Vector2(0,-top);
+            sourceViewport.offsetMin = new Vector2(left,66 + bottom); sourceViewport.offsetMax = new Vector2(-right,-top);
             float width = Mathf.Min(460,viewportWidth - 24), inner = width - 32;
             foreach (Text text in sourceCard.GetComponentsInChildren<Text>(true)) text.fontSize = 16;
             PlaceTop(panel,0,8,width,1000);
@@ -849,7 +888,8 @@ namespace SlopCity
             panel.sizeDelta = new Vector2(width,row + 668);
             RectTransform back = (RectTransform)returnToLoungeButton.transform;
             back.anchorMin = back.anchorMax = back.pivot = new Vector2(.5f,0);
-            back.anchoredPosition = new Vector2(0,10 + bottom); back.sizeDelta = new Vector2(Mathf.Min(420,viewportWidth - 24),46);
+            back.anchoredPosition = new Vector2(safeFrame.center.x - canvasSize.x * .5f,10 + bottom);
+            back.sizeDelta = new Vector2(Mathf.Min(420,viewportWidth - 24),46);
             returnToLoungeButton.GetComponentInChildren<Text>().rectTransform.sizeDelta = back.sizeDelta;
         }
 
