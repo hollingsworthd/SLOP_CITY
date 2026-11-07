@@ -22,6 +22,8 @@ namespace SlopCity
         private int lastDisplayWidth, lastDisplayHeight, lastBudget = -1;
         private float lastPixelRatio;
         private float nextAllocation;
+        private const float DisplaySettleSeconds = .12f;
+        private float displaySettleAt;
         private int fallbackHeight;
         private bool suspendedCamera;
         private bool allocationWarning;
@@ -105,6 +107,16 @@ namespace SlopCity
         private void EnsureTarget(int displayWidth, int displayHeight, int budget, float pixelRatio)
         {
             if (!worldCamera || displayWidth <= 0 || displayHeight <= 0) return;
+            bool displayChanged = displayWidth != lastDisplayWidth || displayHeight != lastDisplayHeight;
+            if (displayChanged && worldTexture && worldTexture.IsCreated())
+            {
+                displaySettleAt = Time.unscaledTime + DisplaySettleSeconds;
+                worldCamera.aspect = displayWidth / (float)displayHeight;
+                if (presentationCanvas) presentationCanvas.enabled = true;
+                if (Time.unscaledTime < displaySettleAt && lastBudget == budget
+                    && Mathf.Approximately(lastPixelRatio, pixelRatio))
+                    return;
+            }
             if (worldTexture && worldTexture.IsCreated() && presentationCanvas && worldImage && recoveryMessage && !suspendedCamera && lastDisplayWidth == displayWidth && lastDisplayHeight == displayHeight
                 && lastBudget == budget && Mathf.Approximately(lastPixelRatio, pixelRatio))
             {
@@ -301,6 +313,7 @@ namespace SlopCity
                 lastDisplayWidth = lastDisplayHeight = 0;
                 lastBudget = -1;
                 nextAllocation = 0;
+                displaySettleAt = 0;
                 try { if (worldImage) worldImage.texture = null; }
                 finally
                 {

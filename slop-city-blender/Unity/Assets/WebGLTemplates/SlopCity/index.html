@@ -303,12 +303,15 @@
       const viewport = readVisualViewport();
       document.documentElement.style.setProperty("--slop-viewport-height", viewport.height + "px");
       document.documentElement.style.setProperty("--slop-viewport-width", viewport.width + "px");
-      resizeGame();
       const key = Math.round(viewport.width) + "x" + Math.round(viewport.height);
       if (viewportSettleTimer !== null) clearTimeout(viewportSettleTimer);
       viewportSettleTimer = setTimeout(function () {
         viewportSettleTimer = null;
-        if (graphicsLost || sessionFailed || key === settledViewportKey) return;
+        if (graphicsLost || sessionFailed) return;
+        // Resize the WebGL backing once per settled viewport. Repeated canvas
+        // resizing during rotation can lose the graphics context or spike memory.
+        resizeGame();
+        if (key === settledViewportKey) return;
         settledViewportKey = key;
         // Consumers that own gesture state can reset once after rotation/chrome
         // animation settles instead of interpreting every transient resize.
@@ -542,7 +545,8 @@
       };
     }
     watchDisplayDensity();
-    resolution.addEventListener("change", function () { scheduleViewportGeometry(); canvas.focus(); });
+    resolution.addEventListener("change", function () { resizeGame(); scheduleViewportGeometry(); canvas.focus(); });
+    resizeGame();
     scheduleViewportGeometry();
     let lastPerformanceRoundedFps = null, lastPerformanceFrameTenths = null, lastPerformanceP95Tenths = null;
     let lastPerformanceWorldWidth = null, lastPerformanceWorldHeight = null, lastPerformanceWidth = null, lastPerformanceHeight = null;
