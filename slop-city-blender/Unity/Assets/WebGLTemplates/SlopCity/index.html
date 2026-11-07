@@ -208,6 +208,39 @@
         status.textContent = "CITY CONNECTED";
       }
     });
+    var slopCityMemoryTierActive = false;
+    var slopCityTierTabHidden = false;
+    var slopCityTierShellCovered = false;
+    function slopCityMemoryTierShouldPause() {
+      return slopCityTierTabHidden || slopCityTierShellCovered;
+    }
+    function slopCityApplyMemoryTierPause(active) {
+      if (graphicsLost || sessionFailed || slopCityMemoryTierActive === active) return;
+      slopCityMemoryTierActive = active;
+      var module = navigationModule || (unityInstance && unityInstance.Module);
+      if (!module || !module.slopCityPauseVideoForGraphicsLoss) return;
+      try { module.slopCityPauseVideoForGraphicsLoss(); }
+      catch (error) { console.warn("Memory-tier video pause failed.", error); }
+    }
+    function slopCitySyncMemoryTierPause() {
+      slopCityApplyMemoryTierPause(slopCityMemoryTierShouldPause());
+    }
+    window.addEventListener("message", function (event) {
+      if (graphicsLost || sessionFailed) return;
+      var data = event.data;
+      if (!data || event.source !== window.parent) return;
+      try {
+        var origin = new URL(document.referrer || "", location.href).origin;
+        if (origin && origin !== "null" && event.origin !== origin) return;
+      } catch (_) { return; }
+      if (data.type === "slop-city-memory-tier") {
+        slopCityTierTabHidden = data.tier === "background";
+        slopCitySyncMemoryTierPause();
+      } else if (data.type === "slop-city-shell" && data.action === "cover") {
+        slopCityTierShellCovered = data.covered === true;
+        slopCitySyncMemoryTierPause();
+      }
+    });
     function mediaQuery(query) {
       try { return typeof window.matchMedia === "function" ? window.matchMedia(query) : null; }
       catch (_) { return null; }
@@ -690,6 +723,12 @@
         } catch (error) { console.warn("Graphics probe cleanup could not complete.", error); }
         probe = null;
       }
+      window.slopCityWebCodecsSupported = typeof VideoDecoder === "function";
+      window.slopCityOffscreenCanvasSupported = typeof OffscreenCanvas === "function";
+      try {
+        canvas.dataset.slopWebcodecs = window.slopCityWebCodecsSupported ? "1" : "0";
+        canvas.dataset.slopOffscreenCanvas = window.slopCityOffscreenCanvasSupported ? "1" : "0";
+      } catch (_) {}
       resizeGame();
       loadingStarted = true;
       launch.hidden = true;
@@ -743,6 +782,8 @@
     document.getElementById("reload").addEventListener("click", function () { location.reload(); });
     let hiddenAt = 0;
     document.addEventListener("visibilitychange", function () {
+      slopCityTierTabHidden = document.hidden;
+      slopCitySyncMemoryTierPause();
       if (document.hidden) {
         hiddenAt = Date.now();
         if (startupWatch !== null) { clearInterval(startupWatch); startupWatch = null; }
@@ -750,7 +791,7 @@
         const suspended = Date.now() - hiddenAt;
         startupAt += suspended; startupProgressAt += suspended; hiddenAt = 0;
       }
-    });
+    }, true);
     document.getElementById("help").addEventListener("click", function () {
       const controls = document.getElementById("controls");
       controls.hidden = !controls.hidden;

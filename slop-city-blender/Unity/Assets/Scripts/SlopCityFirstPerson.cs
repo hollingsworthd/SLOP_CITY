@@ -179,6 +179,10 @@ namespace SlopCity
             sandbox.MovementOverrideRequested += SetExternalMovement;
             sandbox.MunicipalReportRequested += ShowLocalReport;
             cityMedia = FindFirstObjectByType<SlopCityCityMedia>();
+#if UNITY_WEBGL && !UNITY_EDITOR
+            SlopCityBurstWarmup.RunOnce();
+            SlopCityBrowserCapabilities.ProbeOnce();
+#endif
             SetPaused(true);
             RefreshHud();
             SlopCityPhoneBooths.Ensure(this);

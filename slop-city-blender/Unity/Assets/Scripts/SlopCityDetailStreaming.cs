@@ -16,6 +16,10 @@ namespace SlopCity
     {
         public const long ResidentBudgetBytes = 24L * 1024 * 1024;
         public const float AdmissionDistance = 65f, RetirementDistance = 90f;
+        /// <summary>Minimum spacing between new detail admissions (sub-100 ms stagger per playbook).</summary>
+        private const float AdmissionStaggerSeconds = .05f;
+        /// <summary>Cancel an in-flight prefetch when the camera moves faster than this (m/s), squared.</summary>
+        private const float PrefetchCancelVelocitySqr = 25f;
         [Serializable]
         public sealed class DetailEntry
         {
@@ -42,6 +46,10 @@ namespace SlopCity
         private Coroutine pendingRoutine;
         private int requestIndex = -1, requestGeneration, retirementFrame = -1, pendingRequestDisposeRefusals, pendingDownloadDisposeRefusals;
         private bool cleanupWarning;
+        private float nextAdmissionEarliest;
+        private int admissionCandidate = -1, admissionCandidateFrames;
+        private Vector3 lastCameraSample;
+        private bool cameraSampleInitialized;
 #if UNITY_WEBGL && !UNITY_EDITOR
         private Camera view;
         private readonly Plane[] admissionFrustum = new Plane[6];
@@ -110,6 +118,18 @@ namespace SlopCity
                 ? SlopCityPlayerInput.BrowserUsesMobileMediaBudget(touchInput)
                 : Application.isMobilePlatform);
             if (visibleAdmission) GeometryUtility.CalculateFrustumPlanes(view, admissionFrustum);
+            if (view)
+            {
+                Vector3 cam = view.transform.position;
+                float dt = Mathf.Max(Time.unscaledDeltaTime, .0001f);
+                Vector3 velocity = cameraSampleInitialized ? (cam - lastCameraSample) / dt : Vector3.zero;
+                lastCameraSample = cam;
+                cameraSampleInitialized = true;
+                // Abort in-flight detail when the camera accelerates away (elevator / sharp turn) before bytes pin.
+                if (pendingIndex >= 0 && velocity.sqrMagnitude >= PrefetchCancelVelocitySqr
+                    && Mathf.Sqrt(DistanceSquared(pendingIndex, position)) > AdmissionDistance * .85f)
+                    CancelPending();
+            }
 #endif
             if (pendingIndex >= 0 && DistanceSquared(pendingIndex, position) > RetirementDistance * RetirementDistance)
                 Retire(pendingIndex);
@@ -141,7 +161,18 @@ namespace SlopCity
                 float distance = DistanceSquared(i, position);
                 if (distance < closest) { closest = distance; best = i; }
             }
-            if (best < 0) return;
+            if (best < 0) { admissionCandidate = -1; admissionCandidateFrames = 0; return; }
+            if (best != admissionCandidate) { admissionCandidate = best; admissionCandidateFrames = 1; }
+            else admissionCandidateFrames++;
+            // Brief hysteresis: require two streaming ticks with the same closest candidate before committing.
+            if (admissionCandidateFrames < 2) return;
+            if (Time.unscaledTime < nextAdmissionEarliest)
+            {
+#if UNITY_WEBGL && !UNITY_EDITOR
+                nextTick = Time.unscaledTime;
+#endif
+                return;
+            }
             long wanted = entries[best].geometryBytes;
             if (EffectiveResidentBytes() + wanted > ResidentBudgetBytes)
             {
@@ -160,7 +191,11 @@ namespace SlopCity
                 }
             }
             int token = Begin(best);
-            if (network && token >= 0) pendingRoutine = StartCoroutine(Load(best, token));
+            if (network && token >= 0)
+            {
+                nextAdmissionEarliest = Time.unscaledTime + AdmissionStaggerSeconds;
+                pendingRoutine = StartCoroutine(Load(best, token));
+            }
         }
         private static bool ValidEntry(DetailEntry entry)
         {
@@ -246,6 +281,9 @@ namespace SlopCity
                 entry.target.sharedMesh = leases[index].mesh;
                 leases[index].failures = 0;
                 pendingIndex = -1;
+                admissionCandidate = -1;
+                admissionCandidateFrames = 0;
+                SlopCityVirtualTexturePaging.RegisterInterest(WorldBounds(entry.target.transform, entry.localBounds));
 #if UNITY_WEBGL && !UNITY_EDITOR
                 // Demand is reevaluated on the next streaming tick, allowing
                 // native uploads and retired resources to settle between requests.
@@ -315,6 +353,8 @@ namespace SlopCity
         }
         private void CancelPending()
         {
+            admissionCandidate = -1;
+            admissionCandidateFrames = 0;
             if (pendingIndex >= 0) { leases[pendingIndex].generation++; pendingIndex = -1; }
             requestIndex = -1;
             try { if (pendingRequest != null) pendingRequest.Abort(); }
@@ -415,7 +455,7 @@ namespace SlopCity
             private readonly byte[] bytes;
             private int received;
             // Allocate managed buffers before constructing the native base handler.
-            public BoundedDownload(int length) : this(new byte[32 * 1024], new byte[length]) { }
+            public BoundedDownload(int length) : this(SlopCityFrameScratchArena.Bytes(32 * 1024), new byte[length]) { }
             private BoundedDownload(byte[] buffer, byte[] payload) : base(buffer) { bytes = payload; }
             public byte[] Bytes => bytes;
             public bool Complete => received == bytes.Length;
@@ -615,8 +655,8 @@ namespace SlopCity
         }
         private static Bounds ReadBounds(BinaryReader reader)
         {
-            var values = new float[6];
-            for (int i = 0; i < values.Length; i++)
+            float[] values = SlopCityFrameScratchArena.Floats(6);
+            for (int i = 0; i < 6; i++)
             {
                 values[i] = reader.ReadSingle();
                 if (float.IsNaN(values[i]) || float.IsInfinity(values[i]) || Mathf.Abs(values[i]) > 100000f || (i >= 3 && values[i] < 0))

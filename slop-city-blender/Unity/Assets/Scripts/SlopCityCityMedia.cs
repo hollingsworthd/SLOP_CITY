@@ -2,6 +2,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.IO;
+using System.Text;
 using UnityEngine;
 using UnityEngine.Networking;
 using UnityEngine.Video;
@@ -1611,7 +1612,7 @@ namespace SlopCity
                 VideoPlayer player = signal.player;
                 player.isLooping = signal.owner != null && signal.owner.screen.IsFeatured
                     && (signal.owner.screen.FeaturedHoldAtSeconds < 0f || signal.owner.screen.FeaturedHoldSeconds <= 0f);
-                player.url = url;
+                player.url = CanonicalDecodeUrl(url);
                 bool audioOnly = signal.owner != null && signal.owner.screen.AudioOnly;
                 player.renderMode = audioOnly ? VideoRenderMode.APIOnly : VideoRenderMode.RenderTexture;
                 player.targetTexture = audioOnly ? null : signal.texture;
@@ -2136,6 +2137,47 @@ namespace SlopCity
             // A TikTok profile/post page is HTML, not a native decoder source.
             return !uri.Host.Equals("tiktok.com", StringComparison.OrdinalIgnoreCase)
                 && !uri.Host.EndsWith(".tiktok.com", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
+        /// Normalize HTTPS media URLs so the same logical clip from a CDN cannot
+        /// strand parallel decoders on harmless query variants (session fingerprint only).
+        /// Fragment is stripped; path casing is preserved (object keys are case-sensitive).
+        /// </summary>
+        private static string CanonicalDecodeUrl(string url)
+        {
+            if (string.IsNullOrEmpty(url)) return url;
+            if (!Uri.TryCreate(url, UriKind.Absolute, out Uri uri) || uri.Scheme != Uri.UriSchemeHttps) return url;
+            string query = uri.Query;
+            if (string.IsNullOrEmpty(query) || query == "?") return url;
+            string tail = query.StartsWith("?", StringComparison.Ordinal) ? query.Substring(1) : query;
+            var segments = tail.Split('&');
+            var kept = new List<string>(segments.Length);
+            for (int s = 0; s < segments.Length; s++)
+            {
+                string segment = segments[s];
+                if (string.IsNullOrEmpty(segment)) continue;
+                int eq = segment.IndexOf('=');
+                string name = eq < 0 ? segment : segment.Substring(0, eq);
+                if (name.Length == 0) continue;
+                string lowered = name.ToLowerInvariant();
+                // Typical signed-URL noise; dropping these can collapse variants (verify against your CDN contract).
+                if (lowered == "token" || lowered == "sig" || lowered == "signature" || lowered == "se" || lowered == "sp"
+                    || lowered == "skoid" || lowered == "sktid" || lowered == "sks" || lowered == "skv"
+                    || lowered == "sv" || lowered == "spr" || lowered == "st" || lowered == "sr")
+                    continue;
+                kept.Add(segment);
+            }
+            if (kept.Count == segments.Length) return url;
+            if (kept.Count == 0) return uri.GetLeftPart(UriPartial.Path);
+            var builder = new StringBuilder(uri.GetLeftPart(UriPartial.Path));
+            builder.Append('?');
+            for (int i = 0; i < kept.Count; i++)
+            {
+                if (i > 0) builder.Append('&');
+                builder.Append(kept[i]);
+            }
+            return builder.ToString();
         }
 
         private static bool ValidCatalogVideo(SlopCityTikTokVideo video)

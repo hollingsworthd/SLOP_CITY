@@ -786,6 +786,17 @@ namespace SlopCity
         private void DrawBatches(Camera camera)
         {
             if (renderingAllocationFailed) return;
+            // Stable material/mesh order cuts driver state churn on repeat frames (playbook: bind batching).
+            batches.Sort((a, b) =>
+            {
+                int ac = a.material ? a.material.GetInstanceID() : 0;
+                int bc = b.material ? b.material.GetInstanceID() : 0;
+                int order = ac.CompareTo(bc);
+                if (order != 0) return order;
+                int am = a.mesh ? a.mesh.GetInstanceID() : 0;
+                int bm = b.mesh ? b.mesh.GetInstanceID() : 0;
+                return am.CompareTo(bm);
+            });
             foreach (DrawBatch batch in batches)
             {
                 if (batch.count <= 0 || !batch.mesh || !batch.material || !batch.material.enableInstancing) continue;

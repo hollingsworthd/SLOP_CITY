@@ -55,8 +55,8 @@ mergeInto(LibraryManager.library, {
         }
       } catch (error) { if (!firstError) firstError = error; }
     }
-    Object.keys(videoInstances).forEach(function (video) {
-      pauseDecoder(video, videoInstances[video], true);
+    Object.keys(videoInstances).forEach(function (id) {
+      pauseDecoder(Number(id), videoInstances[id], true);
     });
     Object.keys(slopCityRetiredVideoDecoders).forEach(function (id) {
       pauseDecoder(id, slopCityRetiredVideoDecoders[id], false);

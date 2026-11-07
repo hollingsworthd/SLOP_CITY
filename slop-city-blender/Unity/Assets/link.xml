@@ -1,0 +1,8 @@
+<linker>
+  <!-- Preserve SlopCity gameplay assemblies when Managed Stripping Level is High (WebGL default in ProjectSettings).
+       Burst/Math/Collections are listed so IL2CPP does not strip types referenced only from Burst-compiled code. -->
+  <assembly fullname="Assembly-CSharp" preserve="all" />
+  <assembly fullname="Unity.Burst" preserve="all" />
+  <assembly fullname="Unity.Jobs" preserve="all" />
+  <assembly fullname="Unity.Mathematics" preserve="all" />
+</linker>
