@@ -45,6 +45,20 @@ namespace SlopCity
         private const int MobileScreenTextureLimit = 8;
         private static int screenTextureRetiredFrame = -1;
         private bool MobileWebBudget => activeDecoderLimit == 1;
+        // A browser rotation temporarily changes the canvas backing surface. Keep
+        // existing display owners intact, but do not admit native decoders or GPU
+        // images until the launcher has observed a stable viewport again.
+        private bool DeferMobileAdmissionsForViewport
+        {
+            get
+            {
+#if UNITY_WEBGL && !UNITY_EDITOR
+                return MobileWebBudget && SlopCityWebPresentation.IsViewportTransition;
+#else
+                return false;
+#endif
+            }
+        }
         private float nextScreenUpdate, audioGain, audioHoldUntil, focusedAudioGain, featuredTickAt;
         private ScreenState audioOwner, desiredAudioOwner;
         private ScreenState mobilePendingOwner;
@@ -447,6 +461,7 @@ namespace SlopCity
 
         private bool EnsureScreenTexture(ScreenState display)
         {
+            if (DeferMobileAdmissionsForViewport) return false;
             if (!RetryRetiredScreenResources()) return false;
             if (MobileWebBudget && Time.frameCount <= screenTextureRetiredFrame) return false;
             if (!display.screen || display.screen.AudioOnly) return false;
@@ -594,7 +609,7 @@ namespace SlopCity
 
         private void RefreshMobileScreenTextures()
         {
-            if (!MobileWebBudget) return;
+            if (!MobileWebBudget || DeferMobileAdmissionsForViewport) return;
             foreach (ScreenState display in displays)
             {
                 int rank = candidates.IndexOf(display);
@@ -790,14 +805,14 @@ namespace SlopCity
         {
             signal.startedAt = Time.unscaledTime;
 #if UNITY_WEBGL && !UNITY_EDITOR
-            signal.webPrepareSuspendedAt = MobileWebBudget && (Suspended || manuallyPaused) ? signal.startedAt : -1f;
+            signal.webPrepareSuspendedAt = MobileWebBudget && (Suspended || manuallyPaused || DeferMobileAdmissionsForViewport) ? signal.startedAt : -1f;
 #endif
         }
 
         private float PreparationElapsed(Channel signal)
         {
 #if UNITY_WEBGL && !UNITY_EDITOR
-            if (MobileWebBudget && (Suspended || manuallyPaused)) return 0f;
+            if (MobileWebBudget && (Suspended || manuallyPaused || DeferMobileAdmissionsForViewport)) return 0f;
 #endif
             return Time.unscaledTime - signal.startedAt;
         }
@@ -807,7 +822,7 @@ namespace SlopCity
         {
             if (!MobileWebBudget) return;
             float now = Time.unscaledTime;
-            bool suspended = Suspended || manuallyPaused;
+            bool suspended = Suspended || manuallyPaused || DeferMobileAdmissionsForViewport;
             foreach (Channel signal in channels)
             {
                 if (signal == null || (!signal.loading && !signal.resolving)) continue;
@@ -894,6 +909,7 @@ namespace SlopCity
                 int order = right.priority.CompareTo(left.priority);
                 return order != 0 ? order : left.ordinal.CompareTo(right.ordinal);
             });
+            if (DeferMobileAdmissionsForViewport) return;
             RefreshMobileLoungePriority(strongest != null && strongest.aimed && !Suspended && !manuallyPaused);
             if (Suspended || manuallyPaused) { desiredAudioOwner = null; return; }
             if (activeDecoderLimit == 1)
@@ -1016,6 +1032,7 @@ namespace SlopCity
 
         private void BindSlot(Channel signal, ScreenState display)
         {
+            if (DeferMobileAdmissionsForViewport) return;
             if (!display.screen.AudioOnly && !EnsureScreenTexture(display)) return;
             signal.owner = display;
             display.slot = signal;
@@ -1386,7 +1403,7 @@ namespace SlopCity
         private int thumbnailRequests;
         private void PumpThumbnails()
         {
-            if (Suspended || thumbnailRequests >= (MobileWebBudget ? 1 : 2) || !SlopCityTikTokSync.Instance) return;
+            if (Suspended || DeferMobileAdmissionsForViewport || thumbnailRequests >= (MobileWebBudget ? 1 : 2) || !SlopCityTikTokSync.Instance) return;
             if (MobileWebBudget)
                 foreach (Channel signal in channels)
                     if (signal != null && signal.slideshow && (signal.loading || signal.resolving)) return;
@@ -1407,6 +1424,12 @@ namespace SlopCity
                 if (!isActiveAndEnabled || generation != target.generation
                     || !SlopCityTikTokSync.IsBundledMediaUri(post.bundledThumbnailFile, url))
                 { thumbnailRequests = Mathf.Max(0, thumbnailRequests - 1); return; }
+                if (DeferMobileAdmissionsForViewport)
+                {
+                    target.needsThumbnail = true;
+                    thumbnailRequests = Mathf.Max(0, thumbnailRequests - 1);
+                    return;
+                }
                 mediaCoroutines.Start(this, LoadThumbnail(target, generation, url));
             });
         }
@@ -1431,6 +1454,13 @@ namespace SlopCity
                         byte[] bytes = request.downloadHandler.data;
                         if (SlopCityMediaTransfer.ImageSizeIsSafe(bytes, out _, out _))
                         {
+#if UNITY_WEBGL && !UNITY_EDITOR
+                            while (DeferMobileAdmissionsForViewport)
+                            {
+                                if (!display.screen || generation != display.generation) yield break;
+                                yield return null;
+                            }
+#endif
                             thumbnail = new Texture2D(2, 2, TextureFormat.RGBA32, false);
                             if (thumbnail.LoadImage(bytes, true) && (display.slot == null || !display.slot.ready
 #if UNITY_WEBGL && !UNITY_EDITOR
@@ -1468,6 +1498,12 @@ namespace SlopCity
         private void StartChannel(Channel signal)
         {
             if (signal.owner == null) return;
+            if (DeferMobileAdmissionsForViewport)
+            {
+                signal.advance = true;
+                signal.nextAttempt = Mathf.Max(signal.nextAttempt, Time.unscaledTime + .1f);
+                return;
+            }
             if (!signal.playbackConfigured && (signal.session || signal.player || signal.audio))
             {
                 // A retained native owner may only now accept Destroy. Give that
@@ -1602,6 +1638,12 @@ namespace SlopCity
 
         private void PrepareChannel(Channel signal, string url)
         {
+            if (DeferMobileAdmissionsForViewport)
+            {
+                signal.advance = true;
+                signal.nextAttempt = Mathf.Max(signal.nextAttempt, Time.unscaledTime + .1f);
+                return;
+            }
             try
             {
                 EnsurePlayer(signal);
@@ -1702,6 +1744,12 @@ namespace SlopCity
 
         private void StartSlideshow(Channel signal)
         {
+            if (DeferMobileAdmissionsForViewport)
+            {
+                signal.advance = true;
+                signal.nextAttempt = Mathf.Max(signal.nextAttempt, Time.unscaledTime + .1f);
+                return;
+            }
             if (!SlopCityTikTokSync.Instance || signal.pendingVideo.imageUrls == null || signal.pendingVideo.imageUrls.Length == 0)
             { FailChannel(signal, "Photo post is not available yet."); return; }
             try
@@ -1717,6 +1765,12 @@ namespace SlopCity
 
         private void StartImage(Channel signal, int index)
         {
+            if (DeferMobileAdmissionsForViewport)
+            {
+                signal.resumeImage = true;
+                signal.requestedImageIndex = index;
+                return;
+            }
             if (!SlopCityTikTokSync.Instance) { FailChannel(signal, "Photo resolver is unavailable."); return; }
             signal.resumeImage = false;
             signal.requestedImageIndex = index;
@@ -1730,6 +1784,12 @@ namespace SlopCity
                 if (!this || operation != signal.operation || !signal.resolving) return;
                 signal.resolving = false;
                 if (!SafePhotoUrl(video, index, url)) { FailChannel(signal, "Photo download is not available yet."); return; }
+                if (DeferMobileAdmissionsForViewport)
+                {
+                    signal.resumeImage = true;
+                    signal.requestedImageIndex = index;
+                    return;
+                }
                 signal.loading = true;
                 StartPreparationClock(signal);
                 mediaCoroutines.Start(this, LoadImage(signal, operation, index, url));
@@ -1759,6 +1819,13 @@ namespace SlopCity
                             byte[] bytes = request.downloadHandler.data;
                             if (SlopCityMediaTransfer.ImageSizeIsSafe(bytes, out _, out _))
                             {
+#if UNITY_WEBGL && !UNITY_EDITOR
+                            while (DeferMobileAdmissionsForViewport)
+                            {
+                                if (operation != signal.operation || !signal.slideshow) yield break;
+                                yield return null;
+                            }
+#endif
                                 photo = new Texture2D(2, 2, TextureFormat.RGBA32, false);
                                 accepted = photo.LoadImage(bytes, true);
                                 if (accepted) DrawImage(photo, signal.texture);

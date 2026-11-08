@@ -64,7 +64,7 @@ public class Harness {
  }
  private Dictionary<SlopCityCityScreen,ScreenState> displayLookup=new Dictionary<SlopCityCityScreen,ScreenState>();
  private readonly List<ScreenState> displays=new List<ScreenState>(),candidates=new List<ScreenState>();
- private bool MobileWebBudget=>true;private const int MobileScreenTextureLimit=8;
+ private bool MobileWebBudget=>true;private bool DeferMobileAdmissionsForViewport=>false;private const int MobileScreenTextureLimit=8;
  private static int screenTextureRetiredFrame=-1;
  private static void Destroy(Texture value){value.destroyed=true;}
  private static void CleanupMedia(Action action){action();}
@@ -254,6 +254,7 @@ public class SlopCityCityMedia:MonoBehaviour {
 public class SlopCityCityScreen {public bool AudioOnly;}
 public static SlopCityCityMedia Instance; private Transform viewer; private SlopCityMediaPlayer loungeMedia;
 public bool MobileWebBudget; private ScreenState desiredAudioOwner; private Channel[] channels=new Channel[1];
+private bool DeferMobileAdmissionsForViewport { get { return false; } }
 private bool mobileLoungePriority,mobileLoungePriorityRequest; private float mobileLoungePrioritySince;
 public void SetViewer(Transform v){viewer=v;}
 public static void DrawImage(Texture source,RenderTexture destination){}
