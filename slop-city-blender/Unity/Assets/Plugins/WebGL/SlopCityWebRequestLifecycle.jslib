@@ -61,6 +61,14 @@ mergeInto(LibraryManager.library, {
       var pendingLoaded = 0;
       var pendingChunk = null;
       var lastProgressAt = 0;
+      function reportReaderCancellation(error) {
+        // Native request retirement deliberately aborts a streaming reader.
+        // Browsers report that normal ownership handoff as AbortError; logging
+        // it repeatedly can obscure an actual runtime failure and flood mobile
+        // consoles during decoder churn.
+        if (error && error.name === 'AbortError') return;
+        console.warn('Request reader cancellation failed.', error);
+      }
       function flushProgress(force) {
         if (!pendingLoaded && !force) return;
         var now = Date.now();
@@ -92,8 +100,8 @@ mergeInto(LibraryManager.library, {
           return response;
         } finally {
           if (!complete) {
-            try { Promise.resolve(reader.cancel()).catch(function (error) { console.warn('Request reader cancellation failed.', error); }); }
-            catch (error) { console.warn('Request reader cancellation failed.', error); }
+            try { Promise.resolve(reader.cancel()).catch(reportReaderCancellation); }
+            catch (error) { reportReaderCancellation(error); }
           }
           reader.releaseLock();
         }

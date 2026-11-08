@@ -299,6 +299,7 @@
     let shellHooksDisposed = false;
     let viewportSyncFrame = 0;
     let viewportSettleTimer = null;
+    let viewportRetryTimer = null;
     let settledViewportKey = "";
     let viewportEpoch = 0;
     let lastUsableViewport = null;
@@ -321,20 +322,31 @@
       return { width: usable ? width : retained.width, height: usable ? height : retained.height, usable: usable };
     }
 
+    function scheduleViewportRetry(epoch) {
+      if (viewportRetryTimer !== null) clearTimeout(viewportRetryTimer);
+      viewportRetryTimer = setTimeout(function () {
+        viewportRetryTimer = null;
+        if (graphicsLost || sessionFailed || epoch !== viewportEpoch) return;
+        scheduleViewportGeometry();
+      }, 50);
+    }
+
     function applyViewportGeometry() {
       viewportSyncFrame = 0;
       if (graphicsLost || sessionFailed) return;
       const viewport = readVisualViewport();
       if (!viewport.usable) {
         // Safari can briefly report a zero visual viewport mid-rotation. Never
-        // turn a live WebGL backing store into 1×1; the next resize will retry.
-        viewportSettleTimer = setTimeout(scheduleViewportGeometry, 50);
+        // turn a live WebGL backing store into 1×1. One epoch-bound retry avoids
+        // stale zero-viewport callbacks reopening a settled backing transaction.
+        scheduleViewportRetry(viewportEpoch);
         return;
       }
       const epoch = viewportEpoch;
       document.documentElement.style.setProperty("--slop-viewport-height", viewport.height + "px");
       document.documentElement.style.setProperty("--slop-viewport-width", viewport.width + "px");
       const key = Math.round(viewport.width) + "x" + Math.round(viewport.height);
+      if (viewportRetryTimer !== null) { clearTimeout(viewportRetryTimer); viewportRetryTimer = null; }
       if (viewportSettleTimer !== null) clearTimeout(viewportSettleTimer);
       viewportSettleTimer = setTimeout(function () {
         viewportSettleTimer = null;
@@ -358,6 +370,7 @@
 
     function scheduleViewportGeometry() {
       if (graphicsLost || sessionFailed) return;
+      if (viewportRetryTimer !== null) { clearTimeout(viewportRetryTimer); viewportRetryTimer = null; }
       viewportEpoch++;
       window.slopCityViewportTransition = true;
       if (viewportSyncFrame) return;
@@ -398,6 +411,7 @@
       try { if (densityCleanup) { densityCleanup(); densityCleanup = null; } }
       catch (error) { console.warn("Display density cleanup failed.", error); }
       if (viewportSyncFrame) { cancelAnimationFrame(viewportSyncFrame); viewportSyncFrame = 0; }
+      if (viewportRetryTimer !== null) { clearTimeout(viewportRetryTimer); viewportRetryTimer = null; }
       if (viewportSettleTimer !== null) { clearTimeout(viewportSettleTimer); viewportSettleTimer = null; }
       window.removeEventListener("resize", scheduleViewportGeometry);
       window.removeEventListener("orientationchange", scheduleViewportGeometry);

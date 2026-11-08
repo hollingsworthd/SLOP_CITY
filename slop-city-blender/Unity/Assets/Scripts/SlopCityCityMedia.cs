@@ -1163,15 +1163,45 @@ namespace SlopCity
                 }
 #if UNITY_WEBGL && !UNITY_EDITOR
                 // Browser video bypasses AudioSource. Retain the same direction/range/occlusion mix.
-                if (signal.player && signal.player.isPrepared && signal.player.audioTrackCount > 0)
-                {
-                    if (!signal.player.isPlaying) gain = 0f;
-                    signal.player.SetDirectAudioVolume(0, gain);
-                    signal.player.SetDirectAudioMute(0, gain <= 0f);
-                }
+                if (!signal.player || !signal.player.isPlaying) gain = 0f;
+                ApplyWebDirectAudio(signal, gain);
 #endif
             }
         }
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+        private static void ResetWebDirectAudio(Channel signal, bool freshDecoder)
+        {
+            if (signal == null) return;
+            signal.webDirectAudioApplied = false;
+            signal.webDirectAudioMuted = true;
+            signal.webDirectAudioGain = -1f;
+            if (freshDecoder) signal.webDirectAudioDisabled = false;
+        }
+
+        private void ApplyWebDirectAudio(Channel signal, float gain)
+        {
+            if (signal == null || signal.webDirectAudioDisabled || !signal.playbackConfigured
+                || DeferMobileAdmissionsForViewport || !signal.player || !signal.player.isPrepared) return;
+            bool muted = gain <= .001f;
+            if (signal.webDirectAudioApplied && signal.webDirectAudioMuted == muted
+                && Math.Abs(signal.webDirectAudioGain - gain) <= .0001f) return;
+            try
+            {
+                if (signal.player.audioTrackCount <= 0) return;
+                signal.player.SetDirectAudioVolume(0, gain);
+                signal.player.SetDirectAudioMute(0, muted);
+                signal.webDirectAudioGain = gain;
+                signal.webDirectAudioMuted = muted;
+                signal.webDirectAudioApplied = true;
+            }
+            catch (Exception error)
+            {
+                signal.webDirectAudioDisabled = true;
+                Debug.LogWarning("City direct audio unavailable: " + error.GetType().Name, this);
+            }
+        }
+#endif
 
         /// <summary>Atomically replace playlist metadata. A playing clip always finishes before the new queue is used.</summary>
         public void ApplyTikTokCatalog(SlopCityTikTokCatalog catalog)
@@ -1608,6 +1638,9 @@ namespace SlopCity
             signal.audio.dopplerLevel = 0f;
             signal.audio.volume = 0f;
             signal.player = signal.session.AddComponent<VideoPlayer>();
+#if UNITY_WEBGL && !UNITY_EDITOR
+            ResetWebDirectAudio(signal, true);
+#endif
             VideoPlayer player = signal.player;
             player.playOnAwake = false;
             player.source = VideoSource.Url;
@@ -1707,11 +1740,7 @@ namespace SlopCity
 #if UNITY_WEBGL && !UNITY_EDITOR
                     // Track metadata is not valid before Prepare completes. Begin
                     // muted so autoplay can start; Update applies nearby audio.
-                    if (source.audioTrackCount > 0)
-                    {
-                        source.SetDirectAudioVolume(0, 0f);
-                        source.SetDirectAudioMute(0, true);
-                    }
+                    ApplyWebDirectAudio(signal, 0f);
 #endif
                     if (signal.currentVideo != null)
                     {
@@ -2392,6 +2421,7 @@ namespace SlopCity
             signal.webPublishedFrameIndex = long.MinValue;
             signal.webPicturePumpFrame = -1;
             signal.webPumpStallFrames = 0;
+            ResetWebDirectAudio(signal, false);
 #endif
             VideoPlayer player = signal.player;
             if (player)
@@ -2687,6 +2717,8 @@ namespace SlopCity
 #if UNITY_WEBGL && !UNITY_EDITOR
             [NonSerialized] public float webPrepareSuspendedAt = -1f;
             [NonSerialized] public bool webAwaitingFirstPicture, webPumpingPicture;
+            [NonSerialized] public bool webDirectAudioDisabled, webDirectAudioApplied, webDirectAudioMuted = true;
+            [NonSerialized] public float webDirectAudioGain = -1f;
             [NonSerialized] public int webPublishedFrameSerial, webCopiedFrameSerial, webPicturePumpFrame = -1, webPumpStallFrames;
             [NonSerialized] public double webCopiedMediaTime = -1d;
             [NonSerialized] public long webPublishedFrameIndex = long.MinValue;

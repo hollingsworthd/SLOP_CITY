@@ -64,6 +64,11 @@ namespace SlopCity
         private long webPublishedFrameIndex = long.MinValue;
         private int webPlaybackGeneration;
         private VideoPlayer.FrameReadyEventHandler webFrameReadyHandler;
+        // Direct-audio calls cross into the browser decoder. They are not safe
+        // while that decoder is retiring, and a native failure must not become
+        // a per-frame exception loop for the same player.
+        private bool webDirectAudioDisabled, webDirectAudioApplied, webDirectAudioMuted = true;
+        private float webDirectAudioGain = -1f;
         private static SlopCityMediaPlayer mobileDecoderOwner;
         private static float mobileDecoderReleaseUntil;
         private bool MobileWebBudget
@@ -287,6 +292,9 @@ namespace SlopCity
                 audioSource.volume = 0f;
 
                 player = playbackObject.AddComponent<VideoPlayer>();
+#if UNITY_WEBGL && !UNITY_EDITOR
+                ResetWebDirectAudio(true);
+#endif
                 player.playOnAwake = false;
                 player.source = VideoSource.Url;
 #if UNITY_WEBGL && !UNITY_EDITOR
@@ -434,13 +442,40 @@ namespace SlopCity
             float gain = audible ? SlopCityMediaAudioFocus.Gain(this) : 0f;
             if (audioSource) audioSource.volume = gain;
 #if UNITY_WEBGL && !UNITY_EDITOR
-            if (player && player.isPrepared && player.audioTrackCount > 0)
-            {
-                player.SetDirectAudioVolume(0, gain);
-                player.SetDirectAudioMute(0, gain <= 0f);
-            }
+            ApplyWebDirectAudio(gain);
 #endif
         }
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+        private void ResetWebDirectAudio(bool freshPlayer)
+        {
+            webDirectAudioApplied = false;
+            webDirectAudioMuted = true;
+            webDirectAudioGain = -1f;
+            if (freshPlayer) webDirectAudioDisabled = false;
+        }
+
+        private void ApplyWebDirectAudio(float gain)
+        {
+            if (webDirectAudioDisabled || releasingPlayback || webDecoderRetired || !player || !player.isPrepared) return;
+            bool muted = gain <= .001f;
+            if (webDirectAudioApplied && webDirectAudioMuted == muted && Math.Abs(webDirectAudioGain - gain) <= .0001f) return;
+            try
+            {
+                if (player.audioTrackCount <= 0) return;
+                player.SetDirectAudioVolume(0, gain);
+                player.SetDirectAudioMute(0, muted);
+                webDirectAudioGain = gain;
+                webDirectAudioMuted = muted;
+                webDirectAudioApplied = true;
+            }
+            catch (Exception error)
+            {
+                webDirectAudioDisabled = true;
+                Debug.LogWarning("Lounge direct audio unavailable: " + error.GetType().Name, this);
+            }
+        }
+#endif
 
         private void RefreshAudioInterest()
         {
@@ -866,6 +901,7 @@ namespace SlopCity
             webPicturePumpFrame = -1;
             webPumpStallFrames = 0;
             webPrepareSuspendedAt = -1f;
+            ResetWebDirectAudio(false);
 #endif
             VideoPlayer retiredPlayer = player;
             AudioSource retiredAudio = audioSource;
