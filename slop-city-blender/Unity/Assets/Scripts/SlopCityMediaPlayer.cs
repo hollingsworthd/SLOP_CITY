@@ -457,7 +457,8 @@ namespace SlopCity
 
         private void ApplyWebDirectAudio(float gain)
         {
-            if (webDirectAudioDisabled || releasingPlayback || webDecoderRetired || !player || !player.isPrepared) return;
+            if (webDirectAudioDisabled || releasingPlayback || webDecoderRetired
+                || SlopCityWebPresentation.IsViewportTransition || !player || !player.isPrepared) return;
             bool muted = gain <= .001f;
             if (webDirectAudioApplied && webDirectAudioMuted == muted && Math.Abs(webDirectAudioGain - gain) <= .0001f) return;
             try
@@ -779,6 +780,12 @@ namespace SlopCity
         private void ApplyPlaybackIntent()
         {
             if (state != PlaybackState.Ready || !player || !player.isPrepared) return;
+#if UNITY_WEBGL && !UNITY_EDITOR
+            // A browser rotation is rebuilding the backing surface. Do not send
+            // Play/Pause into a decoder that may be completing preparation until
+            // the launcher has settled the viewport transaction.
+            if (SlopCityWebPresentation.IsViewportTransition) return;
+#endif
             ApplyVolume();
             if (wantsPlayback && !IsSuspended)
             {

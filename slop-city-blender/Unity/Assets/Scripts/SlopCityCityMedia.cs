@@ -1182,7 +1182,8 @@ namespace SlopCity
         private void ApplyWebDirectAudio(Channel signal, float gain)
         {
             if (signal == null || signal.webDirectAudioDisabled || !signal.playbackConfigured
-                || DeferMobileAdmissionsForViewport || !signal.player || !signal.player.isPrepared) return;
+                || DeferMobileAdmissionsForViewport || SlopCityWebPresentation.IsViewportTransition
+                || !signal.player || !signal.player.isPrepared) return;
             bool muted = gain <= .001f;
             if (signal.webDirectAudioApplied && signal.webDirectAudioMuted == muted
                 && Math.Abs(signal.webDirectAudioGain - gain) <= .0001f) return;
@@ -2118,6 +2119,11 @@ namespace SlopCity
 
         private void ApplyPlayback()
         {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            // Keep decoder state stable while the shell settles a rotation. A
+            // prepare completion will be resumed by the normal next update.
+            if (SlopCityWebPresentation.IsViewportTransition) return;
+#endif
             // Suspension is authoritative, rather than a transient gaze loss.
             // Never carry a confirmed/pending city claim across pause or focus loss.
             if (Suspended || manuallyPaused) RefreshMobileLoungePriority(false, true);
