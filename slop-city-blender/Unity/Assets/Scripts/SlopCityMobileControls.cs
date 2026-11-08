@@ -301,7 +301,7 @@ namespace SlopCity
             if(action!=null)
             {
                 var touchAction=rect.gameObject.AddComponent<SlopCityTouchAction>();
-                touchAction.Configure(source,action);
+                touchAction.Configure(input,action);
                 actions.Add(touchAction);
             }
             var caption=Rect("Label",rect); Fill(caption,Vector2.zero,Vector2.one);
