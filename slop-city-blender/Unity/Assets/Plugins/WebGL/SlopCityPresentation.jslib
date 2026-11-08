@@ -10,6 +10,12 @@ mergeInto(LibraryManager.library, {
     if (!Number.isFinite(value) || value <= 0) value = Number(window.devicePixelRatio) || 1;
     return Math.max(1, value);
   },
+  // Raised before the shell changes its WebGL backing dimensions and cleared
+  // only after the final resize has rendered. Native render/video work shares
+  // this boundary so it cannot race a canvas transaction on mobile WebKit.
+  SlopCity_IsViewportTransition: function () {
+    return window.slopCityViewportTransition === true ? 1 : 0;
+  },
   SlopCity_ReportPresentation: function (displayWidth, displayHeight, worldWidth, worldHeight, pixelRatio) {
     var presentation = window.slopCityPresentation;
     if (!presentation) {

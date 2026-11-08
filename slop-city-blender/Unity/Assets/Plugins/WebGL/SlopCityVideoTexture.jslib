@@ -451,6 +451,9 @@ mergeInto(LibraryManager.library, {
   JS_Video_UpdateToTexture__sig: 'iiii',
   JS_Video_UpdateToTexture__deps: ['$videoInstances', '$s2lTexture', '$jsIsWebkit', '$slopCityWebkitVideoUpload', '$slopCityNativeVideoUpdateToTexture', '$slopCityPauseVideoForGraphicsLoss', '$slopCityPrepareLinearVideo', '$slopCityUsesMobileVideo', '$slopCityVideoVertexArray', '$slopCityLinearVideoWidth', '$slopCityLinearVideoHeight', '$slopCityVideoGraphicsScratch', '$slopCityCaptureVideoGraphicsState', '$slopCityRestoreVideoGraphicsState', '$slopCityDetachVideoDestination', '$slopCityQueueFailedVideoTexture', '$slopCityWatchVideoPicture', '$slopCityHasCurrentVideoPicture', '$slopCityFailVideoPlayback', 'JS_Video_Pause'],
   JS_Video_UpdateToTexture: function (video, texture, adjustToLinearspace) {
+    // The launcher has begun a canvas-backing transaction. A source.texture
+    // query or GL upload here can recreate native surfaces during retirement.
+    if (typeof window !== 'undefined' && window.slopCityViewportTransition === true) return false;
     var decoder = videoInstances[video];
     if (!decoder || decoder.slopCityDestroyed || typeof GLctx === 'undefined' || !GLctx || GLctx.isContextLost()) return false;
     if (!decoder.slopCityTextureRequested) {

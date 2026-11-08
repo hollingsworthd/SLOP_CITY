@@ -49,6 +49,7 @@ namespace SlopCity
         private float nextAdmissionEarliest;
         private int admissionCandidate = -1, admissionCandidateFrames;
         private Vector3 lastCameraSample;
+        private float lastCameraSampleAt;
         private bool cameraSampleInitialized;
 #if UNITY_WEBGL && !UNITY_EDITOR
         private Camera view;
@@ -77,6 +78,14 @@ namespace SlopCity
         {
 #if UNITY_WEBGL && !UNITY_EDITOR
             if (disposed || Time.unscaledTime < nextTick) return;
+            if (SlopCityWebPresentation.IsViewportTransition)
+            {
+                // A rotation must not start or retain a native mesh transfer
+                // while its renderer is deliberately shedding GPU surfaces.
+                if (pendingIndex >= 0 || pendingRequest != null || pendingDownload != null || pendingRoutine != null) CancelPending();
+                nextTick = Time.unscaledTime + .2f;
+                return;
+            }
             if (pendingRequest != null || pendingDownload != null) RetryPendingRequestCleanup();
             nextTick = Time.unscaledTime + .2f;
             if (!view) view = Camera.main;
@@ -121,11 +130,16 @@ namespace SlopCity
             if (view)
             {
                 Vector3 cam = view.transform.position;
-                float dt = Mathf.Max(Time.unscaledDeltaTime, .0001f);
-                Vector3 velocity = cameraSampleInitialized ? (cam - lastCameraSample) / dt : Vector3.zero;
+                float sampleDt = cameraSampleInitialized ? Mathf.Max(now - lastCameraSampleAt, .0001f) : 1f;
+                Vector3 delta = cam - lastCameraSample;
+                // A normal jump changes eye height but must not tear down a
+                // still-relevant street-detail transfer.
+                delta.y = 0f;
+                Vector3 velocity = cameraSampleInitialized ? delta / sampleDt : Vector3.zero;
                 lastCameraSample = cam;
+                lastCameraSampleAt = now;
                 cameraSampleInitialized = true;
-                // Abort in-flight detail when the camera accelerates away (elevator / sharp turn) before bytes pin.
+                // Abort only genuine fast horizontal departure before bytes pin.
                 if (pendingIndex >= 0 && velocity.sqrMagnitude >= PrefetchCancelVelocitySqr
                     && Mathf.Sqrt(DistanceSquared(pendingIndex, position)) > AdmissionDistance * .85f)
                     CancelPending();

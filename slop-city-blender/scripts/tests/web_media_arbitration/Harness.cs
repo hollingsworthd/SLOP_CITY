@@ -10,10 +10,15 @@ class Harness {
  static BindingFlags F=BindingFlags.Instance|BindingFlags.NonPublic;
  static object Field(object o,string name){return o.GetType().GetField(name,F).GetValue(o);}
  static void Call(object o,string name){o.GetType().GetMethod(name,F).Invoke(o,null);}
+ static void SetStatic(string name,object value){var field=typeof(SlopCityMediaPlayer).GetField(name,BindingFlags.Static|BindingFlags.NonPublic);if(field!=null)field.SetValue(null,value);}
  static int Live(){return UnityEngine.Object.All.OfType<VideoPlayer>().Count(v=>v);}
  static void Refresh(SlopCityMediaPlayer m){Call(m,"RefreshAudioInterest");Call(m,"RefreshWebInterest");}
  static SlopCityMediaPlayer Setup(bool touch,out GameObject controller,out SlopCityCityMedia city,out Renderer screen){
   UnityEngine.Object.All.Clear();Physics.Hits=new RaycastHit[0];GeometryUtility.Visible=true;Time.unscaledTime=0;
+  // Each fixture is a fresh browser session. The native retirement fence is
+  // intentionally static in production, so reset it when this managed clock
+  // returns to zero between independent cases.
+  SetStatic("mobileDecoderOwner",null);SetStatic("mobileDecoderReleaseUntil",0f);SetStatic("tenantRecordReleaseUntil",0f);
   controller=new GameObject("Daniel_FirstPerson");controller.AddComponent<SlopCityPlayerInput>().UseTouchControls=touch;
   var camera=new GameObject("Camera");camera.transform.SetParent(controller.transform,false);Camera.main=camera.AddComponent<Camera>();
   var home=new GameObject("Lounge");var tv=new GameObject("TV");tv.transform.SetParent(home.transform,false);tv.transform.position=new Vector3(0,0,4);
@@ -35,9 +40,10 @@ class Harness {
   Time.unscaledTime=1;city.SampleAim(true);Time.unscaledTime=1.399f;city.SampleAim(true);
   Check(Live()==1&&original==Field(media,"player"),"Deliberate city focus keeps existing owner until the .4 second confirmation");
   Time.unscaledTime=1.4f;city.SampleAim(true);
-  Check(Live()==0&&(bool)Field(media,"webCityPriority")&&!SlopCityMediaPlayer.MobileDecoderInUse,"Deliberate city focus wins at .4 seconds without overlapping native decoders");
-  Check(Math.Abs(city.BindAdmission()-1.65f)<.0001f,"Confirmed city handoff retains the additional .25 second native-retirement barrier");
-  Time.unscaledTime=1.7f;city.AddCityDecoder();var held=UnityEngine.Object.All.OfType<VideoPlayer>().Single(v=>v);
+  Check(Live()==0&&(bool)Field(media,"webCityPriority")&&SlopCityMediaPlayer.MobileDecoderInUse,"Deliberate city focus retires the lounge before the city can claim the decoder");
+  Time.unscaledTime=1.7f;Check(!SlopCityMediaPlayer.MobileDecoderInUse,"The lounge release fence clears before city preparation begins");
+  Check(Math.Abs(city.BindAdmission()-1.95f)<.0001f,"Confirmed city handoff retains the additional .25 second native-retirement barrier");
+  city.AddCityDecoder();var held=UnityEngine.Object.All.OfType<VideoPlayer>().Single(v=>v);
   for(int i=0;i<6;i++){
    Time.unscaledTime=1.8f+i*.2f;city.SampleAim(i%2!=0);Refresh(media);Call(media,"RefreshMobileDecoderOwnership");
    Check(Live()==1&&held&&UnityEngine.Object.All.OfType<VideoPlayer>().Count()==2,"Walking aim flicker cannot repeatedly rebuild city or lounge decoders");
@@ -64,12 +70,12 @@ class Harness {
   Camera.main.transform.position=new Vector3(0,0,-10);
   var wall=new GameObject("Home_Wall");Physics.Hits=new[]{new RaycastHit{transform=wall.transform}};
   Refresh(media);Check(!(bool)Field(media,"webRelevant")&&(float)Field(media,"audioScore")==0,"Occluded nearby TV must not reserve city decoder");
-  Call(media,"RefreshMobileDecoderOwnership");Time.unscaledTime=3;Call(media,"RefreshMobileDecoderOwnership");
+  Call(media,"RefreshMobileDecoderOwnership");Time.unscaledTime=3f;Call(media,"RefreshMobileDecoderOwnership");Time.unscaledTime=3.3f;Call(media,"RefreshMobileDecoderOwnership");
   Check(Live()==0&&!SlopCityMediaPlayer.MobileDecoderInUse&&media.HasSelection&&media.ScreenTexture==texture,"Hidden TV retirement keeps selected channel and last world picture");
   Camera.main.transform.position=new Vector3();Physics.Hits=new RaycastHit[0];GeometryUtility.Visible=false;Camera.main.transform.forward=Vector3.back;
   Refresh(media);Check((bool)Field(media,"webRelevant")&&(float)Field(media,"audioScore")>0,"Retired decoder can regain couch eligibility while looking away");
   Call(media,"RefreshMobileDecoderOwnership");Check(Live()==1&&media.IsPlaying,"Returning couch reconstructs one selected decoder");
-  city.Aim(true);Check(Live()==0&&!SlopCityMediaPlayer.MobileDecoderInUse&&(bool)Field(media,"webCityPriority")&&media.ScreenTexture==texture,"Direct city aim preempts nearby lounge and retains TV image");
+  city.Aim(true);Time.unscaledTime=3.6f;Call(media,"RefreshMobileDecoderOwnership");Check(Live()==0&&!SlopCityMediaPlayer.MobileDecoderInUse&&(bool)Field(media,"webCityPriority")&&media.ScreenTexture==texture,"Direct city aim preempts nearby lounge and retains TV image after native retirement fence");
   Time.unscaledTime=10;float admit=city.BindAdmission();Check(Math.Abs(admit-10.25f)<.0001f&&10<admit&&10.2f<admit,"Actual mobile BindSlot defers new decoder preparation beyond sameframe and next0.2s interest tick");
   city.AddCityDecoder();Refresh(media);Call(media,"RefreshMobileDecoderOwnership");Check(Live()==1&&!SlopCityMediaPlayer.MobileDecoderInUse,"Stable city aim suppresses automatic nearbyTV reacquisition");
   media.Play(SlopCityMediaChannel.Record);Check(Live()==1&&media.SelectedChannel==SlopCityMediaChannel.Record&&media.HasSelection,"Channel controls retain selection without stealing city decoder");
@@ -80,7 +86,7 @@ class Harness {
   var home=screen.transform.parent;var upholstery=new GameObject("SC_Couch_Blanket");upholstery.transform.SetParent(home,false);Physics.Hits=new[]{new RaycastHit{transform=upholstery.transform}};
   Refresh(media);Check((float)Field(media,"audioScore")>0,"Existing couch upholstery exemption still preserves nearby record audio");
   media.SetSuspended(true);Refresh(media);Check((float)Field(media,"audioScore")==0,"Interface suspension keeps media ineligible");
-  media.Stop();Check(Live()==0&&!SlopCityMediaPlayer.MobileDecoderInUse,"Stop clears single-owner lifecycle");
+  media.Stop();Time.unscaledTime=10.6f;Check(Live()==0&&!SlopCityMediaPlayer.MobileDecoderInUse,"Stop clears single-owner lifecycle after native retirement fence");
   media=Setup(false,out controller,out city,out screen);media.SetMobileCityPriority(true);
   Check(Live()==1&&media.IsPlaying&&!(bool)Field(media,"webCityPriority"),"Desktop retains playing decoder when mobile priority requested");
   city.Aim(true);Check(Live()==1&&media.IsPlaying,"Desktop city path preserves previous allocation policy");

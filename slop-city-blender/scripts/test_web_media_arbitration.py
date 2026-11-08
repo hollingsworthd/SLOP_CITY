@@ -31,6 +31,7 @@ PAUSE_HARNESS = r'''
 using System; using System.Collections.Generic; using UnityEngine; using UnityEngine.Video;
 namespace UnityEngine {
  public static class Mathf {public static int Min(int left,int right)=>Math.Min(left,right);}
+ public static class Time {public static int frameCount;}
  public static class Debug {public static void LogWarning(string message){}}
  public class Texture {
   public bool released,destroyed;
@@ -64,7 +65,10 @@ public class Harness {
  private Dictionary<SlopCityCityScreen,ScreenState> displayLookup=new Dictionary<SlopCityCityScreen,ScreenState>();
  private readonly List<ScreenState> displays=new List<ScreenState>(),candidates=new List<ScreenState>();
  private bool MobileWebBudget=>true;private const int MobileScreenTextureLimit=8;
+ private static int screenTextureRetiredFrame=-1;
  private static void Destroy(Texture value){value.destroyed=true;}
+ private static void CleanupMedia(Action action){action();}
+ private static bool TryMediaCleanup(Action action){try{action();return true;}catch{return false;}}
  private bool EnsureScreenTexture(ScreenState display){if(!display.texture)display.texture=new RenderTexture();return true;}
  private float nextScreenUpdate;private int releases;
  // Decoder retirement substitute: production ReleaseSlot/StopPlayback are checked
@@ -262,6 +266,7 @@ public void AddCityDecoder(){var session=new GameObject("CityDecoder");channels[
 private class ScreenState {public SlopCityCityScreen screen=new SlopCityCityScreen();public Channel slot;public RenderTexture texture=null;public Material material=null;}
 private class Channel {public ScreenState owner;public RenderTexture texture;public Material material;public bool hasScreen,advance,failed;public float nextAttempt;public GameObject session;public VideoPlayer player;}
 private void ReleaseSlot(Channel channel){if(channel.session)Destroy(channel.session);channel.session=null;channel.player=null;channel.owner=null;}
+private void ReleasePlayback(Channel channel){ReleaseSlot(channel);}
 private bool EnsureScreenTexture(ScreenState display){return true;}
 public float BindAdmission(){var channel=new Channel();BindSlot(channel,new ScreenState());return channel.nextAttempt;}
 ''' .replace('CANCEL_PRIORITY', cancel_priority) + methods + '\n}}'

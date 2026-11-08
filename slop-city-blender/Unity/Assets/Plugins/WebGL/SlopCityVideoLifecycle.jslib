@@ -156,7 +156,16 @@ mergeInto(LibraryManager.library, {
 
   $slopCityDrainRetiredVideoDecoders__deps: ['$slopCityRetiredVideoDecoders', '$slopCityRetireVideoDecoder', '$slopCityReusableIOSVideo', '$slopCityUsesIOSVideo', '$slopCityDisposingVideoDecoders', '$slopCityCanReuseVideoElement', '$slopCityReleaseVideoTexture', '$slopCityArmRetiredVideoDrain'],
   $slopCityDrainRetiredVideoDecoders: function () {
-    Object.keys(slopCityRetiredVideoDecoders).forEach(function (id) {
+    var retiredIds = Object.keys(slopCityRetiredVideoDecoders);
+    // Retiring a decoder releases its GL texture. Hold that work until the
+    // launcher has finished replacing its backing surface; admission remains
+    // blocked by the retained owner, so this cannot create a second decoder.
+    if (retiredIds.length && !slopCityDisposingVideoDecoders
+      && typeof window !== 'undefined' && window.slopCityViewportTransition === true) {
+      slopCityArmRetiredVideoDrain();
+      return false;
+    }
+    retiredIds.forEach(function (id) {
       var video = slopCityRetiredVideoDecoders[id];
       video.slopCityRetireAttempts = (video.slopCityRetireAttempts || 0) + 1;
       if (!slopCityRetireVideoDecoder(id, video)) {
@@ -204,7 +213,7 @@ mergeInto(LibraryManager.library, {
 
   JS_Video_Create__proxy: 'sync',
   JS_Video_Create__sig: 'ii',
-  JS_Video_Create__deps: ['$videoInstances', '$videoInstanceIdCounter', '$hasSRGBATextures', '$UTF8ToString', '$jsIsWebkit', '$slopCityDisposeOwnedVideoDecoders', '$slopCityUsesIOSVideo', '$slopCityReusableIOSVideo', '$slopCityAdmitVideoMetadata', '$slopCityUsesMobileVideo', '$slopCityDrainRetiredVideoDecoders', '$slopCityArmRetiredVideoDrain', '$slopCityFailVideoPlayback', '$slopCityCanReuseVideoElement'],
+  JS_Video_Create__deps: ['$videoInstances', '$videoInstanceIdCounter', '$hasSRGBATextures', '$UTF8ToString', '$jsIsWebkit', '$slopCityDisposeOwnedVideoDecoders', '$slopCityUsesIOSVideo', '$slopCityReusableIOSVideo', '$slopCityAdmitVideoMetadata', '$slopCityUsesMobileVideo', '$slopCityRetiredVideoDecoders', '$slopCityDrainRetiredVideoDecoders', '$slopCityArmRetiredVideoDrain', '$slopCityFailVideoPlayback', '$slopCityCanReuseVideoElement'],
   JS_Video_Create: function (url) {
     var str = UTF8ToString(url);
     slopCityDrainRetiredVideoDecoders();
@@ -297,6 +306,31 @@ mergeInto(LibraryManager.library, {
     }
     function admitSource() {
       if (!current()) return;
+      // Unity can observe a destroyed VideoPlayer before WebKit has actually
+      // retired its decoder. Do not give a new mobile element a source until
+      // every prior mobile decoder has completed the browser-side drain.
+      if (slopCityUsesMobileVideo(video)) {
+        slopCityDrainRetiredVideoDecoders();
+        var retiredMobileDecoder = Object.keys(slopCityRetiredVideoDecoders).some(function (id) {
+          var retired = slopCityRetiredVideoDecoders[id];
+          return !!retired && slopCityUsesMobileVideo(retired);
+        });
+        if (retiredMobileDecoder) {
+          if (Date.now() - admissionStartedAt >= 30000) {
+            delete video.slopCitySourceAdmissionTimer;
+            slopCityFailVideoPlayback(id, video, video.slopCityPlaybackIntent);
+            return;
+          }
+          video.slopCitySourceAdmissionTimer = setTimeout(admitSource, admissionBackoffMs);
+          admissionBackoffMs = Math.min(admissionBackoffMs * 2, 1000);
+          return;
+        }
+      }
+      if (typeof window !== 'undefined' && window.slopCityViewportTransition === true) {
+        video.slopCitySourceAdmissionTimer = setTimeout(admitSource, Math.max(admissionBackoffMs, 100));
+        admissionBackoffMs = Math.min(admissionBackoffMs * 2, 1000);
+        return;
+      }
       // load() aborts the old source asynchronously. Wait for this element's
       // observable empty state; other decoders retiring must not block admission.
       var reuseQuiet = ios && retiredAt && !elementSourceReady()

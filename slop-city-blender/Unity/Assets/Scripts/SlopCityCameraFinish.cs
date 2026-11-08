@@ -77,6 +77,16 @@ namespace SlopCity
             view.depthTextureMode = DepthTextureMode.None;
             view.renderingPath = RenderingPath.Forward;
         }
+
+        // The presentation host retires its world target before a mobile canvas
+        // resize. The camera stays enabled long enough that OnDisable would not
+        // release these retained browser surfaces on its own.
+        internal void ReleaseBrowserTransientTargets()
+        {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            ReleaseRetainedBloom();
+#endif
+        }
         private void Initialize()
         {
             view = GetComponent<Camera>();
@@ -242,6 +252,15 @@ namespace SlopCity
             RenderTexture reflection = null, reflectedBlur = null, graded = null;
             try
             {
+#if UNITY_WEBGL && !UNITY_EDITOR
+                // Do not create/copy optional GPU surfaces while the launcher is
+                // replacing its canvas backing or the world target is retiring.
+                if (SlopCityWebPresentation.IsViewportTransition)
+                {
+                    Graphics.Blit(source, destination);
+                    return;
+                }
+#endif
                 if (!material && !finishAllocationFailed) Initialize();
                 if (!material) { Graphics.Blit(source, destination); return; }
                 material.SetFloat("_Exposure", exposure);

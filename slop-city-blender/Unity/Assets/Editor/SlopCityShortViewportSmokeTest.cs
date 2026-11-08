@@ -51,6 +51,13 @@ namespace SlopCity.Editor
                 {
                     Button button=buttons.First(b=>b.name==name);Click(button,camera);bool queued=name=="TouchClean"?input.ConsumeClean():name=="TouchTake"?input.ConsumePickup():input.ConsumeInventory();Check(queued,"Real GraphicRaycaster/pointer dispatch queues "+name+" exactly once.");
                 }
+                Button jumpButton=buttons.First(b=>b.name=="TouchJump");
+                var staleTap=new PointerEventData(EventSystem.current){pointerId=7,position=Rect(jumpButton.GetComponent<RectTransform>(),camera).center,button=PointerEventData.InputButton.Left};
+                ExecuteEvents.Execute(jumpButton.gameObject,staleTap,ExecuteEvents.pointerDownHandler);
+                uint nextGeneration=Get<uint>(controls,"layoutGeneration")+1;Set(controls,"layoutGeneration",nextGeneration);Invoke(controls,"ApplyTouchLayoutGeneration");
+                ExecuteEvents.Execute(jumpButton.gameObject,staleTap,ExecuteEvents.pointerUpHandler);ExecuteEvents.Execute(jumpButton.gameObject,staleTap,ExecuteEvents.pointerClickHandler);
+                Check(!input.ConsumeJump(),"A JUMP tap begun before a relayout cannot fire after the button moved.");
+                Click(jumpButton,camera);Check(input.ConsumeJump(),"A fresh JUMP tap after a settled relayout remains reachable.");
                 var take=buttons.First(b=>b.name=="TouchTake").GetComponent<RectTransform>();var bag=buttons.First(b=>b.name=="TouchBag").GetComponent<RectTransform>();
                 bool compact=width>height&&height<260;
                 Check(take.anchoredPosition.x<0f&&bag.anchoredPosition.y>0f,"TAKE and BAG retain right/bottom action-pad anchors.");
@@ -159,6 +166,8 @@ namespace SlopCity.Editor
             for(int i=0;i<graphics.Count;i++){var graphic=graphics[i];diagnostic.graphics.Add(graphic.name+" depth="+graphic.depth+" culled="+graphic.canvasRenderer.cull+" enabled="+graphic.isActiveAndEnabled+" rect="+Rect(graphic.rectTransform,camera));}
             report.pointerDiagnostics.Add(diagnostic);
             Check(hits.Count>0&&hits[0].gameObject.GetComponentInParent<Button>()==button,"Actual GraphicRaycaster selects intended topmost "+button.name);
+            ExecuteEvents.Execute(button.gameObject,pointer,ExecuteEvents.pointerDownHandler);
+            ExecuteEvents.Execute(button.gameObject,pointer,ExecuteEvents.pointerUpHandler);
             ExecuteEvents.Execute(button.gameObject,pointer,ExecuteEvents.pointerClickHandler);
         }
         private static object Invoke(object owner,string name,params object[] values)=>owner.GetType().GetMethod(name,Hidden).Invoke(owner,values);

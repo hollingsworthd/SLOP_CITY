@@ -29,6 +29,7 @@ namespace SlopCity
         private SlopCityTouchLook touchLook;
         private SlopCityTouchHold touchRun;
         private readonly System.Collections.Generic.List<RectTransform> buttons = new System.Collections.Generic.List<RectTransform>();
+        private readonly System.Collections.Generic.List<SlopCityTouchAction> actions = new System.Collections.Generic.List<SlopCityTouchAction>();
         private Sprite disc;
         private Text cleanCaption;
         private static readonly string[] CleaningCaptions = { "CLEAN\n0/4", "CLEAN\n1/4", "CLEAN\n2/4", "CLEAN\n3/4", "CLEAN\nDONE" };
@@ -148,15 +149,16 @@ namespace SlopCity
                 if (hadLayout && changed)
                 {
                     unchecked { layoutGeneration++; if (layoutGeneration == 0) layoutGeneration = 1; }
-                    ApplyTouchLayoutGeneration();
                     geometrySettlePending = true;
                     geometrySettleAt = Time.unscaledTime + GeometrySettleSeconds;
+                    ApplyTouchLayoutGeneration();
                 }
                 return;
             }
             if (geometrySettlePending && Time.unscaledTime >= geometrySettleAt)
             {
                 geometrySettlePending = false;
+                ApplyTouchLayoutGeneration();
                 CancelHeldGestures();
             }
         }
@@ -181,6 +183,12 @@ namespace SlopCity
             if (moveStick) moveStick.SetLayoutGeneration(layoutGeneration);
             if (touchLook) touchLook.SetLayoutGeneration(layoutGeneration);
             if (touchRun) touchRun.SetLayoutGeneration(layoutGeneration);
+            foreach (SlopCityTouchAction action in actions)
+            {
+                if (!action) continue;
+                action.SetLayoutGeneration(layoutGeneration);
+                action.SetSuppressed(geometrySettlePending);
+            }
         }
 
         private void CancelHeldGestures()
@@ -290,7 +298,12 @@ namespace SlopCity
             var image = rect.gameObject.AddComponent<Image>(); image.sprite=disc; image.color=new Color(.04f,.085f,.105f,.60f);
             var button=rect.gameObject.AddComponent<Button>();
             button.navigation=new Navigation { mode=Navigation.Mode.None };
-            if(action!=null)button.onClick.AddListener(action);
+            if(action!=null)
+            {
+                var touchAction=rect.gameObject.AddComponent<SlopCityTouchAction>();
+                touchAction.Configure(source,action);
+                actions.Add(touchAction);
+            }
             var caption=Rect("Label",rect); Fill(caption,Vector2.zero,Vector2.one);
             var text=caption.gameObject.AddComponent<Text>(); text.font=font;text.text=label;text.alignment=TextAnchor.MiddleCenter;
             text.color=new Color(.92f,.97f,1f,.95f);text.resizeTextForBestFit=true;text.resizeTextMinSize=8;text.resizeTextMaxSize=22;text.raycastTarget=false;
@@ -327,6 +340,59 @@ namespace SlopCity
         }
         private void OnDisable() { if(input){ input.SetTouchMovement(Vector2.zero);input.RequestSprint(false); } }
         private void OnDestroy(){ if(disc){Destroy(disc.texture);Destroy(disc);} }
+    }
+
+    /// <summary>Rejects a button tap that began before a mobile layout changed.</summary>
+    public sealed class SlopCityTouchAction : MonoBehaviour, IPointerDownHandler, IPointerClickHandler
+    {
+        private SlopCityPlayerInput input;
+        private UnityAction action;
+        private Button button;
+        private int pointer = int.MinValue;
+        private uint layoutGeneration, gestureGeneration;
+        private bool suppressed;
+
+        public void Configure(SlopCityPlayerInput source, UnityAction value)
+        {
+            input = source;
+            action = value;
+            button = GetComponent<Button>();
+        }
+
+        public void SetLayoutGeneration(uint value)
+        {
+            layoutGeneration = value;
+            if (pointer != int.MinValue && gestureGeneration != layoutGeneration) Disarm();
+        }
+
+        public void SetSuppressed(bool value)
+        {
+            suppressed = value;
+            if (value) Disarm();
+        }
+
+        public void OnPointerDown(PointerEventData data)
+        {
+            Disarm();
+            if (data == null || suppressed || !input || !input.GameplayEnabled || !button || !button.interactable) return;
+            pointer = data.pointerId;
+            gestureGeneration = layoutGeneration;
+        }
+
+        public void OnPointerClick(PointerEventData data)
+        {
+            bool accepted = data != null && pointer == data.pointerId && !suppressed
+                && gestureGeneration == layoutGeneration && input && input.GameplayEnabled
+                && button && button.interactable;
+            Disarm();
+            if (accepted) action?.Invoke();
+        }
+
+        public void CancelGesture() { Disarm(); }
+        private void OnDisable() { Disarm(); }
+        private void OnApplicationFocus(bool focused) { if (!focused) Disarm(); }
+        private void OnApplicationPause(bool paused) { if (paused) Disarm(); }
+        private void Disarm() { pointer = int.MinValue; }
     }
 
     public sealed class SlopCityTouchHold : MonoBehaviour,IPointerDownHandler,IPointerUpHandler

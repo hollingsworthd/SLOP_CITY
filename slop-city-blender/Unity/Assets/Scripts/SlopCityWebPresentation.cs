@@ -11,6 +11,7 @@ namespace SlopCity
 #if UNITY_WEBGL && !UNITY_EDITOR
         [DllImport("__Internal")] private static extern int SlopCity_GetSceneRenderHeight();
         [DllImport("__Internal")] private static extern float SlopCity_GetDisplayPixelRatio();
+        [DllImport("__Internal")] private static extern int SlopCity_IsViewportTransition();
         [DllImport("__Internal")] private static extern void SlopCity_ReportPresentation(int displayWidth, int displayHeight, int worldWidth, int worldHeight, float pixelRatio);
 #endif
         private Camera worldCamera;
@@ -22,12 +23,18 @@ namespace SlopCity
         private int lastDisplayWidth, lastDisplayHeight, lastBudget = -1;
         private float lastPixelRatio;
         private float nextAllocation;
-        private const float DisplaySettleSeconds = .12f;
+        // WebKit can report several CSS/canvas geometries during one physical
+        // rotation. Keep its backing-store transaction separate from native
+        // render-target retirement instead of trying to replace both at once.
+        private const float DisplaySettleSeconds = .5f;
+        private const float ConstrainedRetirementSeconds = .5f;
+        private const int ConstrainedRetirementFrames = 2;
         private float displaySettleAt;
         private int settlingDisplayWidth, settlingDisplayHeight;
         private int settlingBudget = -1;
         private float settlingPixelRatio;
-        private int constrainedAllocationFrame = -1;
+        private float constrainedRecreateAt;
+        private int constrainedRecreateFrame = -1;
         private int fallbackHeight;
         private bool suspendedCamera;
         private bool allocationWarning;
@@ -56,6 +63,21 @@ namespace SlopCity
                 catch (DllNotFoundException) { return 1f; }
 #else
                 return 1f;
+#endif
+            }
+        }
+
+        /// <summary>True while the browser is changing its WebGL backing surface.</summary>
+        internal static bool IsViewportTransition
+        {
+            get
+            {
+#if UNITY_WEBGL && !UNITY_EDITOR
+                try { return SlopCity_IsViewportTransition() != 0; }
+                catch (EntryPointNotFoundException) { return false; }
+                catch (DllNotFoundException) { return false; }
+#else
+                return false;
 #endif
             }
         }
@@ -111,31 +133,37 @@ namespace SlopCity
         private void EnsureTarget(int displayWidth, int displayHeight, int budget, float pixelRatio)
         {
             if (!worldCamera || displayWidth <= 0 || displayHeight <= 0) return;
+            bool constrainedBrowser = UsesConstrainedBrowserMemoryPolicy();
+            // Retire before the shell changes its backing store, then leave a
+            // real GPU lifetime gap. A one-frame Destroy is not a release barrier
+            // on iOS/WebGL, especially while a decoder owns an upload surface.
+            if (constrainedBrowser && IsViewportTransition)
+            {
+                RetireConstrainedTarget();
+                return;
+            }
             bool displayChanged = displayWidth != lastDisplayWidth || displayHeight != lastDisplayHeight;
             bool targetKeyChanged = displayChanged || lastBudget != budget || !Mathf.Approximately(lastPixelRatio, pixelRatio);
-            bool constrainedBrowser = false;
-            if (targetKeyChanged && worldTexture && worldTexture.IsCreated())
+            if (targetKeyChanged && constrainedBrowser)
             {
-                constrainedBrowser = UsesConstrainedBrowserMemoryPolicy();
-                if (constrainedBrowser)
+                // The accepted target key remains in last* until a replacement
+                // is installed. Track every dimension of the candidate key so
+                // only the final browser geometry may trigger an allocation.
+                if (settlingDisplayWidth != displayWidth || settlingDisplayHeight != displayHeight
+                    || settlingBudget != budget || !Mathf.Approximately(settlingPixelRatio, pixelRatio))
                 {
-                    // The accepted target key remains in last* until a replacement
-                    // is installed. Track every dimension of the candidate key:
-                    // resetting this deadline every LateUpdate made rotation wait
-                    // forever, while omitting budget/DPR allowed an immediate swap.
-                    if (settlingDisplayWidth != displayWidth || settlingDisplayHeight != displayHeight
-                        || settlingBudget != budget || !Mathf.Approximately(settlingPixelRatio, pixelRatio))
-                    {
-                        settlingDisplayWidth = displayWidth;
-                        settlingDisplayHeight = displayHeight;
-                        settlingBudget = budget;
-                        settlingPixelRatio = pixelRatio;
-                        displaySettleAt = Time.unscaledTime + DisplaySettleSeconds;
-                    }
+                    settlingDisplayWidth = displayWidth;
+                    settlingDisplayHeight = displayHeight;
+                    settlingBudget = budget;
+                    settlingPixelRatio = pixelRatio;
+                    displaySettleAt = Time.unscaledTime + DisplaySettleSeconds;
+                }
+                if (worldTexture && worldTexture.IsCreated())
+                {
                     worldCamera.aspect = displayWidth / (float)displayHeight;
                     if (presentationCanvas) presentationCanvas.enabled = true;
-                    if (Time.unscaledTime < displaySettleAt) return;
                 }
+                if (Time.unscaledTime < displaySettleAt) return;
             }
             if (worldTexture && worldTexture.IsCreated() && presentationCanvas && worldImage && recoveryMessage && !suspendedCamera && lastDisplayWidth == displayWidth && lastDisplayHeight == displayHeight
                 && lastBudget == budget && Mathf.Approximately(lastPixelRatio, pixelRatio))
@@ -143,7 +171,8 @@ namespace SlopCity
                 if (presentationCanvas) presentationCanvas.enabled = true;
                 return;
             }
-            if (Time.unscaledTime < nextAllocation || Time.frameCount < constrainedAllocationFrame) return;
+            if (Time.unscaledTime < nextAllocation || Time.unscaledTime < constrainedRecreateAt
+                || Time.frameCount < constrainedRecreateFrame) return;
             int effectiveBudget = fallbackHeight > 0 ? (budget > 0 ? Mathf.Min(budget, fallbackHeight) : fallbackHeight) : budget;
             float scale = effectiveBudget > 0 ? Mathf.Min(1f, effectiveBudget / (float)displayHeight, effectiveBudget * (16f / 9f) / displayWidth) : 1f;
             int maximum = Mathf.Max(1, SystemInfo.maxTextureSize);
@@ -151,12 +180,10 @@ namespace SlopCity
             int width = Mathf.Max(1, Mathf.RoundToInt(displayWidth * scale));
             int height = Mathf.Max(1, Mathf.RoundToInt(displayHeight * scale));
             bool targetChanged = !worldTexture || !worldTexture.IsCreated() || worldTexture.width != width || worldTexture.height != height;
-            if (targetChanged && worldTexture && worldTexture.IsCreated()
-                && (constrainedBrowser || UsesConstrainedBrowserMemoryPolicy()))
+            if (targetChanged && worldTexture && worldTexture.IsCreated() && constrainedBrowser)
             {
-                // On touch WebGL, old and new color/depth surfaces can coexist
-                // long enough for the browser to evict the renderer. Retire the
-                // old target first, then allocate on the following frame.
+                // Do not allocate beside an old touch target. Retire it and wait
+                // for both deferred destruction and the browser's GPU queue.
                 RetireConstrainedTarget();
                 return;
             }
@@ -184,7 +211,8 @@ namespace SlopCity
                 settlingBudget = -1;
                 settlingPixelRatio = 0;
                 displaySettleAt = 0;
-                constrainedAllocationFrame = -1;
+                constrainedRecreateAt = 0;
+                constrainedRecreateFrame = -1;
                 allocationWarning = false;
                 if (candidate)
                 {
@@ -254,6 +282,11 @@ namespace SlopCity
         {
             RenderTexture previous = worldTexture;
             if (!previous) return;
+            if (worldCamera)
+            {
+                SlopCityCameraFinish finish = worldCamera.GetComponent<SlopCityCameraFinish>();
+                if (finish) finish.ReleaseBrowserTransientTargets();
+            }
             if (worldCamera && worldCamera.targetTexture == previous) worldCamera.targetTexture = null;
             if (worldCamera && worldCamera.enabled)
             {
@@ -269,7 +302,8 @@ namespace SlopCity
             if (presentationCanvas) presentationCanvas.enabled = true;
             worldTexture = null;
             DisposeTexture(previous);
-            constrainedAllocationFrame = Time.frameCount + 1;
+            constrainedRecreateAt = Mathf.Max(constrainedRecreateAt, Time.unscaledTime + ConstrainedRetirementSeconds);
+            constrainedRecreateFrame = Mathf.Max(constrainedRecreateFrame, Time.frameCount + ConstrainedRetirementFrames);
         }
 
         private static RenderTexture CreateTarget(int width, int height)
@@ -384,7 +418,8 @@ namespace SlopCity
                 settlingDisplayWidth = settlingDisplayHeight = 0;
                 settlingBudget = -1;
                 settlingPixelRatio = 0;
-                constrainedAllocationFrame = -1;
+                constrainedRecreateAt = 0;
+                constrainedRecreateFrame = -1;
                 try { if (worldImage) worldImage.texture = null; }
                 finally
                 {

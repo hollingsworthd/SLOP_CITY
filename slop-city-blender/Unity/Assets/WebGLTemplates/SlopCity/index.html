@@ -209,17 +209,28 @@
       }
     });
     var slopCityMemoryTierActive = false;
+    var slopCityMemoryTierPauseApplied = false;
     var slopCityTierTabHidden = false;
     var slopCityTierShellCovered = false;
     function slopCityMemoryTierShouldPause() {
       return slopCityTierTabHidden || slopCityTierShellCovered;
     }
     function slopCityApplyMemoryTierPause(active) {
-      if (graphicsLost || sessionFailed || slopCityMemoryTierActive === active) return;
+      if (graphicsLost || sessionFailed) return;
       slopCityMemoryTierActive = active;
+      // This bridge performs graphics-loss cleanup. It is not a reversible
+      // pause API, so an iframe becoming visible must never invoke it.
+      if (!active) {
+        slopCityMemoryTierPauseApplied = false;
+        return;
+      }
+      if (slopCityMemoryTierPauseApplied) return;
       var module = navigationModule || (unityInstance && unityInstance.Module);
       if (!module || !module.slopCityPauseVideoForGraphicsLoss) return;
-      try { module.slopCityPauseVideoForGraphicsLoss(); }
+      try {
+        module.slopCityPauseVideoForGraphicsLoss();
+        slopCityMemoryTierPauseApplied = true;
+      }
       catch (error) { console.warn("Memory-tier video pause failed.", error); }
     }
     function slopCitySyncMemoryTierPause() {
@@ -289,38 +300,67 @@
     let viewportSyncFrame = 0;
     let viewportSettleTimer = null;
     let settledViewportKey = "";
+    let viewportEpoch = 0;
+    let lastUsableViewport = null;
+    const viewportSettleMilliseconds = 500;
+    // Native code reads this through SlopCityPresentation.jslib before it
+    // retires render targets or copies a decoder frame.
+    window.slopCityViewportTransition = false;
 
     function readVisualViewport() {
       const viewport = window.visualViewport;
-      const width = viewport && Number.isFinite(viewport.width) ? viewport.width : window.innerWidth;
-      const height = viewport && Number.isFinite(viewport.height) ? viewport.height : window.innerHeight;
-      return { width: Math.max(1, width || 1), height: Math.max(1, height || 1) };
+      const fallbackWidth = Number(window.innerWidth);
+      const fallbackHeight = Number(window.innerHeight);
+      const rawWidth = viewport && Number.isFinite(viewport.width) ? viewport.width : fallbackWidth;
+      const rawHeight = viewport && Number.isFinite(viewport.height) ? viewport.height : fallbackHeight;
+      const width = rawWidth >= 64 ? rawWidth : fallbackWidth >= 64 ? fallbackWidth : 0;
+      const height = rawHeight >= 64 ? rawHeight : fallbackHeight >= 64 ? fallbackHeight : 0;
+      const usable = width >= 64 && height >= 64;
+      if (usable) lastUsableViewport = { width: width, height: height };
+      const retained = lastUsableViewport || { width: 1, height: 1 };
+      return { width: usable ? width : retained.width, height: usable ? height : retained.height, usable: usable };
     }
 
     function applyViewportGeometry() {
       viewportSyncFrame = 0;
       if (graphicsLost || sessionFailed) return;
       const viewport = readVisualViewport();
+      if (!viewport.usable) {
+        // Safari can briefly report a zero visual viewport mid-rotation. Never
+        // turn a live WebGL backing store into 1×1; the next resize will retry.
+        viewportSettleTimer = setTimeout(scheduleViewportGeometry, 50);
+        return;
+      }
+      const epoch = viewportEpoch;
       document.documentElement.style.setProperty("--slop-viewport-height", viewport.height + "px");
       document.documentElement.style.setProperty("--slop-viewport-width", viewport.width + "px");
       const key = Math.round(viewport.width) + "x" + Math.round(viewport.height);
       if (viewportSettleTimer !== null) clearTimeout(viewportSettleTimer);
       viewportSettleTimer = setTimeout(function () {
         viewportSettleTimer = null;
-        if (graphicsLost || sessionFailed) return;
+        if (graphicsLost || sessionFailed || epoch !== viewportEpoch) return;
         // Resize the WebGL backing once per settled viewport. Repeated canvas
         // resizing during rotation can lose the graphics context or spike memory.
         resizeGame();
-        if (key === settledViewportKey) return;
-        settledViewportKey = key;
-        // Consumers that own gesture state can reset once after rotation/chrome
-        // animation settles instead of interpreting every transient resize.
-        window.dispatchEvent(new CustomEvent("slopcityviewportsettled", { detail: viewport }));
-      }, 120);
+        requestAnimationFrame(function () {
+          requestAnimationFrame(function () {
+            if (graphicsLost || sessionFailed || epoch !== viewportEpoch) return;
+            window.slopCityViewportTransition = false;
+            if (key === settledViewportKey) return;
+            settledViewportKey = key;
+            // Consumers that own gesture state reset only after the final
+            // canvas resize, rather than on transient rotation dimensions.
+            window.dispatchEvent(new CustomEvent("slopcityviewportsettled", { detail: viewport }));
+          });
+        });
+      }, viewportSettleMilliseconds);
     }
 
     function scheduleViewportGeometry() {
-      if (graphicsLost || sessionFailed || viewportSyncFrame) return;
+      if (graphicsLost || sessionFailed) return;
+      viewportEpoch++;
+      window.slopCityViewportTransition = true;
+      if (viewportSyncFrame) return;
       viewportSyncFrame = requestAnimationFrame(applyViewportGeometry);
     }
 
@@ -449,6 +489,10 @@
     }
 
     function disposePageSession() {
+      // pagehide can fire again for a cached document. The first pass already
+      // owns the terminal decoder/network teardown; repeating it can re-enter
+      // plugin cleanup while WebKit is discarding the same frame.
+      if (navigationDisposed) return;
       const reason = new Error("City startup cancelled because this page was left.");
       abortOwnedDownloads(reason);
       disposeShellMediaHooks(reason);
@@ -494,6 +538,8 @@
     function resizeGame() {
       if (graphicsLost || sessionFailed) return;
       const bounds = canvas.getBoundingClientRect();
+      if (!bounds || !Number.isFinite(bounds.width) || !Number.isFinite(bounds.height)
+          || bounds.width < 64 || bounds.height < 64) return;
       const density = Number(window.devicePixelRatio);
       const ratio = Number.isFinite(density) && density > 0 ? Math.max(1, density) : 1;
       // UI is drawn at display resolution. Only the world camera uses the selected budget.
@@ -512,10 +558,10 @@
       window.slopCityDisplayPixelRatio = safeRatio;
       const width = Math.max(1, Math.floor(bounds.width * safeRatio));
       const height = Math.max(1, Math.floor(bounds.height * safeRatio));
-      if (canvas.width !== width || canvas.height !== height) {
-        canvas.width = width;
-        canvas.height = height;
-      }
+      // Each dimension write resets the WebGL drawing buffer. Avoid even a
+      // no-op companion write after a settled resize.
+      if (canvas.width !== width) canvas.width = width;
+      if (canvas.height !== height) canvas.height = height;
       canvas.dataset.displayResolution = width + "x" + height;
       canvas.dataset.pixelRatio = String(safeRatio);
     }
@@ -545,7 +591,7 @@
       };
     }
     watchDisplayDensity();
-    resolution.addEventListener("change", function () { resizeGame(); scheduleViewportGeometry(); canvas.focus(); });
+    resolution.addEventListener("change", function () { scheduleViewportGeometry(); canvas.focus(); });
     resizeGame();
     scheduleViewportGeometry();
     let lastPerformanceRoundedFps = null, lastPerformanceFrameTenths = null, lastPerformanceP95Tenths = null;
@@ -659,6 +705,7 @@
           disposeSessionModule(module);
           throw new Error("City startup cancelled because this session stopped.");
         }
+        slopCitySyncMemoryTierPause();
       },
       onRuntimeInitialized: function () {
         navigationModule = this;
@@ -668,6 +715,7 @@
           // the scene, even when the browser has already frozen queued work.
           throw new Error(navigationDisposed ? "City startup cancelled because this page was left." : "City startup cancelled because this session stopped.");
         }
+        slopCitySyncMemoryTierPause();
       },
       showBanner: showBanner,
       onAbort: function (reason) { fail("The city stopped. Reload to start a fresh session.", reason); },
@@ -766,7 +814,8 @@
           if (navigationDisposed || sessionFailed || graphicsLost) { disposeSessionModule(instance.Module); return; }
           if (startupWatch !== null) { clearInterval(startupWatch); startupWatch = null; }
           removeUnityLoaderScript();
-          resizeGame();
+          if (window.slopCityViewportTransition) scheduleViewportGeometry();
+          else resizeGame();
           gate.hidden = true;
           document.dispatchEvent(new CustomEvent("slopcityready"));
           fullscreen.disabled = !fullscreenAvailable;

@@ -20,7 +20,6 @@ namespace SlopCity
         private const float PrepareTimeoutSeconds = 25f;
         private static readonly AnimationCurve SpatialAudioRolloff = AnimationCurve.Linear(0f, 1f, 1f, 1f);
 #if UNITY_WEBGL && !UNITY_EDITOR
-        private const float MobileDecoderReleaseTimeoutSeconds = 2f;
         private const float MobileDecoderDrainSeconds = .25f;
 #endif
         private enum PlaybackState { Idle, Loading, Ready, Ended, Failed }
@@ -56,7 +55,6 @@ namespace SlopCity
         private bool webDecoderRetired;
         private bool webCityPriority;
         private bool webAwaitingAdmission;
-        private float webDecoderAdmitAt;
         private float webDecoderDrainAt;
         private float webIrrelevantSince = -1f;
         private float webPrepareSuspendedAt = -1f;
@@ -67,6 +65,7 @@ namespace SlopCity
         private int webPlaybackGeneration;
         private VideoPlayer.FrameReadyEventHandler webFrameReadyHandler;
         private static SlopCityMediaPlayer mobileDecoderOwner;
+        private static float mobileDecoderReleaseUntil;
         private bool MobileWebBudget
         {
             get
@@ -82,7 +81,8 @@ namespace SlopCity
             get
             {
 #if UNITY_WEBGL && !UNITY_EDITOR
-                return mobileDecoderOwner && (mobileDecoderOwner.player || mobileDecoderOwner.webAwaitingAdmission);
+                return Time.unscaledTime < mobileDecoderReleaseUntil
+                    || mobileDecoderOwner && (mobileDecoderOwner.player || mobileDecoderOwner.webAwaitingAdmission);
 #else
                 return false;
 #endif
@@ -179,15 +179,15 @@ namespace SlopCity
             }
             if (MobileWebBudget)
             {
+                bool cityDecoderStillLive = false;
                 if (SlopCityCityMedia.Instance)
-                    SlopCityCityMedia.Instance.ReleaseMobileDecodersForLounge();
+                    cityDecoderStillLive = SlopCityCityMedia.Instance.ReleaseMobileDecodersForLounge();
                 mobileDecoderOwner = this;
-                webDecoderDrainAt = Time.unscaledTime + MobileDecoderDrainSeconds;
+                if (cityDecoderStillLive) BeginMobileDecoderAdmissionWait();
                 if (!MobileDecoderAdmissionReady())
                 {
                     // Reserve the phone's sole slot until city/lounge Destroy
                     // completes, without constructing a second native decoder.
-                    webDecoderAdmitAt = Time.unscaledTime + MobileDecoderReleaseTimeoutSeconds;
                     webAwaitingAdmission = true;
                     return;
                 }
@@ -210,14 +210,14 @@ namespace SlopCity
 #if UNITY_WEBGL && !UNITY_EDITOR
             if (MobileWebBudget)
             {
+                bool cityDecoderStillLive = false;
                 if (SlopCityCityMedia.Instance)
-                    SlopCityCityMedia.Instance.ReleaseMobileDecodersForLounge();
+                    cityDecoderStillLive = SlopCityCityMedia.Instance.ReleaseMobileDecodersForLounge();
+                if (cityDecoderStillLive) BeginMobileDecoderAdmissionWait();
                 if (!MobileDecoderAdmissionReady())
                 {
                     // A previously refused city Destroy may still own the one phone
                     // decoder. Retry it and wait for actual retirement.
-                    if (!webAwaitingAdmission)
-                        webDecoderAdmitAt = Time.unscaledTime + MobileDecoderReleaseTimeoutSeconds;
                     webAwaitingAdmission = true;
                     return;
                 }
@@ -526,7 +526,7 @@ namespace SlopCity
         private void PumpWebVideoPicture()
         {
             if (!MobileWebBudget || !wantsPlayback || IsSuspended || state != PlaybackState.Ready
-                || !player || releasingPlayback || webFrameReadyHandler == null || webPumpingPicture
+                || SlopCityWebPresentation.IsViewportTransition || !player || releasingPlayback || webFrameReadyHandler == null || webPumpingPicture
                 || webPicturePumpFrame == Time.frameCount) return;
             VideoPlayer source = player;
             RenderTexture target = screenTexture;
@@ -609,10 +609,15 @@ namespace SlopCity
 
         private bool MobileDecoderAdmissionReady()
         {
-            if (webAwaitingAdmission && Time.unscaledTime >= webDecoderAdmitAt) return true;
             if (CityMobileDecoderLive() || LoungeMobileDecoderRetiring()) return false;
             // The city player object can drop before the phone's one decoder element is empty.
-            return webDecoderDrainAt <= 0f || Time.unscaledTime >= webDecoderDrainAt;
+            return (webDecoderDrainAt <= 0f || Time.unscaledTime >= webDecoderDrainAt)
+                && Time.unscaledTime >= mobileDecoderReleaseUntil;
+        }
+
+        private void BeginMobileDecoderAdmissionWait()
+        {
+            webDecoderDrainAt = Mathf.Max(webDecoderDrainAt, Time.unscaledTime + MobileDecoderDrainSeconds);
         }
 
         private void RefreshMobileDecoderOwnership()
@@ -830,6 +835,8 @@ namespace SlopCity
         private void ReleasePlaybackResources()
         {
 #if UNITY_WEBGL && !UNITY_EDITOR
+            if (MobileWebBudget && (player || playbackObject))
+                mobileDecoderReleaseUntil = Mathf.Max(mobileDecoderReleaseUntil, Time.unscaledTime + MobileDecoderDrainSeconds);
             webPlaybackGeneration++;
             webAwaitingFirstPicture = false;
             webPublishedFrameSerial = webCopiedFrameSerial = 0;
@@ -864,7 +871,6 @@ namespace SlopCity
             if (!retired && retiredObject)
             {
 #if UNITY_WEBGL && !UNITY_EDITOR
-                if (mobileDecoderOwner == this) mobileDecoderOwner = null;
                 webAwaitingAdmission = false;
 #endif
                 return;

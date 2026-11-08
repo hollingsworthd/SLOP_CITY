@@ -1961,7 +1961,7 @@ namespace SlopCity
 #if UNITY_WEBGL && !UNITY_EDITOR
         private void PumpWebVideoPictures()
         {
-            if (!MobileWebBudget || Suspended || manuallyPaused) return;
+            if (!MobileWebBudget || Suspended || manuallyPaused || SlopCityWebPresentation.IsViewportTransition) return;
             foreach (Channel signal in channels)
             {
                 if (signal == null || !signal.ready || signal.loading || signal.resolving || signal.advance
