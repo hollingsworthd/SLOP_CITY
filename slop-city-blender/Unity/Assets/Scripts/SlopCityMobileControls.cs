@@ -21,6 +21,12 @@ namespace SlopCity
         private float lastPixelRatio, lastLayoutScaleFactor, nextSalvageCheck, geometrySettleAt;
         private bool layoutApplied, geometrySettlePending;
         private uint layoutGeneration = 1;
+#if UNITY_WEBGL && !UNITY_EDITOR
+        // Keep controls on their last known-good Canvas geometry while WebKit
+        // replaces the canvas backing store. The HUD follows the same rule;
+        // controls also update independently, so they need their own gate.
+        private bool viewportTransitionActive;
+#endif
 
         // HUD can ask after its scaler changes, but it must not evict a just-started
         // two-thumb gesture when the effective geometry did not change.
@@ -133,12 +139,26 @@ namespace SlopCity
 
         private void TryLayout(bool force)
         {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            if (HoldLastLayoutForViewportTransition()) return;
+            // The first stable tick after a browser transition must lay out once,
+            // even if its dimensions happen to fall within the normal slop.
+            bool settledViewportTransition = viewportTransitionActive;
+            if (settledViewportTransition)
+            {
+                viewportTransitionActive = false;
+                geometrySettlePending = true;
+                geometrySettleAt = Time.unscaledTime + GeometrySettleSeconds;
+            }
+#else
+            const bool settledViewportTransition = false;
+#endif
             int width = Screen.width, height = Screen.height;
             Rect safeArea = Screen.safeArea;
             float pixelRatio = SlopCityWebPresentation.DisplayPixelRatio;
             if (width <= 0 || height <= 0) return;
             bool changed = !layoutApplied || ViewportChanged(width, height, safeArea, pixelRatio);
-            if (changed || force)
+            if (changed || force || settledViewportTransition)
             {
                 // Apply each intermediate browser geometry immediately, but do not
                 // throw away held controls until the visual viewport has stopped
@@ -146,7 +166,10 @@ namespace SlopCity
                 // while rotating or dismissing their chrome.
                 bool hadLayout = layoutApplied;
                 LayoutForViewport(width, height, safeArea, pixelRatio);
-                if (hadLayout && changed)
+                // Entering the browser transition already invalidated every
+                // pre-transition gesture. Do not repeatedly advance generation
+                // while installing its one settled replacement layout.
+                if (hadLayout && changed && !settledViewportTransition)
                 {
                     unchecked { layoutGeneration++; if (layoutGeneration == 0) layoutGeneration = 1; }
                     geometrySettlePending = true;
@@ -162,6 +185,32 @@ namespace SlopCity
                 CancelHeldGestures();
             }
         }
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+        /// <summary>Defers every control relayout until the browser canvas has a stable geometry.</summary>
+        private bool HoldLastLayoutForViewportTransition()
+        {
+            if (!input || !input.UseTouchControls || !SlopCityWebPresentation.IsViewportTransition) return false;
+            // Re-enabling the HUD starts a fresh layout pass and clears its settle
+            // marker. Treat that as a new hold even if the old transition flag was
+            // retained while the GameObject was inactive.
+            if (!viewportTransitionActive || !geometrySettlePending)
+            {
+                viewportTransitionActive = true;
+                unchecked { layoutGeneration++; if (layoutGeneration == 0) layoutGeneration = 1; }
+                geometrySettlePending = true;
+                ApplyTouchLayoutGeneration();
+                // Button actions are suppressed by the generation update; clear
+                // continuous owners now rather than allowing stale coordinates to
+                // move, look, or sprint while the canvas is changing.
+                CancelHeldGestures();
+            }
+            // A transition may emit several resize events. Keep actions suppressed
+            // until a short interval after its final stable geometry is installed.
+            geometrySettleAt = Time.unscaledTime + GeometrySettleSeconds;
+            return true;
+        }
+#endif
 
         private bool ViewportChanged(int width, int height, Rect safeArea, float pixelRatio)
         {

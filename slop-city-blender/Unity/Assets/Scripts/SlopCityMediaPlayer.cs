@@ -179,10 +179,18 @@ namespace SlopCity
             }
             if (MobileWebBudget)
             {
+                // Retain the requested lounge channel, but do not ask the city
+                // to retire its decoder or construct a television surface while
+                // the browser is replacing its canvas backing store.
+                mobileDecoderOwner = this;
+                if (SlopCityWebPresentation.IsViewportTransition)
+                {
+                    webAwaitingAdmission = true;
+                    return;
+                }
                 bool cityDecoderStillLive = false;
                 if (SlopCityCityMedia.Instance)
                     cityDecoderStillLive = SlopCityCityMedia.Instance.ReleaseMobileDecodersForLounge();
-                mobileDecoderOwner = this;
                 if (cityDecoderStillLive) BeginMobileDecoderAdmissionWait();
                 if (!MobileDecoderAdmissionReady())
                 {
@@ -210,6 +218,15 @@ namespace SlopCity
 #if UNITY_WEBGL && !UNITY_EDITOR
             if (MobileWebBudget)
             {
+                // No native display or decoder admission may overlap the
+                // launcher's canvas-backing transaction. Update will retry the
+                // retained channel when the final viewport is stable.
+                if (SlopCityWebPresentation.IsViewportTransition)
+                {
+                    mobileDecoderOwner = this;
+                    webAwaitingAdmission = true;
+                    return;
+                }
                 bool cityDecoderStillLive = false;
                 if (SlopCityCityMedia.Instance)
                     cityDecoderStillLive = SlopCityCityMedia.Instance.ReleaseMobileDecodersForLounge();
@@ -573,7 +590,8 @@ namespace SlopCity
             finally { webPumpingPicture = false; }
         }
 
-        private bool MobilePreparationSuspended => !wantsPlayback || menuSuspended || focusSuspended || applicationSuspended;
+        private bool MobilePreparationSuspended => !wantsPlayback || menuSuspended || focusSuspended || applicationSuspended
+            || SlopCityWebPresentation.IsViewportTransition;
 
         private void RefreshMobilePreparationClock()
         {
@@ -623,6 +641,9 @@ namespace SlopCity
         private void RefreshMobileDecoderOwnership()
         {
             if (!MobileWebBudget || !HasSelection) return;
+            // Keep the pending intent and all currently-owned native surfaces
+            // unchanged until the browser has completed its canvas transaction.
+            if (SlopCityWebPresentation.IsViewportTransition) return;
             if (webCityPriority) return;
             if (webAwaitingAdmission)
             {

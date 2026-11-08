@@ -228,6 +228,32 @@ def verify_pause_and_decode_budgets(city, catalog, mono, work):
     run_csharp_fixture(mono, compiler, work, 'DecodeBudgets', budget_source)
 
 
+def verify_webgl_rotation_guards(lifecycle, texture):
+    retire = lifecycle[lifecycle.index('$slopCityRetireVideoDecoder:'):lifecycle.index('$slopCityCanReuseVideoElement:')]
+    assert '&& !video.currentSrc && video.readyState === 0;' in retire
+    assert '(!video.currentSrc || video.slopCityDestroyed)' not in retire
+    assert '(video.readyState === 0 || video.slopCitySourceClearRequested)' not in retire
+
+    drain = lifecycle[lifecycle.index('$slopCityDrainRetiredVideoDecoders:'):lifecycle.index('$slopCityDisposeOwnedVideoDecoders:')]
+    assert 'window.slopCityViewportTransition === true' in drain
+    assert 'retiredMobileDecoder' not in drain
+    assert 'textureRetired' not in drain
+
+    create_start = lifecycle.index('  JS_Video_Create__proxy:')
+    create = lifecycle[create_start:lifecycle.index('  JS_Video_Destroy__proxy:', create_start)]
+    assert '$slopCityRetiredVideoDecoders' in create
+    assert 'retiredMobileDecoder' in create
+    assert 'Date.now() - admissionStartedAt >= 30000' in create
+    assert 'window.slopCityViewportTransition === true' in create
+
+    failed_textures = texture[texture.index('$slopCityDrainFailedVideoTextures:'):texture.index('$slopCityArmFailedVideoTextureDrain:')]
+    pending_graphics = texture[texture.index('$slopCityDrainPendingVideoGraphics:'):texture.index('$slopCityPrepareLinearVideo:')]
+    queue_failed = texture[texture.index('$slopCityQueueFailedVideoTexture:'):texture.index('$jsVideoCreateTexture2D:')]
+    assert 'window.slopCityViewportTransition === true' in failed_textures
+    assert 'window.slopCityViewportTransition === true' in pending_graphics
+    assert 'window.slopCityViewportTransition === true' in queue_failed
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--media-source', type=Path, default=ROOT / 'Unity/Assets/Scripts/SlopCityMediaPlayer.cs')
@@ -236,6 +262,9 @@ def main():
     parser.add_argument('--expect-failure', help='Require a baseline failure containing this exact text.')
     args = parser.parse_args()
     city = args.city_source.read_text()
+    verify_webgl_rotation_guards(
+        (ROOT / 'Unity/Assets/Plugins/WebGL/SlopCityVideoLifecycle.jslib').read_text(),
+        (ROOT / 'Unity/Assets/Plugins/WebGL/SlopCityVideoTexture.jslib').read_text())
     assert city.index('RefreshMobileLoungePriority(strongest != null && strongest.aimed') < city.index('int decoderBudget = MobileWebBudget'), 'Aim priority must precede slot budget'
     methods = '\n'.join(extract_method(city, signature) for signature in (
         '        private void RefreshMobileLoungePriority(',

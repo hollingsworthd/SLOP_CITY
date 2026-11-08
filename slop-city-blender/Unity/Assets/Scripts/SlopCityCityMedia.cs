@@ -1449,18 +1449,18 @@ namespace SlopCity
                         yield return null;
                     }
                     if (!display.screen || generation != display.generation || request.result != UnityWebRequest.Result.Success) yield break;
-                    try
+                    byte[] bytes = request.downloadHandler.data;
+                    if (SlopCityMediaTransfer.ImageSizeIsSafe(bytes, out _, out _))
                     {
-                        byte[] bytes = request.downloadHandler.data;
-                        if (SlopCityMediaTransfer.ImageSizeIsSafe(bytes, out _, out _))
-                        {
 #if UNITY_WEBGL && !UNITY_EDITOR
-                            while (DeferMobileAdmissionsForViewport)
-                            {
-                                if (!display.screen || generation != display.generation) yield break;
-                                yield return null;
-                            }
+                        while (DeferMobileAdmissionsForViewport)
+                        {
+                            if (!display.screen || generation != display.generation) yield break;
+                            yield return null;
+                        }
 #endif
+                        try
+                        {
                             thumbnail = new Texture2D(2, 2, TextureFormat.RGBA32, false);
                             if (thumbnail.LoadImage(bytes, true) && (display.slot == null || !display.slot.ready
 #if UNITY_WEBGL && !UNITY_EDITOR
@@ -1469,8 +1469,8 @@ namespace SlopCity
                                 ))
                                 DrawImage(thumbnail, display.texture);
                         }
+                        catch (Exception error) { Debug.LogWarning("City thumbnail unavailable: " + error.GetType().Name, this); }
                     }
-                    catch (Exception error) { Debug.LogWarning("City thumbnail unavailable: " + error.GetType().Name, this); }
                 }
             }
             finally
@@ -1812,13 +1812,11 @@ namespace SlopCity
                         }
                     if (operation != signal.operation || !signal.slideshow) yield break;
                     bool accepted = false;
-                    try
+                    if (transfer != null && request.result == UnityWebRequest.Result.Success)
                     {
-                        if (transfer != null && request.result == UnityWebRequest.Result.Success)
+                        byte[] bytes = request.downloadHandler.data;
+                        if (SlopCityMediaTransfer.ImageSizeIsSafe(bytes, out _, out _))
                         {
-                            byte[] bytes = request.downloadHandler.data;
-                            if (SlopCityMediaTransfer.ImageSizeIsSafe(bytes, out _, out _))
-                            {
 #if UNITY_WEBGL && !UNITY_EDITOR
                             while (DeferMobileAdmissionsForViewport)
                             {
@@ -1826,13 +1824,15 @@ namespace SlopCity
                                 yield return null;
                             }
 #endif
+                            try
+                            {
                                 photo = new Texture2D(2, 2, TextureFormat.RGBA32, false);
                                 accepted = photo.LoadImage(bytes, true);
                                 if (accepted) DrawImage(photo, signal.texture);
                             }
+                            catch (Exception error) { accepted = false; Debug.LogWarning("City photo unavailable: " + error.GetType().Name, this); }
                         }
                     }
-                    catch (Exception error) { accepted = false; Debug.LogWarning("City photo unavailable: " + error.GetType().Name, this); }
                     if (!accepted) { FailChannel(signal, "Photo could not be decoded safely."); yield break; }
                     // The device RenderTexture now owns the displayed picture. Keep
                     // no second full-resolution GPU image between slideshow frames.

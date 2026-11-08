@@ -71,6 +71,11 @@ mergeInto(LibraryManager.library, {
   $slopCityDrainFailedVideoTextures__deps: ['$slopCityFailedVideoTextures', '$slopCityVideoTextureRetirementBlocked'],
   $slopCityDrainFailedVideoTextures: function (budgetMs) {
     if (typeof budgetMs !== 'number') budgetMs = 8;
+    // Canvas backing replacement and native texture deletion race on mobile
+    // WebKit. Retain queued owners through the settled viewport tick instead
+    // of treating a resize as authority to mutate the old GL surface.
+    if (typeof window !== 'undefined' && window.slopCityViewportTransition === true)
+      return slopCityFailedVideoTextures.length === 0;
     if (typeof GLctx === 'undefined' || !GLctx || (GLctx.isContextLost && GLctx.isContextLost())) return false;
     var deadline = Date.now() + budgetMs;
     var attempts = 0;
@@ -108,6 +113,10 @@ mergeInto(LibraryManager.library, {
     // Do not grow an unreachable retry list forever. A full queue stops new
     // allocations until retirement catches up; a direct deletion still wins.
     try {
+      if (typeof window !== 'undefined' && window.slopCityViewportTransition === true) {
+        slopCityVideoTextureRetirementBlocked = true;
+        return false;
+      }
       if (typeof GLctx !== 'undefined' && GLctx && !GLctx.isContextLost()) {
         GLctx.deleteTexture(texture);
         return true;
@@ -150,6 +159,11 @@ mergeInto(LibraryManager.library, {
   $slopCityPendingVideoGraphics: [],
   $slopCityDrainPendingVideoGraphics__deps: ['$slopCityPendingVideoGraphics'],
   $slopCityDrainPendingVideoGraphics: function () {
+    // These are the same GL-owning cleanup objects as the texture queue above.
+    // Never release a shader, buffer, FBO or VAO while the launcher is
+    // replacing the canvas backing surface during orientation.
+    if (typeof window !== 'undefined' && window.slopCityViewportTransition === true)
+      return slopCityPendingVideoGraphics.length === 0;
     var methods = { vertex: 'deleteShader', fragment: 'deleteShader', program: 'deleteProgram',
       buffer: 'deleteBuffer', framebuffer: 'deleteFramebuffer', vertexArray: 'deleteVertexArray' };
     for (var i = slopCityPendingVideoGraphics.length - 1; i >= 0; --i) {

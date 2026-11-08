@@ -114,15 +114,14 @@ mergeInto(LibraryManager.library, {
       if (!video.slopCitySourceClearRequested) { video.load(); video.slopCitySourceClearRequested = true; }
     });
     if (!video.slopCityRetiredAt) video.slopCityRetiredAt = Date.now();
-    // load() is asynchronous. No replacement source is admitted until its old
-    // resource selection is observably empty, even after native Destroy returns.
+    // load() is asynchronous. `slopCityDestroyed` and a requested load only
+    // describe our intent; neither proves WebKit released the old decoder.
+    // Keep this exact owner in the retirement fence until resource selection is
+    // observably empty, so a new mobile source can never overlap it.
     try {
-      if (complete && video.paused && !video.getAttribute('src')
-        && (!video.currentSrc || video.slopCityDestroyed) && (video.readyState === 0 || video.slopCitySourceClearRequested))
-        return true;
-    } catch (_) {}
-    try { return complete && video.paused && !video.getAttribute('src') && !video.currentSrc && video.readyState === 0; }
-    catch (_) { return false; }
+      return complete && video.paused && !video.getAttribute('src')
+        && !video.currentSrc && video.readyState === 0;
+    } catch (_) { return false; }
   },
 
   $slopCityCanReuseVideoElement: function (video) {
@@ -170,15 +169,10 @@ mergeInto(LibraryManager.library, {
       video.slopCityRetireAttempts = (video.slopCityRetireAttempts || 0) + 1;
       if (!slopCityRetireVideoDecoder(id, video)) {
         if (video.slopCityRetireAttempts >= 120) {
-          // A full failed-texture queue is backpressure, not authority to
-          // discard the decoder's final owner. Keep this bounded active
-          // decoder in the drain until the texture can be transferred.
-          var textureRetired = false;
-          try { textureRetired = slopCityReleaseVideoTexture(video) === true; } catch (_) {}
-          if (textureRetired) {
-            try { if (video.parentNode) video.parentNode.removeChild(video); } catch (_) {}
-            delete slopCityRetiredVideoDecoders[id];
-          }
+          // Thirty seconds is the admission deadline for a replacement, not
+          // permission to forget this still-live decoder. Retain the owner and
+          // keep retrying cleanup; new mobile requests fail boundedly instead
+          // of starting a second native WebKit decoder beside it.
         }
         return;
       }
