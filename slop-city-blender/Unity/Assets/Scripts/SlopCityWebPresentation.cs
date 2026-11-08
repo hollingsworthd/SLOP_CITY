@@ -24,6 +24,10 @@ namespace SlopCity
         private float nextAllocation;
         private const float DisplaySettleSeconds = .12f;
         private float displaySettleAt;
+        private int settlingDisplayWidth, settlingDisplayHeight;
+        private int settlingBudget = -1;
+        private float settlingPixelRatio;
+        private int constrainedAllocationFrame = -1;
         private int fallbackHeight;
         private bool suspendedCamera;
         private bool allocationWarning;
@@ -108,14 +112,30 @@ namespace SlopCity
         {
             if (!worldCamera || displayWidth <= 0 || displayHeight <= 0) return;
             bool displayChanged = displayWidth != lastDisplayWidth || displayHeight != lastDisplayHeight;
-            if (displayChanged && worldTexture && worldTexture.IsCreated())
+            bool targetKeyChanged = displayChanged || lastBudget != budget || !Mathf.Approximately(lastPixelRatio, pixelRatio);
+            bool constrainedBrowser = false;
+            if (targetKeyChanged && worldTexture && worldTexture.IsCreated())
             {
-                displaySettleAt = Time.unscaledTime + DisplaySettleSeconds;
-                worldCamera.aspect = displayWidth / (float)displayHeight;
-                if (presentationCanvas) presentationCanvas.enabled = true;
-                if (Time.unscaledTime < displaySettleAt && lastBudget == budget
-                    && Mathf.Approximately(lastPixelRatio, pixelRatio))
-                    return;
+                constrainedBrowser = UsesConstrainedBrowserMemoryPolicy();
+                if (constrainedBrowser)
+                {
+                    // The accepted target key remains in last* until a replacement
+                    // is installed. Track every dimension of the candidate key:
+                    // resetting this deadline every LateUpdate made rotation wait
+                    // forever, while omitting budget/DPR allowed an immediate swap.
+                    if (settlingDisplayWidth != displayWidth || settlingDisplayHeight != displayHeight
+                        || settlingBudget != budget || !Mathf.Approximately(settlingPixelRatio, pixelRatio))
+                    {
+                        settlingDisplayWidth = displayWidth;
+                        settlingDisplayHeight = displayHeight;
+                        settlingBudget = budget;
+                        settlingPixelRatio = pixelRatio;
+                        displaySettleAt = Time.unscaledTime + DisplaySettleSeconds;
+                    }
+                    worldCamera.aspect = displayWidth / (float)displayHeight;
+                    if (presentationCanvas) presentationCanvas.enabled = true;
+                    if (Time.unscaledTime < displaySettleAt) return;
+                }
             }
             if (worldTexture && worldTexture.IsCreated() && presentationCanvas && worldImage && recoveryMessage && !suspendedCamera && lastDisplayWidth == displayWidth && lastDisplayHeight == displayHeight
                 && lastBudget == budget && Mathf.Approximately(lastPixelRatio, pixelRatio))
@@ -123,17 +143,27 @@ namespace SlopCity
                 if (presentationCanvas) presentationCanvas.enabled = true;
                 return;
             }
-            if (Time.unscaledTime < nextAllocation) return;
+            if (Time.unscaledTime < nextAllocation || Time.frameCount < constrainedAllocationFrame) return;
             int effectiveBudget = fallbackHeight > 0 ? (budget > 0 ? Mathf.Min(budget, fallbackHeight) : fallbackHeight) : budget;
             float scale = effectiveBudget > 0 ? Mathf.Min(1f, effectiveBudget / (float)displayHeight, effectiveBudget * (16f / 9f) / displayWidth) : 1f;
             int maximum = Mathf.Max(1, SystemInfo.maxTextureSize);
             scale = Mathf.Min(scale, maximum / (float)displayWidth, maximum / (float)displayHeight);
             int width = Mathf.Max(1, Mathf.RoundToInt(displayWidth * scale));
             int height = Mathf.Max(1, Mathf.RoundToInt(displayHeight * scale));
+            bool targetChanged = !worldTexture || !worldTexture.IsCreated() || worldTexture.width != width || worldTexture.height != height;
+            if (targetChanged && worldTexture && worldTexture.IsCreated()
+                && (constrainedBrowser || UsesConstrainedBrowserMemoryPolicy()))
+            {
+                // On touch WebGL, old and new color/depth surfaces can coexist
+                // long enough for the browser to evict the renderer. Retire the
+                // old target first, then allocate on the following frame.
+                RetireConstrainedTarget();
+                return;
+            }
             RenderTexture candidate = null;
             try
             {
-                if (!worldTexture || !worldTexture.IsCreated() || worldTexture.width != width || worldTexture.height != height)
+                if (targetChanged)
                 {
                     candidate = CreateTarget(width, height);
                 }
@@ -150,6 +180,11 @@ namespace SlopCity
                 lastDisplayHeight = displayHeight;
                 lastBudget = budget;
                 lastPixelRatio = pixelRatio;
+                settlingDisplayWidth = settlingDisplayHeight = 0;
+                settlingBudget = -1;
+                settlingPixelRatio = 0;
+                displaySettleAt = 0;
+                constrainedAllocationFrame = -1;
                 allocationWarning = false;
                 if (candidate)
                 {
@@ -203,6 +238,38 @@ namespace SlopCity
             catch (EntryPointNotFoundException) { }
             catch (DllNotFoundException) { }
 #endif
+        }
+
+        private static bool UsesConstrainedBrowserMemoryPolicy()
+        {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            var input = UnityEngine.Object.FindFirstObjectByType<SlopCityPlayerInput>();
+            return SlopCityPlayerInput.BrowserUsesMobileMediaBudget(input);
+#else
+            return false;
+#endif
+        }
+
+        private void RetireConstrainedTarget()
+        {
+            RenderTexture previous = worldTexture;
+            if (!previous) return;
+            if (worldCamera && worldCamera.targetTexture == previous) worldCamera.targetTexture = null;
+            if (worldCamera && worldCamera.enabled)
+            {
+                worldCamera.enabled = false;
+                suspendedCamera = true;
+            }
+            if (worldImage)
+            {
+                worldImage.texture = null;
+                worldImage.color = Color.black;
+            }
+            if (recoveryMessage) recoveryMessage.enabled = false;
+            if (presentationCanvas) presentationCanvas.enabled = true;
+            worldTexture = null;
+            DisposeTexture(previous);
+            constrainedAllocationFrame = Time.frameCount + 1;
         }
 
         private static RenderTexture CreateTarget(int width, int height)
@@ -314,6 +381,10 @@ namespace SlopCity
                 lastBudget = -1;
                 nextAllocation = 0;
                 displaySettleAt = 0;
+                settlingDisplayWidth = settlingDisplayHeight = 0;
+                settlingBudget = -1;
+                settlingPixelRatio = 0;
+                constrainedAllocationFrame = -1;
                 try { if (worldImage) worldImage.texture = null; }
                 finally
                 {

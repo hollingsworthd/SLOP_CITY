@@ -22,13 +22,18 @@ namespace SlopCity.Editor
             if(!Application.isBatchMode||EditorApplication.isPlayingOrWillChangePlaymode||Application.companyName!="SlopCityValidation-v0116")throw new InvalidOperationException("Isolated SlopCityValidation-v0116 batch Edit Mode required.");
             report=new Receipt{startedAtUtc=DateTime.UtcNow.ToString("O"),unityVersion=Application.unityVersion};float scale=Time.timeScale;
             Application.logMessageReceived+=Log;
-            try{Case(844,220);Case(390,744);Case(844,290);}
+            try
+            {
+                Case(844,220,new Rect(0,0,844,220));
+                Case(390,744,new Rect(16,36,358,672));
+                Case(844,290,new Rect(20,12,804,266));
+            }
             catch(Exception error){report.errors.Add(error.ToString());}
             finally{EditorSceneManager.NewScene(NewSceneSetup.EmptyScene,NewSceneMode.Single);Time.timeScale=scale;Application.logMessageReceived-=Log;}
             report.passed=report.errors.Count==0&&report.runtimeErrors.Count==0;report.finishedAtUtc=DateTime.UtcNow.ToString("O");
             string path=Path.Combine(Directory.GetParent(Application.dataPath).FullName,"Builds/Reports/short-viewport-check.json");Directory.CreateDirectory(Path.GetDirectoryName(path));File.WriteAllText(path,JsonUtility.ToJson(report,true));Debug.Log("SLOP_CITY_SHORT_VIEWPORT_"+(report.passed?"PASSED":"FAILED")+" "+report.checks+" checks");EditorApplication.Exit(report.passed?0:1);
         }
-        private static void Case(int width,int height)
+        private static void Case(int width,int height,Rect safeArea)
         {
             EditorSceneManager.NewScene(NewSceneSetup.EmptyScene,NewSceneMode.Single);
             var root=new GameObject("Controlled_Viewport_"+width+"x"+height);var camera=new GameObject("FixtureCamera").AddComponent<Camera>();camera.transform.SetParent(root.transform);camera.transform.position=new Vector3(0,0,-10);camera.orthographic=true;camera.orthographicSize=height*.5f;
@@ -39,18 +44,16 @@ namespace SlopCity.Editor
                 var events=new GameObject("FixtureEventSystem",typeof(EventSystem),typeof(StandaloneInputModule));events.transform.SetParent(root.transform);if(!EventSystem.current)Invoke(events.GetComponent<EventSystem>(),"OnEnable");
                 actor=new GameObject("Disabled_Player");actor.transform.SetParent(root.transform);var player=actor.AddComponent<SlopCityFirstPerson>();player.enabled=false;var input=actor.GetComponent<SlopCityPlayerInput>();if(!input)input=actor.AddComponent<SlopCityPlayerInput>();Set(player,"playerInput",input);Set(input,"forceTouchControlsForTesting",true);input.SetGameplayEnabled(true);
                 var canvas=Canvas("ControlledMobileCanvas",root.transform,camera);controls=SlopCityMobileControls.Create(canvas.transform,input,Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf")).GetComponent<SlopCityMobileControls>();
-                Invoke(controls,"LayoutForViewport",width,height,new Rect(0,0,width,height),1f);UnityEngine.Canvas.ForceUpdateCanvases();
+                Invoke(controls,"LayoutForViewport",width,height,safeArea,1f);UnityEngine.Canvas.ForceUpdateCanvases();
                 Check(Mathf.Abs(((RectTransform)canvas.transform).rect.width-width)<.1f&&Mathf.Abs(((RectTransform)canvas.transform).rect.height-height)<.1f,"Real camera-targeted mobile Canvas has exact requested dimensions.");
-                var buttons=controls.GetComponentsInChildren<Button>();Check(buttons.Length==10,"Production MobileControls creates all ten owned actions.");Layout(buttons,camera,width,height);
+                var buttons=controls.GetComponentsInChildren<Button>();Check(buttons.Length==10,"Production MobileControls creates all ten owned actions.");Layout(buttons,camera,width,height,safeArea);ActionPad(buttons,camera,safeArea);
                 foreach(string name in new[]{"TouchClean","TouchTake","TouchBag"})
                 {
                     Button button=buttons.First(b=>b.name==name);Click(button,camera);bool queued=name=="TouchClean"?input.ConsumeClean():name=="TouchTake"?input.ConsumePickup():input.ConsumeInventory();Check(queued,"Real GraphicRaycaster/pointer dispatch queues "+name+" exactly once.");
                 }
-                float buttonSize=Mathf.Clamp(Mathf.Min(width,height)*.16f,54,88),gap=buttonSize*.18f,margin=buttonSize*.24f;
                 var take=buttons.First(b=>b.name=="TouchTake").GetComponent<RectTransform>();var bag=buttons.First(b=>b.name=="TouchBag").GetComponent<RectTransform>();
                 bool compact=width>height&&height<260;
-                Check(Mathf.Abs(take.anchoredPosition.x-(-margin-buttonSize*2.5f-gap*2))<.1f,"TAKE stays in the third column in every orientation.");
-                Check(Mathf.Abs(bag.anchoredPosition.y-(margin+buttonSize*.5f))<.1f,"BAG stays in the lower row in every orientation.");
+                Check(take.anchoredPosition.x<0f&&bag.anchoredPosition.y>0f,"TAKE and BAG retain right/bottom action-pad anchors.");
                 canvas.gameObject.SetActive(false);
                 var sandbox=actor.AddComponent<SlopCitySandbox>();for(int i=0;i<9;i++)Check((bool)Invoke(sandbox,"InventoryAdd","layout/"+i,"Recovered layout object "+i,"fixture",1,8,i%5),"Bounded in-memory layout row fits inventory.");
                 SlopCitySalvageHud.Ensure(player,sandbox,input,camera);var hud=actor.GetComponent<SlopCitySalvageHud>();var inventoryCanvas=actor.GetComponentsInChildren<UnityEngine.Canvas>(true).Single();Target(inventoryCanvas,camera);
@@ -60,7 +63,7 @@ namespace SlopCity.Editor
                 Text summary=Get<Text>(hud,"summary");Check(compact?!summary.text.Contains("\n"):summary.text.Contains("\n"),"Only short landscape compacts the summary; normal detailed bag hint remains.");
                 Check(Get<int>(hud,"visibleRows")>=1,"At least one full inventory row remains visible.");Click(inventoryButtons.First(b=>b.name=="CLOSE"),camera);Check(!player.InventoryOpen,"Production CLOSE remains reachable and resumes gameplay.");
                 InventoryModal(player,input,sandbox,hud,inventoryCanvas,camera,root.transform);
-                report.viewports.Add(width+"x"+height);
+                report.viewports.Add(width+"x"+height+" safe="+safeArea);
             }
             finally
             {
@@ -115,12 +118,29 @@ namespace SlopCity.Editor
         private static void Target(UnityEngine.Canvas canvas,Camera camera)
         {canvas.renderMode=RenderMode.ScreenSpaceCamera;canvas.worldCamera=camera;canvas.planeDistance=1;var scaler=canvas.GetComponent<CanvasScaler>();scaler.uiScaleMode=CanvasScaler.ScaleMode.ConstantPixelSize;scaler.scaleFactor=1;canvas.scaleFactor=1;Invoke(canvas.GetComponent<GraphicRaycaster>(),"OnEnable");UnityEngine.Canvas.ForceUpdateCanvases();}
         private static void Layout(Button[] buttons,Camera camera,int width,int height)
+        {Layout(buttons,camera,width,height,new Rect(0,0,width,height));}
+        private static void Layout(Button[] buttons,Camera camera,int width,int height,Rect bounds)
         {
             for(int i=0;i<buttons.Length;i++)
-            {Rect a=Rect(buttons[i].GetComponent<RectTransform>(),camera);Check(a.xMin>=-.1&&a.yMin>=-.1&&a.xMax<=width+.1&&a.yMax<=height+.1,"Target inside viewport: "+buttons[i].name);
+            {Rect a=Rect(buttons[i].GetComponent<RectTransform>(),camera);Check(a.xMin>=bounds.xMin-.1&&a.yMin>=bounds.yMin-.1&&a.xMax<=bounds.xMax+.1&&a.yMax<=bounds.yMax+.1,"Target inside allowed safe viewport: "+buttons[i].name);
                 bool top=buttons[i].name=="TouchPause"||buttons[i].name=="TouchNewJob"||buttons[i].name=="TouchHome";
-                float minimum=top?43.2f:54f;Check(a.width>=minimum-.1f&&a.height>=minimum-.1f,"Target retains at least "+minimum+" pixel area: "+buttons[i].name);
+                float minimum=top?35f:44f;Check(a.width>=minimum-.1f&&a.height>=minimum-.1f,"Target retains at least "+minimum+" pixel area: "+buttons[i].name);
                 for(int j=0;j<i;j++)Check(!a.Overlaps(Rect(buttons[j].GetComponent<RectTransform>(),camera)),"Targets do not overlap: "+buttons[i].name+"/"+buttons[j].name);}
+        }
+        private static void ActionPad(Button[] buttons,Camera camera,Rect safeArea)
+        {
+            Button Find(string name)=>buttons.First(button=>button.name==name);
+            string[] lower={"TouchJump","TouchInteract","TouchRun","TouchClean","TouchTake","TouchBag"};
+            float rightHalf=safeArea.xMin+safeArea.width*.5f;
+            foreach(string name in lower)
+            {
+                Rect rect=Rect(Find(name).GetComponent<RectTransform>(),camera);
+                Check(rect.xMin>=rightHalf-.1f,"Lower action remains inside the right safe-area half: "+name);
+            }
+            Rect jump=Rect(Find("TouchJump").GetComponent<RectTransform>(),camera);
+            Rect use=Rect(Find("TouchInteract").GetComponent<RectTransform>(),camera);
+            Rect bag=Rect(Find("TouchBag").GetComponent<RectTransform>(),camera);
+            Check(use.center.y>jump.center.y&&jump.center.x>bag.center.x,"Action grid keeps USE above JUMP and BAG to its left.");
         }
         private static Rect Rect(RectTransform transform,Camera camera)
         {var corners=new Vector3[4];transform.GetWorldCorners(corners);var a=RectTransformUtility.WorldToScreenPoint(camera,corners[0]);var b=RectTransformUtility.WorldToScreenPoint(camera,corners[2]);return UnityEngine.Rect.MinMaxRect(a.x,a.y,b.x,b.y);}

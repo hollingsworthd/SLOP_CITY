@@ -202,30 +202,54 @@ namespace SlopCity
             if (safe.rect.width < 1f || safe.rect.height < 1f) return;
             float pixelsPerUnit = GetComponentInParent<Canvas>().scaleFactor;
             // RectTransform coordinates are Canvas-local.  Do not mix backing-pixel
-            // Screen dimensions with them: on high-DPR displays that can place the
-            // floating stick outside its move surface.
-            float safeWidth = left.rect.width;
-            float safeHeight = left.rect.height;
-            float button = Mathf.Clamp(Mathf.Min(safeWidth, safeHeight) * .16f, 44f, 72f);
+            // Screen dimensions with them: on high-DPR displays that can place
+            // controls outside their safe-area parents.  The move surface is only
+            // the lower-left portion of the safe area; action buttons belong to
+            // the full safe area, so never size or align them from `left`.
+            float safeWidth = safe.rect.width;
+            float safeHeight = safe.rect.height;
+            float moveWidth = left.rect.width;
+            float moveHeight = left.rect.height;
+            const float gapRatio = .18f, marginRatio = .24f, smallRatio = .80f;
+            float preferredButton = Mathf.Clamp(Mathf.Min(safeWidth, safeHeight) * .16f, 44f, 72f);
+            float actionWidth = safeWidth * .5f;
+            float threeColumnLimit = ActionButtonLimit(actionWidth, safeHeight, 3, 2, gapRatio, marginRatio, smallRatio);
+            float twoColumnLimit = ActionButtonLimit(actionWidth, safeHeight, 2, 3, gapRatio, marginRatio, smallRatio);
+            // Keep the lower action cluster wholly in the right safe-area half.
+            // On unusually narrow screens, two columns/three rows preserve a
+            // usable target instead of shifting the third column over the stick.
+            bool compactActions = twoColumnLimit > threeColumnLimit;
+            float actionLimit = compactActions ? twoColumnLimit : threeColumnLimit;
+            float button = Mathf.Max(1f, Mathf.Min(preferredButton, actionLimit));
             float gap = button*.18f;
             float margin = button*.24f;
             float ringSize = Mathf.Min(button * 1.8f,
-                Mathf.Max(1f, Mathf.Min(safeWidth, safeHeight) - button * .4f));
+                Mathf.Max(1f, Mathf.Min(moveWidth, moveHeight) - button * .4f));
             ring.sizeDelta = Vector2.one*ringSize;
             ring.GetChild(0).GetComponent<RectTransform>().sizeDelta = Vector2.one*button*.72f;
             float ringRadius = ringSize * .5f;
-            float ringX = Mathf.Clamp(-safeWidth*.5f+button*1.25f,
-                -safeWidth*.5f+ringRadius, safeWidth*.5f-ringRadius);
-            float ringY = Mathf.Clamp(-safeHeight*.5f+button*1.4f,
-                -safeHeight*.5f+ringRadius, safeHeight*.5f-ringRadius);
+            float ringX = Mathf.Clamp(-moveWidth*.5f+button*1.25f,
+                -moveWidth*.5f+ringRadius, moveWidth*.5f-ringRadius);
+            float ringY = Mathf.Clamp(-moveHeight*.5f+button*1.4f,
+                -moveHeight*.5f+ringRadius, moveHeight*.5f-ringRadius);
             ring.anchoredPosition = new Vector2(ringX, ringY);
-            Position(buttons[0],new Vector2(1,0),new Vector2(-margin-button*.5f,margin+button*.5f),button);
-            Position(buttons[1],new Vector2(1,0),new Vector2(-margin-button*.5f,margin+button*1.5f+gap),button);
-            Position(buttons[2],new Vector2(1,0),new Vector2(-margin-button*1.5f-gap,margin+button*.5f),button);
+            PositionAction(buttons[0], 0, 0, margin, gap, button); // JUMP
+            PositionAction(buttons[1], 0, 1, margin, gap, button); // USE
+            if (compactActions)
+            {
+                PositionAction(buttons[2], 0, 2, margin, gap, button); // RUN
+                PositionAction(buttons[6], 1, 2, margin, gap, button); // CLEAN
+                PositionAction(buttons[7], 1, 1, margin, gap, button); // TAKE
+                PositionAction(buttons[8], 1, 0, margin, gap, button); // BAG
+            }
+            else
+            {
+                PositionAction(buttons[2], 1, 0, margin, gap, button); // RUN
+                PositionAction(buttons[6], 1, 1, margin, gap, button); // CLEAN
+                PositionAction(buttons[7], 2, 1, margin, gap, button); // TAKE
+                PositionAction(buttons[8], 2, 0, margin, gap, button); // BAG
+            }
             float small = button*.80f;
-            Position(buttons[6],new Vector2(1,0),new Vector2(-margin-button*1.5f-gap,margin+button*1.5f+gap),button);
-            Position(buttons[7],new Vector2(1,0),new Vector2(-margin-button*2.5f-gap*2,margin+button*1.5f+gap),button);
-            Position(buttons[8],new Vector2(1,0),new Vector2(-margin-button*2.5f-gap*2,margin+button*.5f),button);
             for (int i=3;i<6;i++)
                 Position(buttons[i],new Vector2(1,1),new Vector2(-margin-small*.5f-(i-3)*(small+gap*.65f),-margin-small*.5f),small);
             // Action buttons are ordered above this layer and win their own
@@ -240,6 +264,24 @@ namespace SlopCity
             lastPixelRatio = pixelRatio;
             lastLayoutScaleFactor = pixelsPerUnit;
             layoutApplied = true;
+        }
+
+        private static float ActionButtonLimit(float actionWidth, float safeHeight, int columns, int rows,
+            float gapRatio, float marginRatio, float smallRatio)
+        {
+            // Lower actions reserve one inter-group gap below the top utility
+            // row, whose controls are `smallRatio` of an action button.
+            float widthLimit = actionWidth / (columns + (columns - 1) * gapRatio + marginRatio);
+            float heightLimit = safeHeight / (rows + (rows - 1) * gapRatio + gapRatio + 2f * marginRatio + smallRatio);
+            return Mathf.Max(0f, Mathf.Min(widthLimit, heightLimit));
+        }
+
+        private static void PositionAction(RectTransform rect, int column, int row,
+            float margin, float gap, float size)
+        {
+            Position(rect, new Vector2(1, 0), new Vector2(
+                -margin - size * (.5f + column) - gap * column,
+                margin + size * (.5f + row) + gap * row), size);
         }
 
         private RectTransform AddButton(string name,string label,UnityAction action,Font font)
