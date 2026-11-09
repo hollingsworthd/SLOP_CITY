@@ -103,10 +103,10 @@ namespace SlopCity
 #if !UNITY_WEBGL || UNITY_EDITOR
             if (!initializationComplete || destroying) return;
             requested = true;
-            return;
-#endif
+#else
             status = bundledPosts.Count > 0 ? bundledPosts.Count + " bundled offline creator posts."
                 : "Bundled catalogue unavailable; archive clips remain available.";
+#endif
         }
 
 #if !UNITY_WEBGL || UNITY_EDITOR
