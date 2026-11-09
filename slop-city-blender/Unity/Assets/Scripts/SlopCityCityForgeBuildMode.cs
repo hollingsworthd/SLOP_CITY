@@ -69,8 +69,6 @@ namespace SlopCity
         private bool cursorStateCaptured;
         private CursorLockMode savedCursorLockState;
         private bool savedCursorVisible;
-        private bool launcherPointerStateKnown;
-        private bool launcherPointerAvailable;
         private bool launcherMousePressedInside;
         private int launcherMouseActivationSequence;
         private bool launcherMouseGestureConsumed;
@@ -143,7 +141,6 @@ namespace SlopCity
         private void Update()
         {
             RefreshLauncherReadiness();
-            RefreshLauncherInputMode();
             bool openedFromPendingRequest = false;
             if (!opened && pendingOpenWhenReady && editingEnabled && controller && controller.IsInitialized)
             {
@@ -185,7 +182,7 @@ namespace SlopCity
 
             if (!opened)
             {
-                if (type == EventType.MouseDown && launcherCanvas && launcherCanvas.gameObject.activeInHierarchy && launcherButton && launcherButton.interactable && launcherPointerAvailable && LauncherContains(screenPosition))
+                if (type == EventType.MouseDown && launcherCanvas && launcherCanvas.gameObject.activeInHierarchy && launcherButton && launcherButton.interactable && LauncherContains(screenPosition))
                 {
                     current.Use();
                     RequestLauncherOpen();
@@ -975,28 +972,21 @@ namespace SlopCity
             if (!opened && !pendingOpenWhenReady) RefreshLauncher();
         }
 
-        private void RefreshLauncherInputMode()
-        {
-            bool available = Cursor.lockState != CursorLockMode.Locked;
-            if (launcherPointerStateKnown && launcherPointerAvailable == available) return;
-            launcherPointerStateKnown = true;
-            launcherPointerAvailable = available;
-            if (!opened) RefreshLauncher();
-        }
-
         private void RefreshLauncher()
         {
             launcherReady = editingEnabled && controller && controller.IsInitialized;
             launcherReadinessKnown = true;
-            launcherPointerAvailable = Cursor.lockState != CursorLockMode.Locked;
-            launcherPointerStateKnown = true;
             if (launcherButton)
             {
-                launcherButton.interactable = editingEnabled && !launcherUnavailable && launcherPointerAvailable;
-                SetButtonLabel(launcherButton, launcherUnavailable ? "CITY FORGE\nUNAVAILABLE" : !launcherPointerAvailable ? "PRESS B\nTO BUILD" : launcherReady ? "BUILD CITY" : "PREPARING CITY");
+                // City Forge is an explicit desktop control. A locked
+                // first-person cursor must not turn its visible launch button
+                // into a dead affordance: UGUI and the native pointer fallback
+                // can still receive a deliberate click at the button surface.
+                launcherButton.interactable = editingEnabled && !launcherUnavailable;
+                SetButtonLabel(launcherButton, launcherUnavailable ? "CITY FORGE\nUNAVAILABLE" : launcherReady ? "BUILD CITY" : "PREPARING CITY");
             }
             if (launcherStatus)
-                launcherStatus.text = launcherUnavailable ? launcherUnavailableMessage : !launcherPointerAvailable ? "Press B to open City Forge." : launcherReady ? "Open City Forge · B" : "City Forge is preparing your starter ring…";
+                launcherStatus.text = launcherUnavailable ? launcherUnavailableMessage : launcherReady ? "Open City Forge · B" : "City Forge is preparing your starter ring…";
         }
 
         private void RequestLauncherOpen()
@@ -1010,7 +1000,7 @@ namespace SlopCity
 
         private void UpdateLauncherPointerActivation()
         {
-            if (!launcherCanvas || !launcherCanvas.gameObject.activeInHierarchy || !launcherButton || !launcherButton.interactable || !launcherPointerAvailable)
+            if (!launcherCanvas || !launcherCanvas.gameObject.activeInHierarchy || !launcherButton || !launcherButton.interactable)
             {
                 ResetLauncherPointerActivation();
                 return;
