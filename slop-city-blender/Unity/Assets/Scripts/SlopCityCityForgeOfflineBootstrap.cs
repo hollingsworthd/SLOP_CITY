@@ -58,6 +58,7 @@ namespace SlopCity
                 if (controller.HasOfflineWorld)
                 {
                     Debug.LogWarning("City Forge kept its existing offline save unchanged. Export or recover this device copy before starting a new world: " + (restoreError ?? "unreadable save"), this);
+                    buildMode.SetLaunchUnavailable("City Forge could not read this device save. Recover or export it before starting a new world.");
                     yield break;
                 }
                 controller.InitializeOffline();

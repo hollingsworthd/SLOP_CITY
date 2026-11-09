@@ -19,10 +19,13 @@ namespace SlopCity
         [SerializeField] private KeyCode toggleKey = KeyCode.B;
         [SerializeField, Range(40f, 280f)] private float topDownHeight = 130f;
         [SerializeField] private bool editingEnabled = true;
+        private const int CityForgeCanvasSortingOrder = 300;
         private Canvas canvas;
         private Canvas launcherCanvas;
         private Text heading, message;
+        private Text launcherStatus;
         private Button undoButton, redoButton;
+        private Button launcherButton;
         private Button roadButton, removeRoadButton, zoneButton, kitButton, facadeButton, roofButton, storefrontButton, entranceButton, floorsButton, interiorButton, serviceButton, landmarkButton, situationButton, situationStateButton, mountButton, hostButton, targetButton, deviceButton;
         private readonly Dictionary<View, Button> viewButtons = new Dictionary<View, Button>();
         private CityForgeCoord selected;
@@ -58,6 +61,14 @@ namespace SlopCity
         private Vector2 lastTouchPosition;
         private float lastPinchDistance;
         private bool touchPanned;
+        private bool pendingOpenWhenReady;
+        private bool launcherReadinessKnown;
+        private bool launcherReady;
+        private bool launcherUnavailable;
+        private string launcherUnavailableMessage;
+        private bool cursorStateCaptured;
+        private CursorLockMode savedCursorLockState;
+        private bool savedCursorVisible;
 
         public bool IsOpen { get { return opened; } }
         public bool EditingEnabled { get { return editingEnabled; } }
@@ -92,12 +103,19 @@ namespace SlopCity
             strategicMap = FindStrategicMap();
             strategicSummaryMap = strategicMap as ISlopCityCityForgeStrategicSummarySink;
             if (controller) controller.StrategicMapChanged += HandleStrategicMapChanged;
-            CreateUi(); CreateLauncher(); SetUi(false);
+            CreateUi(); CreateLauncher(); SetUi(false); RefreshLauncher();
         }
 
         private void Update()
         {
-            if (editingEnabled && Input.GetKeyDown(toggleKey)) { if (opened) Close(); else Open(); }
+            RefreshLauncherReadiness();
+            bool openedFromPendingRequest = false;
+            if (!opened && pendingOpenWhenReady && editingEnabled && controller && controller.IsInitialized)
+            {
+                pendingOpenWhenReady = false;
+                openedFromPendingRequest = Open();
+            }
+            if (!openedFromPendingRequest && editingEnabled && Input.GetKeyDown(toggleKey)) { if (opened) Close(); else Open(); }
             if (!opened) return;
             MoveCamera();
             if (Input.GetKeyDown(KeyCode.Z) && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))) Undo();
@@ -116,14 +134,29 @@ namespace SlopCity
 
         public bool Open()
         {
-            if (!editingEnabled || opened || !controller || !controller.IsInitialized) return false;
+            if (opened) return true;
+            if (!editingEnabled || launcherUnavailable)
+            {
+                SetLauncherStatus(launcherUnavailable ? launcherUnavailableMessage : "City Forge is not available in this city.");
+                return false;
+            }
+            if (!controller || !controller.IsInitialized)
+            {
+                // A click during startup is a real player request, not a
+                // discarded input. The offline composition fulfils it as
+                // soon as it has installed its bounded starter ring.
+                pendingOpenWhenReady = true;
+                SetLauncherStatus("City Forge is preparing your starter ring…");
+                return false;
+            }
             selected = new CityForgeCoord(2, 0);
             if (!EnsureLoaded(selected)) return false;
             if (!EnsureDraft(selected)) return false;
             try { draft = controller.BeginDraft(selected); }
             catch (Exception error) { SetMessage(error.Message); return false; }
+            pendingOpenWhenReady = false;
             ResetAtomicDrafts(draft); history = new SlopCityCityForgeDraftHistory(draft); opened = true; view = View.Streets;
-            GateFirstPerson(true); CaptureCamera(); controller.SetBuildMode(true); controller.StreamAt(selected); ShowStrategicMap(); SetUi(true); SetLauncher(false); RefreshUi(); BuildModeChanged?.Invoke(true); return true;
+            ResumeFirstPersonForBuildMode(); GateFirstPerson(true); CaptureCamera(); controller.SetBuildMode(true); controller.StreamAt(selected); ShowStrategicMap(); SetUi(true); SetLauncher(false); RefreshUi(); BuildModeChanged?.Invoke(true); return true;
         }
 
         public void Close()
@@ -260,7 +293,19 @@ namespace SlopCity
             if (editingEnabled == value) return;
             editingEnabled = value;
             if (!editingEnabled && opened) Close();
+            if (!editingEnabled) pendingOpenWhenReady = false;
             SetLauncher(editingEnabled && !opened);
+        }
+
+        /// <summary>Shows a clear recovery state instead of a launch control which can never succeed.</summary>
+        public void SetLaunchUnavailable(string value)
+        {
+            launcherUnavailable = true;
+            launcherUnavailableMessage = string.IsNullOrEmpty(value) ? "City Forge needs recovery before this device can build." : value;
+            pendingOpenWhenReady = false;
+            if (opened) Close();
+            editingEnabled = false;
+            SetLauncher(true);
         }
 
         private bool EnsureLoaded(CityForgeCoord coordinate, bool navigation = true)
@@ -767,7 +812,7 @@ namespace SlopCity
         private void CreateUi()
         {
             GameObject root = new GameObject("CityForgeBuildMode", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
-            root.transform.SetParent(transform, false); canvas = root.GetComponent<Canvas>(); canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            root.transform.SetParent(transform, false); canvas = root.GetComponent<Canvas>(); canvas.renderMode = RenderMode.ScreenSpaceOverlay; canvas.overrideSorting = true; canvas.sortingOrder = CityForgeCanvasSortingOrder;
             CanvasScaler scaler = root.GetComponent<CanvasScaler>(); scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize; scaler.referenceResolution = new Vector2(1280, 720);
             Image panel = root.AddComponent<Image>(); panel.color = new Color(.03f, .05f, .06f, .92f);
             RectTransform rect = root.GetComponent<RectTransform>(); rect.anchorMin = new Vector2(0f, 1f); rect.anchorMax = new Vector2(1f, 1f); rect.pivot = new Vector2(.5f, 1f); rect.sizeDelta = new Vector2(0f, 248f);
@@ -815,14 +860,58 @@ namespace SlopCity
         {
             GameObject root = new GameObject("CityForgeBuildLauncher", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
             root.transform.SetParent(transform, false);
-            launcherCanvas = root.GetComponent<Canvas>(); launcherCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            launcherCanvas = root.GetComponent<Canvas>(); launcherCanvas.renderMode = RenderMode.ScreenSpaceOverlay; launcherCanvas.overrideSorting = true; launcherCanvas.sortingOrder = CityForgeCanvasSortingOrder;
             CanvasScaler scaler = root.GetComponent<CanvasScaler>(); scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize; scaler.referenceResolution = new Vector2(1280, 720);
-            Button button = Button(root.transform, "BUILD CITY", Vector2.zero, new Vector2(132f, 40f));
-            RectTransform rect = button.GetComponent<RectTransform>(); rect.anchorMin = Vector2.zero; rect.anchorMax = Vector2.zero; rect.pivot = Vector2.zero; rect.anchoredPosition = new Vector2(18f, 18f);
-            button.onClick.AddListener(() => Open()); SetLauncher(editingEnabled);
+            launcherButton = Button(root.transform, "BUILD CITY", Vector2.zero, new Vector2(188f, 52f));
+            RectTransform rect = launcherButton.GetComponent<RectTransform>(); rect.anchorMin = Vector2.zero; rect.anchorMax = Vector2.zero; rect.pivot = Vector2.zero; rect.anchoredPosition = new Vector2(22f, 22f);
+            launcherStatus = Label(root.transform, "Open City Forge · B", 13, Vector2.zero, new Vector2(420f, 24f));
+            RectTransform statusRect = launcherStatus.GetComponent<RectTransform>(); statusRect.anchorMin = Vector2.zero; statusRect.anchorMax = Vector2.zero; statusRect.pivot = Vector2.zero; statusRect.anchoredPosition = new Vector2(22f, 80f);
+            launcherStatus.alignment = TextAnchor.MiddleLeft;
+            launcherButton.onClick.AddListener(() => Open()); SetLauncher(editingEnabled);
         }
 
-        private void SetLauncher(bool visible) { if (launcherCanvas) launcherCanvas.gameObject.SetActive(visible); }
+        private void SetLauncher(bool visible)
+        {
+            if (!launcherCanvas) return;
+            launcherCanvas.gameObject.SetActive(visible);
+            if (visible) RefreshLauncher();
+        }
+
+        private void RefreshLauncherReadiness()
+        {
+            bool ready = editingEnabled && controller && controller.IsInitialized;
+            if (launcherReadinessKnown && launcherReady == ready) return;
+            launcherReadinessKnown = true;
+            launcherReady = ready;
+            if (!opened && !pendingOpenWhenReady) RefreshLauncher();
+        }
+
+        private void RefreshLauncher()
+        {
+            launcherReady = editingEnabled && controller && controller.IsInitialized;
+            launcherReadinessKnown = true;
+            if (launcherButton)
+            {
+                launcherButton.interactable = editingEnabled && !launcherUnavailable;
+                SetButtonLabel(launcherButton, launcherUnavailable ? "CITY FORGE\nUNAVAILABLE" : launcherReady ? "BUILD CITY" : "PREPARING CITY");
+            }
+            if (launcherStatus)
+                launcherStatus.text = launcherUnavailable ? launcherUnavailableMessage : launcherReady ? "Open City Forge · B" : "City Forge is preparing your starter ring…";
+        }
+
+        private void SetLauncherStatus(string value)
+        {
+            if (launcherStatus) launcherStatus.text = value ?? string.Empty;
+        }
+
+        private void ResumeFirstPersonForBuildMode()
+        {
+            if (!firstPerson) firstPerson = FindObjectOfType<SlopCityFirstPerson>();
+            // The initial pause card is deliberately a hard input modal. A
+            // successful City Forge entry replaces it with the editor rather
+            // than leaving its full-screen raycaster over the build surface.
+            if (firstPerson && firstPerson.IsPaused) firstPerson.PlayOrResume();
+        }
 
         private void GateFirstPerson(bool gate)
         {
@@ -847,7 +936,7 @@ namespace SlopCity
         {
             GameObject item = new GameObject("Label_" + value, typeof(RectTransform), typeof(Text)); item.transform.SetParent(parent, false);
             RectTransform rect = item.GetComponent<RectTransform>(); rect.anchorMin = new Vector2(0f, 1f); rect.anchorMax = new Vector2(0f, 1f); rect.pivot = new Vector2(0f, 1f); rect.anchoredPosition = anchored; rect.sizeDelta = size;
-            Text text = item.GetComponent<Text>(); text.text = value; text.font = Resources.GetBuiltinResource<Font>("Arial.ttf"); text.fontSize = fontSize; text.color = Color.white; text.alignment = TextAnchor.MiddleLeft; return text;
+            Text text = item.GetComponent<Text>(); text.text = value; text.font = Resources.GetBuiltinResource<Font>("Arial.ttf"); text.fontSize = fontSize; text.color = Color.white; text.alignment = TextAnchor.MiddleLeft; text.raycastTarget = false; return text;
         }
         private static Button Button(Transform parent, string label, Vector2 anchored, Vector2 size)
         {
@@ -870,24 +959,42 @@ namespace SlopCity
             SetButtonLabel(serviceButton, "Service: " + serviceType); SetButtonLabel(landmarkButton, "Cityworks: " + (string.IsNullOrEmpty(landmarkOutcome) ? "choose" : landmarkOutcome)); SetButtonLabel(mountButton, "Mount: " + screenMount); SetButtonLabel(hostButton, "Host: " + host); SetButtonLabel(targetButton, "Screen target: " + target); SetButtonLabel(deviceButton, "Device: " + screenDevice); SetButtonLabel(situationButton, "Situation: " + (string.IsNullOrEmpty(situationTemplate) ? "choose" : situationTemplate)); SetButtonLabel(situationStateButton, "State: " + situationState);
         }
         private static void SetButtonLabel(Button button, string value) { Text text = button ? button.GetComponentInChildren<Text>() : null; if (text) text.text = value; }
-        private void SetMessage(string value) { if (message) message.text = value ?? string.Empty; }
+        private void SetMessage(string value)
+        {
+            if (message) message.text = value ?? string.Empty;
+            if (!opened) SetLauncherStatus(value);
+        }
 
         private void OnDestroy()
         {
             if (controller) controller.StrategicMapChanged -= HandleStrategicMapChanged;
+            RestoreCamera();
             GateFirstPerson(false);
         }
 
         private void CaptureCamera()
         {
-            if (!buildCamera) return;
-            originalCamera = new CameraState { position = buildCamera.transform.position, rotation = buildCamera.transform.rotation, orthographic = buildCamera.orthographic, orthographicSize = buildCamera.orthographicSize };
-            FocusCamera(); Cursor.visible = true;
+            if (buildCamera)
+            {
+                originalCamera = new CameraState { position = buildCamera.transform.position, rotation = buildCamera.transform.rotation, orthographic = buildCamera.orthographic, orthographicSize = buildCamera.orthographicSize };
+                FocusCamera();
+            }
+            savedCursorLockState = Cursor.lockState;
+            savedCursorVisible = Cursor.visible;
+            cursorStateCaptured = true;
+            Cursor.lockState = CursorLockMode.None;
+            Cursor.visible = true;
         }
         private void RestoreCamera()
         {
-            if (!buildCamera) return;
-            buildCamera.transform.position = originalCamera.position; buildCamera.transform.rotation = originalCamera.rotation; buildCamera.orthographic = originalCamera.orthographic; buildCamera.orthographicSize = originalCamera.orthographicSize; Cursor.visible = false;
+            if (buildCamera)
+            {
+                buildCamera.transform.position = originalCamera.position; buildCamera.transform.rotation = originalCamera.rotation; buildCamera.orthographic = originalCamera.orthographic; buildCamera.orthographicSize = originalCamera.orthographicSize;
+            }
+            if (!cursorStateCaptured) return;
+            Cursor.lockState = savedCursorLockState;
+            Cursor.visible = savedCursorVisible;
+            cursorStateCaptured = false;
         }
         private void FocusCamera()
         {
