@@ -21,7 +21,7 @@ namespace UnityEngine {
  public class MonoBehaviour:Object {public T GetComponent<T>() where T:new()=>new T();}
  public class SerializeField:Attribute {}
  public static class Application {public static bool isMobilePlatform=true;}
- public static class Screen {public static int height=1000;}
+ public static class Screen {public static int width=1000,height=1000;}
  public enum TouchPhase {Began,Moved,Stationary,Ended,Canceled}
  public struct Touch {public int fingerId;public TouchPhase phase;}
  public enum KeyCode {A,D,W,S,E,R,M,Q,Space,Escape,C,F,I,LeftArrow,RightArrow,UpArrow,DownArrow,LeftShift,RightShift}
@@ -115,8 +115,9 @@ namespace SlopCity {
      if(message=="OnDisable")rig.Message(message);else rig.Message(message,message=="OnApplicationPause");
      Check(rig.Pointer==int.MinValue&&!rig.Active(),kind+" releases on "+message);
     }
-    // Mouse pointer IDs are not real touch identifiers and keep event ownership.
-    Input.Live=new Touch[0];Begin(rig,-1);rig.Message("LateUpdate");Check(rig.Pointer==-1,kind+" mouse owner survives absent touch entries");rig.Down(-2);rig.Up(-2);Check(rig.Pointer==-1,kind+" second mouse pointer cannot steal");rig.Up(-1);
+    // Mouse/pen pointer IDs are not touch identifiers, so they cannot arm a
+    // touch-only owner or leave movement/look/sprint stuck.
+    Input.Live=new Touch[0];rig.Down(-1);rig.Drag(-1);rig.Message("LateUpdate");Check(rig.Pointer==int.MinValue&&!rig.Active(),kind+" ignores non-touch pointer");
    }
    // Independent simultaneous thumbs plus a held RUN button; cancel only look.
    var input=new SlopCityPlayerInput();input.SetGameplayEnabled(true);var stick=new SlopCityTouchStick();stick.Configure(input,new RectTransform(),new RectTransform());

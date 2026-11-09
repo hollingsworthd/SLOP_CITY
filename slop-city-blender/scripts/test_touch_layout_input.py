@@ -21,7 +21,7 @@ namespace UnityEngine {
  public class MonoBehaviour:Object {}
  public class SerializeField:Attribute {}
  public static class Application { public static bool isMobilePlatform=false; }
- public static class Screen { public static int height=1000; }
+ public static class Screen { public static int width=1000,height=1000; }
  public static class Mathf { public static float Max(float a,float b)=>Math.Max(a,b); }
  public struct Vector2 {
   public float x,y;public Vector2(float a,float b){x=a;y=b;}
@@ -34,29 +34,25 @@ namespace UnityEngine {
 namespace UnityEngine.EventSystems {}
 namespace SlopCity {
  using UnityEngine;
- public sealed class SlopCityTouchStick {
+ public sealed class SlopCityTouchStick:Object {
   readonly SlopCityPlayerInput input;public int cancellations;
   public SlopCityTouchStick(SlopCityPlayerInput value){input=value;}
-  public void CancelGesture(){cancellations++;input.SetTouchMovement(Vector2.zero);}
+  public void CancelGestureBeforeLayout(uint generation){cancellations++;input.SetTouchMovement(Vector2.zero);}
  }
- public sealed class SlopCityTouchLook {public int cancellations;public void CancelGesture(){cancellations++;}}
- public sealed class SlopCityTouchHold {
+ public sealed class SlopCityTouchLook:Object {public int cancellations;public void CancelGestureBeforeLayout(uint generation){cancellations++;}}
+ public sealed class SlopCityTouchHold:Object {
   readonly SlopCityPlayerInput input;public int cancellations;
   public SlopCityTouchHold(SlopCityPlayerInput value){input=value;}
-  public void CancelGesture(){cancellations++;input.RequestSprint(false);}
+  public void CancelGestureBeforeLayout(uint generation){cancellations++;input.RequestSprint(false);}
  }
  // ACTUAL_INPUT
  public sealed class LayoutHarness {
   readonly SlopCityPlayerInput input;
   public readonly SlopCityTouchStick stick;public readonly SlopCityTouchLook look=new SlopCityTouchLook();public readonly SlopCityTouchHold hold;
-  public LayoutHarness(SlopCityPlayerInput value){input=value;stick=new SlopCityTouchStick(value);hold=new SlopCityTouchHold(value);}
-  T[] GetComponentsInChildren<T>() {
-   if(typeof(T)==typeof(SlopCityTouchStick))return new[]{(T)(object)stick};
-   if(typeof(T)==typeof(SlopCityTouchLook))return new[]{(T)(object)look};
-   if(typeof(T)==typeof(SlopCityTouchHold))return new[]{(T)(object)hold};
-   throw new Exception("Unexpected gesture type");
-  }
-  public void Apply(){ // ACTUAL_LAYOUT_RESET
+  private readonly SlopCityTouchStick moveStick;private readonly SlopCityTouchLook touchLook;private readonly SlopCityTouchHold touchRun;
+  private uint layoutGeneration=1;
+  public LayoutHarness(SlopCityPlayerInput value){input=value;stick=new SlopCityTouchStick(value);hold=new SlopCityTouchHold(value);moveStick=stick;touchLook=look;touchRun=hold;}
+  public void Apply(){ // ACTUAL_LAYOUT_CANCEL
   }
  }
  public static class Checks {
@@ -69,16 +65,20 @@ namespace SlopCity {
   public static void Main(){
    var input=new SlopCityPlayerInput();input.SetGameplayEnabled(true);QueueAll(input);
    Check(input.ReadMovement().sqrMagnitude>0&&input.ReadSprint(),"held input initially active");
+   // The game consumes a look delta in its frame before a later viewport
+   // transition. Production generation changes independently clear any still
+   // active touch-look owner (asserted from the real source below).
+   Check(input.ReadLook().sqrMagnitude>0,"look delta initially active");
    var layout=new LayoutHarness(input);layout.Apply();
-   Check(input.GameplayEnabled,"layout preserves enabled state");
-   Check(layout.stick.cancellations==1&&layout.look.cancellations==1&&layout.hold.cancellations==1,"layout cancels every held gesture owner");
+   Check(input.GameplayEnabled,"settled layout preserves enabled state");
+   Check(layout.stick.cancellations==1&&layout.look.cancellations==1&&layout.hold.cancellations==1,"settled layout cancels every held gesture owner");
    Check(input.ConsumeInteract(),"completed USE survives resize");Check(!input.ConsumeInteract(),"USE consumed once");
    Check(input.ConsumeJump(),"completed JUMP survives resize");Check(!input.ConsumeJump(),"JUMP consumed once");
    Check(input.ConsumeRespawn(),"completed HOME survives resize");Check(!input.ConsumeRespawn(),"HOME consumed once");
 
    Check(input.ConsumeNewContract(),"completed JOB survives resize");Check(!input.ConsumeNewContract(),"JOB consumed once");
    Check(input.ConsumePause(),"completed PAUSE survives resize");Check(!input.ConsumePause(),"PAUSE consumed once");
-   ContinuousClear(input,"layout");layout.Apply();ActionsClear(input,"repeat layout adds no actions");
+   ContinuousClear(input,"settled layout");layout.Apply();ActionsClear(input,"repeat cancellation adds no actions");
    QueueAll(input);input.SetGameplayEnabled(false);Check(!input.GameplayEnabled,"pause disables gameplay");
    input.SetGameplayEnabled(true);ActionsClear(input,"pause clears pending actions");ContinuousClear(input,"pause");
    QueueAll(input);input.SetGameplayEnabled(true);ActionsClear(input,"same-state SetGameplayEnabled retains full clearing contract");ContinuousClear(input,"same-state reset");
@@ -87,8 +87,8 @@ namespace SlopCity {
     ActionsClear(input,method);ContinuousClear(input,method);
    }
    input.SetGameplayEnabled(false);input.RequestInteract();input.RequestJump();input.RequestRespawn();input.RequestNewContract();
-   layout.Apply();Check(!input.GameplayEnabled,"layout never enables paused gameplay");input.SetGameplayEnabled(true);ActionsClear(input,"inactive actions never reappear");
-   Console.WriteLine("PASS "+checks+" actual input/layout checks; Unity substitutes, no browser or door-operation validation");
+   layout.Apply();Check(!input.GameplayEnabled,"settled layout never enables paused gameplay");input.SetGameplayEnabled(true);ActionsClear(input,"inactive actions never reappear");
+   Console.WriteLine("PASS "+checks+" actual input/settled-layout checks; Unity substitutes, no browser or door-operation validation");
   }
  }
 }
@@ -106,10 +106,17 @@ def main():
     input_source = args.input_source.read_text()
     controls_source = args.controls_source.read_text()
     actual_input = block(input_source, '    public sealed class SlopCityPlayerInput')
-    layout = block(controls_source, '        private void LayoutForViewport(')
-    # Execute the exact production cancellation statements before any UI geometry.
-    reset = layout[layout.index('{') + 1:layout.index('            lastSafe =')]
-    fixture = STUBS.replace('// ACTUAL_INPUT', actual_input).replace('// ACTUAL_LAYOUT_RESET', reset)
+    try_layout = block(controls_source, '        private void TryLayout(')
+    cancel = block(controls_source, '        private void CancelHeldGestures(')
+    touch_look = block(input_source, '    public sealed class SlopCityTouchLook')
+    assert 'ApplyTouchLayoutGeneration();' in try_layout
+    assert try_layout.index('ApplyTouchLayoutGeneration();') < try_layout.index('CancelHeldGestures();')
+    assert 'input.ClearTouchLook();' in touch_look
+    # The production layout waits for a settled viewport, updates gesture
+    # generation, then executes this exact cancellation routine. Exercise the
+    # routine itself rather than copying geometry into a small stub harness.
+    cancellation = cancel[cancel.index('{') + 1:cancel.rfind('}')]
+    fixture = STUBS.replace('// ACTUAL_INPUT', actual_input).replace('// ACTUAL_LAYOUT_CANCEL', cancellation)
     with tempfile.TemporaryDirectory(prefix='slop-touch-layout-') as directory:
         path = Path(directory)
         (path / 'Checks.cs').write_text(fixture)
@@ -123,7 +130,7 @@ def main():
         # Stub only unrelated rendering/salvage providers, leaving real touch,
         # event-system, rect-transform and UI contracts checked by Unity DLLs.
         (path / 'Presentation.cs').write_text(r'''namespace SlopCity {
- public static class SlopCityWebPresentation { public static float DisplayPixelRatio => 1f; }
+ public static class SlopCityWebPresentation { public static float DisplayPixelRatio => 1f; public static bool IsViewportTransition => false; }
  public sealed class SlopCityFirstPerson : UnityEngine.MonoBehaviour { public SlopCitySandbox Sandbox; public UnityEngine.Camera ViewCamera; }
  public sealed class SlopCitySandbox : UnityEngine.Object { public void SalvageOptions(UnityEngine.Camera camera,out bool clean,out bool take,out int strokes) { clean=take=false;strokes=0; } }
  public static class SlopCitySalvageItem { public const int CleaningStrokes=4; }

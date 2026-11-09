@@ -28,6 +28,7 @@ namespace UnityEngine {
   public override bool Equals(object other)=>this==(other as Object);public override int GetHashCode()=>base.GetHashCode();
   public static void Destroy(Object o){if(!o)return;Fault.Before("Destroy");if(!o.queued){o.queued=true;Fault.Queue.Add(o);Fault.DestroyQueued++;}Fault.AfterCall("Destroy");}
   public static void DestroyImmediate(Object o){if(!o)return;Fault.Before("Destroy");o.Free();Fault.AfterCall("Destroy");}
+  public static void DestroyImmediate(Object o,bool allowDestroyingAssets){DestroyImmediate(o);}
  }
  public class AddComponentMenu:Attribute{public AddComponentMenu(string s){}}public class SerializeField:Attribute{}
  public class MonoBehaviour:Object{
@@ -47,12 +48,15 @@ namespace UnityEngine {
  public class MeshFilter:Object{Mesh value;public Transform transform=new Transform();public Mesh sharedMesh{get=>value;set{Fault.Before("Restore");this.value=value;Fault.AfterCall("Restore");}}}
  public class Transform{public Vector3 position;public Matrix4x4 localToWorldMatrix;}
  public class Camera:Object{public static Camera main;public Transform transform=new Transform();}
+ public class Plane{}
+ public static class GeometryUtility{public static bool TestPlanesAABB(Plane[] planes,Bounds bounds)=>true;public static void CalculateFrustumPlanes(Camera camera,Plane[] planes){}}
  public struct Matrix4x4{public Vector3 MultiplyVector(Vector3 v)=>v;public Vector3 MultiplyPoint3x4(Vector3 v)=>v;}
- public struct Vector3{public float x,y,z;public Vector3(float a,float b,float c){x=a;y=b;z=c;}public static Vector3 operator *(Vector3 v,float n)=>new Vector3(v.x*n,v.y*n,v.z*n);}
+ public struct Vector3{public float x,y,z;public Vector3(float a,float b,float c){x=a;y=b;z=c;}public float sqrMagnitude=>x*x+y*y+z*z;public static Vector3 zero=>new Vector3();public static Vector3 operator *(Vector3 v,float n)=>new Vector3(v.x*n,v.y*n,v.z*n);public static Vector3 operator -(Vector3 a,Vector3 b)=>new Vector3(a.x-b.x,a.y-b.y,a.z-b.z);public static Vector3 operator /(Vector3 v,float n)=>new Vector3(v.x/n,v.y/n,v.z/n);}
  public struct Bounds{public Vector3 extents,center;public Bounds(Vector3 c,Vector3 size){center=c;extents=size*.5f;}public float SqrDistance(Vector3 point)=>0;}
- public static class Mathf{public static float Abs(float v)=>Math.Abs(v);public static float Min(float a,float b)=>Math.Min(a,b);public static float Pow(float a,float b)=>(float)Math.Pow(a,b);public static float Sqrt(float v)=>(float)Math.Sqrt(v);}
+ public enum FindObjectsInactive{Exclude,Include}
+ public static class Mathf{public static float Abs(float v)=>Math.Abs(v);public static float Min(float a,float b)=>Math.Min(a,b);public static float Max(float a,float b)=>Math.Max(a,b);public static float Pow(float a,float b)=>(float)Math.Pow(a,b);public static float Sqrt(float v)=>(float)Math.Sqrt(v);}
  public static class Time{public static float unscaledTime;public static int frameCount;}
- public static class Application{public static bool isPlaying;public static string streamingAssetsPath=>"https://offline.example/StreamingAssets";}
+ public static class Application{public static bool isPlaying,isEditor,isMobilePlatform;public static string streamingAssetsPath=>"https://offline.example/StreamingAssets";}
  public static class Debug{public static void LogWarning(string message,object owner){Fault.Warnings++;}}
 }
 namespace UnityEngine.Rendering{public struct VertexAttributeDescriptor{}public struct SubMeshDescriptor{}public enum IndexFormat{UInt16,UInt32}public enum MeshUpdateFlags{DontRecalculateBounds}}
@@ -61,7 +65,12 @@ namespace UnityEngine.Networking {
  public class UnityWebRequestAsyncOperation{public bool isDone;}
  public class UnityWebRequest:IDisposable{bool disposed;public const string kHttpVerbGET="GET";public enum Result{Success,Failure}public Result result;public bool disposeDownloadHandlerOnDispose;public DownloadHandlerScript downloadHandler;public int timeout;public UnityWebRequest(string url,string method){Fault.Native++;}public UnityWebRequestAsyncOperation SendWebRequest()=>new UnityWebRequestAsyncOperation();public void Abort(){Fault.Before("Abort");Fault.AfterCall("Abort");}public void Dispose(){Fault.Before("RequestDispose");if(!disposed){disposed=true;Fault.Native--;}Fault.AfterCall("RequestDispose");}}
 }
-namespace SlopCity{public static class SlopCityDetailMeshCodec{
+namespace SlopCity{
+public static class SlopCityVirtualTexturePaging{public static void RegisterInterest(Bounds bounds){}}
+public static class SlopCityFrameScratchArena{public static byte[] Bytes(int length)=>new byte[length];public static float[] Floats(int length)=>new float[length];}
+public static class SlopCityWebPresentation{public static bool IsViewportTransition;}
+public class SlopCityPlayerInput:MonoBehaviour{public static T FindFirstObjectByType<T>(FindObjectsInactive inactive) where T:UnityEngine.Object=>null;public static bool BrowserUsesMobileMediaBudget(SlopCityPlayerInput input)=>false;}
+public static class SlopCityDetailMeshCodec{
  public const int MaximumPayloadBytes=4194304;public static bool ValidHash(string hash)=>hash?.Length==64;public static string ComputeHash(byte[] bytes)=>new string('a',64);
  private sealed class Layout{public int vertexCount=1,indexBytes=4,indexOffset=12,geometryBytes=Fault.GeometryBytes;public UnityEngine.Rendering.IndexFormat indexFormat;public UnityEngine.Rendering.VertexAttributeDescriptor[] attributes=new UnityEngine.Rendering.VertexAttributeDescriptor[1];public int[] strides={12},offsets={0},lengths={12};public UnityEngine.Rendering.SubMeshDescriptor[] submeshes=new UnityEngine.Rendering.SubMeshDescriptor[1];public Bounds bounds;}
  private static Layout Parse(byte[] bytes)=>new Layout();
@@ -83,6 +92,7 @@ public static class Check {
  public static void Main(){
   foreach(bool playing in new[]{false,true})foreach(bool after in new[]{false,true})foreach(string failure in new[]{"Abort","Stop","RequestDispose","DownloadDispose","Restore","Destroy","all"})for(int cycle=0;cycle<30;cycle++){
    Fault.Arm(false);Application.isPlaying=playing;SlopCity.SlopCityDetailStreaming.DetailEntry[] entries;IEnumerator pending;var owner=Fixture(out entries,out pending);int baseline=3;
+   int inFlightNative=Fault.Native;Call(owner,"RetryPendingRequestCleanup");Require(Fault.Native==inFlightNative&&Get(owner,"pendingRequest")!=null&&Get(owner,"pendingDownload")!=null&&Get(owner,"pendingRoutine")!=null,"Active detail requests retain their owned native handles until their coroutine finishes");
    Require(Fault.Native==baseline+4,"Two meshes, one native request, one handler");int staleToken=1;
    Fault.Arm(after,failure=="all"?new[]{"Abort","Stop","RequestDispose","DownloadDispose"}:new[]{failure});
    try{Call(owner,"OnDisable");}catch(Exception){}
@@ -118,7 +128,7 @@ public static class Check {
   foreach(bool after in new[]{false,true})foreach(string failure in new[]{"Restore","MeshName","VertexParams","Stride","VertexData","IndexParams","IndexData","SubCount","SubMesh","Bounds","Upload"})for(int cycle=0;cycle<30;cycle++){
    Fault.Arm(false);SlopCity.SlopCityDetailStreaming.DetailEntry[] entries;IEnumerator pending;var owner=Fixture(out entries,out pending);Call(owner,"OnDisable");Fault.Frame();int token=owner.BeginForTesting(2);
    Fault.Arm(after,failure,"Destroy");Require(!owner.CompleteForTesting(2,token,new byte[16]),"Decode/binding failure is rejected: "+failure);
-   Require(owner.ResidentBytes==16,"Refused rollback destruction retains exact decoded geometry accounting: "+failure);
+   long expectedRetainedBudget=failure=="Restore"?16:0;Require(owner.ResidentBytes==expectedRetainedBudget,"Refused rollback destruction retains only the budget already transferred to a live lease: "+failure);
    Require(Get(owner,"leases")!=null,"Decoded owner remains reachable");Fault.Frame();Fault.Arm(false);Call(owner,"OnDestroy");Fault.Frame();Require(owner.ResidentBytes==0&&Fault.Native==3,"Destruction retry releases rejected decoded mesh: "+failure);
    foreach(var entry in entries)UnityEngine.Object.DestroyImmediate(entry.farProxy);Require(Fault.Native==0,"Rollback fixture leaves no native survivor");
   }

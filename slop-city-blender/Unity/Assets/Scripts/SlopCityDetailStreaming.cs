@@ -208,7 +208,13 @@ namespace SlopCity
             if (network && token >= 0)
             {
                 nextAdmissionEarliest = Time.unscaledTime + AdmissionStaggerSeconds;
-                pendingRoutine = StartCoroutine(Load(best, token));
+                // A request can fail synchronously before StartCoroutine returns.
+                // Only retain the coroutine handle when this exact generation is
+                // still live; otherwise a completed handle would block the next
+                // admission indefinitely.
+                Coroutine routine = StartCoroutine(Load(best, token));
+                if (pendingIndex == best && requestIndex == best && requestGeneration == token)
+                    pendingRoutine = routine;
             }
         }
         private static bool ValidEntry(DetailEntry entry)
@@ -235,14 +241,16 @@ namespace SlopCity
         }
         private IEnumerator Load(int index, int token)
         {
+            UnityWebRequest request = null;
+            BoundedDownload download = null;
             try
             {
                 UnityWebRequestAsyncOperation operation;
                 try
                 {
                     DetailEntry entry = entries[index];
-                    pendingDownload = new BoundedDownload(entry.payloadBytes);
-                    pendingRequest = new UnityWebRequest(Application.streamingAssetsPath.TrimEnd('/') + "/Geometry/" + entry.fileName,
+                    pendingDownload = download = new BoundedDownload(entry.payloadBytes);
+                    pendingRequest = request = new UnityWebRequest(Application.streamingAssetsPath.TrimEnd('/') + "/Geometry/" + entry.fileName,
                         UnityWebRequest.kHttpVerbGET);
                     // The handler has its own owner even when request configuration fails.
                     pendingRequest.disposeDownloadHandlerOnDispose = false;
@@ -254,8 +262,12 @@ namespace SlopCity
                 while (!operation.isDone) yield return null;
                 if (pendingIndex == index && leases[index].generation == token)
                 {
-                    if (pendingRequest.result == UnityWebRequest.Result.Success && pendingDownload.Complete)
-                        Complete(index, token, pendingDownload.Bytes);
+                    // Cancellation/teardown may clear the published handles while
+                    // this coroutine is awaiting its request. Never read a stale
+                    // or cleared native request; only this generation may finish.
+                    if (ReferenceEquals(pendingRequest, request) && ReferenceEquals(pendingDownload, download)
+                        && request.result == UnityWebRequest.Result.Success && download.Complete)
+                        Complete(index, token, download.Bytes);
                     else Failed(index, token);
                 }
             }
@@ -331,7 +343,10 @@ namespace SlopCity
         }
         private void RetryPendingRequestCleanup()
         {
-            if (pendingRequest == null && pendingDownload == null) return;
+            // Active requests own their handles until Load reaches its finally
+            // block. Retrying Dispose here used to clear an in-flight request on
+            // the next streaming tick, then its coroutine dereferenced null.
+            if (pendingRoutine != null || pendingIndex >= 0 || (pendingRequest == null && pendingDownload == null)) return;
             ClearRequest();
         }
         private void ClearRequest()
@@ -413,8 +428,15 @@ namespace SlopCity
             }
             lease.mesh = null;
             lease.destroyRefusals = 0;
+            // A failed rollback may already have released this lease's budget
+            // while keeping its exact native mesh for a later destruction retry.
+            // Do not charge that same geometry negative when the retry succeeds.
+            if (!lease.admissionBlocked)
+            {
+                residentBytes -= entry.geometryBytes;
+                if (residentBytes < 0) residentBytes = 0;
+            }
             lease.admissionBlocked = false;
-            residentBytes -= entry.geometryBytes;
 #if UNITY_EDITOR
             if (Application.isPlaying) retirementFrame = Time.frameCount;
 #else

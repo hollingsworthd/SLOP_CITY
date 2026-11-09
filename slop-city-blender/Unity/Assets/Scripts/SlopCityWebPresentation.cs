@@ -13,6 +13,9 @@ namespace SlopCity
         [DllImport("__Internal")] private static extern float SlopCity_GetDisplayPixelRatio();
         [DllImport("__Internal")] private static extern int SlopCity_IsViewportTransition();
         [DllImport("__Internal")] private static extern void SlopCity_ReportPresentation(int displayWidth, int displayHeight, int worldWidth, int worldHeight, float pixelRatio);
+        [DllImport("__Internal")] private static extern void SlopCity_ReportRuntimeFault(int kind);
+        private static bool runtimeFaultReporterInstalled;
+        private static bool nullReferenceReported;
 #endif
         private Camera worldCamera;
         private RenderTexture worldTexture;
@@ -83,6 +86,27 @@ namespace SlopCity
         }
 
 #if UNITY_WEBGL && !UNITY_EDITOR
+        [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.BeforeSceneLoad)]
+        private static void InstallRuntimeFaultReporter()
+        {
+            if (runtimeFaultReporterInstalled) return;
+            runtimeFaultReporterInstalled = true;
+            Application.logMessageReceived += ReportRuntimeFault;
+        }
+
+        private static void ReportRuntimeFault(string condition, string stackTrace, LogType type)
+        {
+            // Keep diagnostics local. The browser receives only a fixed class,
+            // never Unity's condition, stack, device state, or player data.
+            if (nullReferenceReported || type != LogType.Exception
+                || string.IsNullOrEmpty(condition)
+                || !condition.StartsWith("NullReferenceException:", StringComparison.Ordinal)) return;
+            nullReferenceReported = true;
+            try { SlopCity_ReportRuntimeFault(1); }
+            catch (EntryPointNotFoundException) { }
+            catch (DllNotFoundException) { }
+        }
+
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Install()
         {

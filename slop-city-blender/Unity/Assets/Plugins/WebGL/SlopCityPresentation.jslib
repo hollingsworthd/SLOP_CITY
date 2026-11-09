@@ -16,6 +16,12 @@ mergeInto(LibraryManager.library, {
   SlopCity_IsViewportTransition: function () {
     return window.slopCityViewportTransition === true ? 1 : 0;
   },
+  SlopCity_ReportRuntimeFault: function (kind) {
+    try {
+      var report = window.slopCityReportUnityFailure;
+      if (typeof report === "function") report(kind | 0);
+    } catch (_) {}
+  },
   SlopCity_ReportPresentation: function (displayWidth, displayHeight, worldWidth, worldHeight, pixelRatio) {
     var presentation = window.slopCityPresentation;
     if (!presentation) {

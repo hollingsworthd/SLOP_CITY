@@ -589,6 +589,14 @@ namespace SlopCity
             Vector2 viewport = new Vector2(Screen.width, Screen.height);
             Vector2 canvasSize = ((RectTransform)transform).rect.size;
             Rect safeArea = Screen.safeArea;
+            // WebKit can briefly publish a collapsed visual viewport during a
+            // rotation. Preserve the last usable HUD rather than feeding zero or
+            // negative dimensions into a CanvasScaler/action-button relayout.
+            // MobileControls independently holds its layout during the same
+            // transition, so both halves settle on one safe geometry.
+            if (input.UseTouchControls && (SlopCityWebPresentation.IsViewportTransition
+                || viewport.x < 32f || viewport.y < 32f || canvasSize.x < 32f || canvasSize.y < 32f
+                || safeArea.width < 32f || safeArea.height < 32f)) return;
             if (!input.UseTouchControls)
             {
                 if (!force && viewport == lastViewport && canvasSize == lastCanvasSize && safeArea == lastSafeArea) return;
