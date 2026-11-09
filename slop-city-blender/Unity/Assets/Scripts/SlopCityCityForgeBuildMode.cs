@@ -149,6 +149,12 @@ namespace SlopCity
                 SetLauncherStatus("City Forge is preparing your starter ring…");
                 return false;
             }
+            if (!firstPerson) firstPerson = FindObjectOfType<SlopCityFirstPerson>();
+            if (firstPerson && firstPerson.InventoryOpen)
+            {
+                SetLauncherStatus("Close your inventory before entering City Forge.");
+                return false;
+            }
             selected = new CityForgeCoord(2, 0);
             if (!EnsureLoaded(selected)) return false;
             if (!EnsureDraft(selected)) return false;
@@ -987,11 +993,11 @@ namespace SlopCity
         }
         private void RestoreCamera()
         {
+            if (!cursorStateCaptured) return;
             if (buildCamera)
             {
                 buildCamera.transform.position = originalCamera.position; buildCamera.transform.rotation = originalCamera.rotation; buildCamera.orthographic = originalCamera.orthographic; buildCamera.orthographicSize = originalCamera.orthographicSize;
             }
-            if (!cursorStateCaptured) return;
             Cursor.lockState = savedCursorLockState;
             Cursor.visible = savedCursorVisible;
             cursorStateCaptured = false;
