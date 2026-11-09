@@ -72,9 +72,14 @@ namespace SlopCity
         private bool launcherPointerStateKnown;
         private bool launcherPointerAvailable;
         private bool launcherMousePressedInside;
+        private int launcherMouseActivationSequence;
+        private bool launcherMouseGestureConsumed;
         private int launcherTouchFingerId = -1;
         private Vector2 launcherTouchStart;
         private bool launcherTouchCanceled;
+        private int launcherTouchActivationSequence;
+        private bool launcherTouchGestureConsumed;
+        private int observedLauncherPointerActivationSequence;
         private int lastLauncherRequestFrame = -1;
         private const float LauncherTapSlopPixels = 18f;
 
@@ -944,14 +949,25 @@ namespace SlopCity
                 return;
             }
 
+            int activationSequence = LauncherPointerActivationSequence();
+            bool activationSincePreviousUpdate = activationSequence != observedLauncherPointerActivationSequence;
+            if (launcherMousePressedInside && activationSequence != launcherMouseActivationSequence) launcherMouseGestureConsumed = true;
+            if (launcherTouchFingerId >= 0 && activationSequence != launcherTouchActivationSequence) launcherTouchGestureConsumed = true;
+
             if (Input.touchCount == 0)
             {
                 bool mouseInside = LauncherContains(Input.mousePosition);
-                if (Input.GetMouseButtonDown(0)) launcherMousePressedInside = mouseInside;
+                if (Input.GetMouseButtonDown(0))
+                {
+                    launcherMousePressedInside = mouseInside;
+                    launcherMouseActivationSequence = activationSequence;
+                    launcherMouseGestureConsumed = activationSincePreviousUpdate;
+                }
                 if (Input.GetMouseButtonUp(0))
                 {
-                    bool activate = launcherMousePressedInside && mouseInside;
+                    bool activate = launcherMousePressedInside && mouseInside && !launcherMouseGestureConsumed && launcherMouseActivationSequence == LauncherPointerActivationSequence();
                     launcherMousePressedInside = false;
+                    launcherMouseGestureConsumed = false;
                     if (activate) RequestLauncherOpen();
                 }
             }
@@ -966,6 +982,8 @@ namespace SlopCity
                         launcherTouchFingerId = touch.fingerId;
                         launcherTouchStart = touch.position;
                         launcherTouchCanceled = false;
+                        launcherTouchActivationSequence = activationSequence;
+                        launcherTouchGestureConsumed = activationSincePreviousUpdate;
                         continue;
                     }
                     if (touch.fingerId != launcherTouchFingerId) continue;
@@ -973,13 +991,15 @@ namespace SlopCity
                         launcherTouchCanceled = true;
                     if (touch.phase == TouchPhase.Ended || touch.phase == TouchPhase.Canceled)
                     {
-                        bool activate = touch.phase == TouchPhase.Ended && !launcherTouchCanceled && LauncherContains(touch.position);
+                        bool activate = touch.phase == TouchPhase.Ended && !launcherTouchCanceled && !launcherTouchGestureConsumed && LauncherContains(touch.position) && launcherTouchActivationSequence == LauncherPointerActivationSequence();
                         launcherTouchFingerId = -1;
                         launcherTouchCanceled = false;
+                        launcherTouchGestureConsumed = false;
                         if (activate) RequestLauncherOpen();
                     }
                 }
             }
+            observedLauncherPointerActivationSequence = LauncherPointerActivationSequence();
         }
 
         private bool LauncherContains(Vector2 screenPosition)
@@ -991,8 +1011,19 @@ namespace SlopCity
         private void ResetLauncherPointerActivation()
         {
             launcherMousePressedInside = false;
+            launcherMouseActivationSequence = LauncherPointerActivationSequence();
+            launcherMouseGestureConsumed = false;
             launcherTouchFingerId = -1;
             launcherTouchCanceled = false;
+            launcherTouchActivationSequence = LauncherPointerActivationSequence();
+            launcherTouchGestureConsumed = false;
+            observedLauncherPointerActivationSequence = LauncherPointerActivationSequence();
+        }
+
+        private int LauncherPointerActivationSequence()
+        {
+            SlopCityCityForgeLaunchButton button = launcherButton as SlopCityCityForgeLaunchButton;
+            return button ? button.PointerDownActivationSequence : 0;
         }
 
         private void SetLauncherStatus(string value)
@@ -1152,10 +1183,15 @@ namespace SlopCity
     /// <summary>Consumes a launcher gesture at pointer down, before a platform can lose a short mouse-up event.</summary>
     public sealed class SlopCityCityForgeLaunchButton : Button
     {
+        public int PointerDownActivationSequence { get; private set; }
         public override void OnPointerDown(PointerEventData eventData)
         {
             base.OnPointerDown(eventData);
-            if (eventData.button == PointerEventData.InputButton.Left && IsActive() && IsInteractable()) onClick.Invoke();
+            if (eventData.button == PointerEventData.InputButton.Left && IsActive() && IsInteractable())
+            {
+                PointerDownActivationSequence++;
+                onClick.Invoke();
+            }
         }
 
         // Pointer-down deliberately owns the activation so a normal click is
