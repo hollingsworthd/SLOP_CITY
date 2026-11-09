@@ -20,7 +20,7 @@ namespace SlopCity
         [RuntimeInitializeOnLoadMethod(RuntimeInitializeLoadType.AfterSceneLoad)]
         private static void Install()
         {
-            if (ExternalCompositionPresent() || FindObjectOfType<SlopCityCityForgeOfflineBootstrap>()) return;
+            if (ExternalCompositionPresent() || FindFirstObjectByType<SlopCityCityForgeOfflineBootstrap>()) return;
             GameObject root = new GameObject("SlopCityCityForgeOffline");
             root.AddComponent<SlopCityCityForgeOfflineBootstrap>();
         }
@@ -30,7 +30,7 @@ namespace SlopCity
             // Let scene-owned public and private bootstraps register first.
             yield return null;
             if (ExternalCompositionPresent()) { Destroy(gameObject); yield break; }
-            SlopCityFirstPerson player = FindObjectOfType<SlopCityFirstPerson>();
+            SlopCityFirstPerson player = FindFirstObjectByType<SlopCityFirstPerson>();
             if (!player) { Destroy(gameObject); yield break; }
 
             runtime = gameObject.AddComponent<SlopCityCityForgeRuntime>();
@@ -78,7 +78,7 @@ namespace SlopCity
 
         private static bool ExternalCompositionPresent()
         {
-            SlopCityCityForgeCompositionMarker marker = FindObjectOfType<SlopCityCityForgeCompositionMarker>();
+            SlopCityCityForgeCompositionMarker marker = FindFirstObjectByType<SlopCityCityForgeCompositionMarker>();
             return marker != null && marker.BlocksOfflineBootstrap;
         }
     }

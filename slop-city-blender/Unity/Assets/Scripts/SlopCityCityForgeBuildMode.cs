@@ -230,7 +230,7 @@ namespace SlopCity
                 SetLauncherStatus("City Forge is preparing your starter ring…");
                 return false;
             }
-            if (!firstPerson) firstPerson = FindObjectOfType<SlopCityFirstPerson>();
+            if (!firstPerson) firstPerson = FindFirstObjectByType<SlopCityFirstPerson>();
             if (firstPerson && firstPerson.InventoryOpen)
             {
                 SetLauncherStatus("Close your inventory before entering City Forge.");
@@ -250,7 +250,7 @@ namespace SlopCity
         {
             if (!opened) return;
             opened = false; ResetBuildUiPointerActivation(); previewSink?.ClearCityForgeDraftPreview(); strategicMap?.ClearCityForgeStrategicMap(); if (controller && controller.IsInitialized) controller.SetBuildMode(false); RestoreCamera(); GateFirstPerson(false); SetUi(false); SetLauncher(editingEnabled);
-            SlopCityFirstPerson player = FindObjectOfType<SlopCityFirstPerson>();
+            SlopCityFirstPerson player = FindFirstObjectByType<SlopCityFirstPerson>();
             if (player) PlayerNeighbourhoodRequested?.Invoke(new CityForgeCoord(Mathf.FloorToInt(player.transform.position.x / SlopCityCityForge.ChunkSizeMeters), Mathf.FloorToInt(player.transform.position.z / SlopCityCityForge.ChunkSizeMeters)));
             BuildModeChanged?.Invoke(false);
         }
@@ -1270,7 +1270,7 @@ namespace SlopCity
 
         private void ResumeFirstPersonForBuildMode()
         {
-            if (!firstPerson) firstPerson = FindObjectOfType<SlopCityFirstPerson>();
+            if (!firstPerson) firstPerson = FindFirstObjectByType<SlopCityFirstPerson>();
             // The initial pause card is deliberately a hard input modal. A
             // successful City Forge entry replaces it with the editor rather
             // than leaving its full-screen raycaster over the build surface.
@@ -1281,7 +1281,7 @@ namespace SlopCity
         {
             if (gate)
             {
-                if (!firstPerson) firstPerson = FindObjectOfType<SlopCityFirstPerson>();
+                if (!firstPerson) firstPerson = FindFirstObjectByType<SlopCityFirstPerson>();
                 if (!firstPerson) return;
                 firstPersonWasEnabled = firstPerson.enabled;
                 // SetExternalMovement keeps the capsule safe; disabling this public
