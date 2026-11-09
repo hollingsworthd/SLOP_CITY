@@ -81,8 +81,10 @@ namespace SlopCity
         private bool launcherTouchGestureConsumed;
         private int observedLauncherPointerActivationSequence;
         private int lastLauncherRequestFrame = -1;
+        private RectTransform buildUiSurface;
         private readonly List<Button> buildUiButtons = new List<Button>();
         private Button buildUiMouseCapture;
+        private bool buildUiMouseSurfaceCapture;
         private int buildUiMousePressFrame = -1;
         private Button buildUiTouchCapture;
         private int buildUiTouchFingerId = -1;
@@ -90,6 +92,10 @@ namespace SlopCity
         private Vector2 buildUiTouchStart;
         private bool buildUiTouchCanceled;
         private bool buildUiTouchReleasedThisFrame;
+        // A touch which began on the toolbar owns the whole multi-touch
+        // gesture. This prevents its remaining finger from becoming a map
+        // gesture after the toolbar finger is released.
+        private bool suppressBuildUiTouchUntilNoTouches;
         private const float LauncherTapSlopPixels = 18f;
 
         public bool IsOpen { get { return opened; } }
@@ -147,7 +153,7 @@ namespace SlopCity
             if (Input.GetKeyDown(KeyCode.Z) && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))) Undo();
             if (Input.GetKeyDown(KeyCode.Y) && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))) Redo();
             if (Input.GetMouseButtonDown(0) && Input.touchCount == 0 && !mouseStartedOverBuildUi && !(EventSystem.current && EventSystem.current.IsPointerOverGameObject())) ClickMap(Input.mousePosition);
-            if (Input.touchCount == 1 && buildUiTouchFingerId < 0)
+            if (Input.touchCount == 1 && !suppressBuildUiTouchUntilNoTouches && buildUiTouchFingerId < 0)
             {
                 Touch touch = Input.GetTouch(0);
                 if (touch.phase == TouchPhase.Ended || touch.phase == TouchPhase.Canceled)
@@ -847,7 +853,7 @@ namespace SlopCity
             root.transform.SetParent(transform, false); canvas = root.GetComponent<Canvas>(); canvas.renderMode = RenderMode.ScreenSpaceOverlay; canvas.overrideSorting = true; canvas.sortingOrder = CityForgeCanvasSortingOrder;
             CanvasScaler scaler = root.GetComponent<CanvasScaler>(); scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize; scaler.referenceResolution = new Vector2(1280, 720);
             Image panel = root.AddComponent<Image>(); panel.color = new Color(.03f, .05f, .06f, .92f);
-            RectTransform rect = root.GetComponent<RectTransform>(); rect.anchorMin = new Vector2(0f, 1f); rect.anchorMax = new Vector2(1f, 1f); rect.pivot = new Vector2(.5f, 1f); rect.sizeDelta = new Vector2(0f, 248f);
+            buildUiSurface = root.GetComponent<RectTransform>(); buildUiSurface.anchorMin = new Vector2(0f, 1f); buildUiSurface.anchorMax = new Vector2(1f, 1f); buildUiSurface.pivot = new Vector2(.5f, 1f); buildUiSurface.sizeDelta = new Vector2(0f, 248f);
             heading = Label(root.transform, "City Forge", 20, new Vector2(12, -12), new Vector2(620, 28));
             message = Label(root.transform, "Tap a grid cell to edit. Drag to pan; pinch to zoom. Hold Shift while tapping cells to shape a lot.", 14, new Vector2(12, -218), new Vector2(1230, 22));
             float x = 12f;
@@ -895,7 +901,7 @@ namespace SlopCity
             root.transform.SetParent(transform, false);
             launcherCanvas = root.GetComponent<Canvas>(); launcherCanvas.renderMode = RenderMode.ScreenSpaceOverlay; launcherCanvas.overrideSorting = true; launcherCanvas.sortingOrder = CityForgeCanvasSortingOrder;
             CanvasScaler scaler = root.GetComponent<CanvasScaler>(); scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize; scaler.referenceResolution = new Vector2(1280, 720);
-            launcherButton = Button(root.transform, "BUILD CITY", Vector2.zero, new Vector2(188f, 52f));
+            launcherButton = Button(root.transform, "BUILD CITY", Vector2.zero, new Vector2(188f, 52f), true);
             RectTransform rect = launcherButton.GetComponent<RectTransform>(); rect.anchorMin = Vector2.zero; rect.anchorMax = Vector2.zero; rect.pivot = Vector2.zero; rect.anchoredPosition = new Vector2(22f, 22f);
             launcherStatus = Label(root.transform, "Open City Forge · B", 13, Vector2.zero, new Vector2(420f, 24f));
             RectTransform statusRect = launcherStatus.GetComponent<RectTransform>(); statusRect.anchorMin = Vector2.zero; statusRect.anchorMax = Vector2.zero; statusRect.pivot = Vector2.zero; statusRect.anchoredPosition = new Vector2(22f, 80f);
@@ -1050,34 +1056,39 @@ namespace SlopCity
             bool mouseStartedOverBuildUi = false;
             if (Input.touchCount == 0)
             {
+                ClearBuildUiTouchCapture();
+                suppressBuildUiTouchUntilNoTouches = false;
                 if (Input.GetMouseButtonDown(0))
                 {
-                    buildUiMouseCapture = BuildUiButtonAt(Input.mousePosition);
+                    buildUiMouseSurfaceCapture = BuildUiSurfaceContains(Input.mousePosition);
+                    buildUiMouseCapture = buildUiMouseSurfaceCapture ? BuildUiActivatableButtonAt(Input.mousePosition) : null;
                     buildUiMousePressFrame = Time.frameCount;
-                    mouseStartedOverBuildUi = buildUiMouseCapture;
+                    mouseStartedOverBuildUi = buildUiMouseSurfaceCapture;
                 }
                 if (Input.GetMouseButtonUp(0))
                 {
                     Button capture = buildUiMouseCapture;
-                    bool activate = capture && BuildUiButtonAt(Input.mousePosition) == capture && !BuildUiButtonActivatedOnOrAfter(capture, buildUiMousePressFrame);
+                    bool activate = buildUiMouseSurfaceCapture && capture && BuildUiActivatableButtonAt(Input.mousePosition) == capture && !BuildUiButtonActivatedOnOrAfter(capture, buildUiMousePressFrame);
                     buildUiMouseCapture = null;
+                    buildUiMouseSurfaceCapture = false;
                     buildUiMousePressFrame = -1;
-                    if (activate) capture.onClick.Invoke();
+                    if (activate) InvokeBuildUiFallback(capture, PointerInputModule.kMouseLeftId);
                 }
             }
             else
             {
                 buildUiMouseCapture = null;
+                buildUiMouseSurfaceCapture = false;
                 buildUiMousePressFrame = -1;
                 for (int index = 0; index < Input.touchCount; index++)
                 {
                     Touch touch = Input.GetTouch(index);
-                    if (touch.phase == TouchPhase.Began && buildUiTouchFingerId < 0)
+                    if (touch.phase == TouchPhase.Began && BuildUiSurfaceContains(touch.position))
                     {
-                        Button target = BuildUiButtonAt(touch.position);
-                        if (target)
+                        suppressBuildUiTouchUntilNoTouches = true;
+                        if (buildUiTouchFingerId < 0)
                         {
-                            buildUiTouchCapture = target;
+                            buildUiTouchCapture = BuildUiActivatableButtonAt(touch.position);
                             buildUiTouchFingerId = touch.fingerId;
                             buildUiTouchPressFrame = Time.frameCount;
                             buildUiTouchStart = touch.position;
@@ -1091,45 +1102,80 @@ namespace SlopCity
                     if (touch.phase == TouchPhase.Ended || touch.phase == TouchPhase.Canceled)
                     {
                         Button capture = buildUiTouchCapture;
-                        buildUiTouchReleasedThisFrame = capture;
-                        bool activate = touch.phase == TouchPhase.Ended && capture && !buildUiTouchCanceled && BuildUiButtonAt(touch.position) == capture && !BuildUiButtonActivatedOnOrAfter(capture, buildUiTouchPressFrame);
-                        buildUiTouchCapture = null;
-                        buildUiTouchFingerId = -1;
-                        buildUiTouchPressFrame = -1;
-                        buildUiTouchCanceled = false;
-                        if (activate) capture.onClick.Invoke();
+                        buildUiTouchReleasedThisFrame = true;
+                        bool activate = touch.phase == TouchPhase.Ended && capture && !buildUiTouchCanceled && BuildUiActivatableButtonAt(touch.position) == capture && !BuildUiButtonActivatedOnOrAfter(capture, buildUiTouchPressFrame);
+                        ClearBuildUiTouchCapture();
+                        if (activate) InvokeBuildUiFallback(capture, touch.fingerId);
                     }
                 }
+                // A browser can drop an Ended/Canceled event. Keep an actual
+                // ended touch long enough to consume its release, then clear a
+                // capture only when its finger has genuinely disappeared.
+                if (buildUiTouchFingerId >= 0 && !BuildUiTouchIsPresent(buildUiTouchFingerId)) ClearBuildUiTouchCapture();
             }
             return mouseStartedOverBuildUi;
         }
 
-        private Button BuildUiButtonAt(Vector2 screenPosition)
+        private bool BuildUiSurfaceContains(Vector2 screenPosition)
+        {
+            return buildUiSurface && buildUiSurface.gameObject.activeInHierarchy && RectTransformUtility.RectangleContainsScreenPoint(buildUiSurface, screenPosition, null);
+        }
+
+        private Button BuildUiActivatableButtonAt(Vector2 screenPosition)
         {
             for (int index = buildUiButtons.Count - 1; index >= 0; index--)
             {
                 Button button = buildUiButtons[index];
                 RectTransform rect = button ? button.GetComponent<RectTransform>() : null;
-                if (button && button.interactable && button.gameObject.activeInHierarchy && rect && RectTransformUtility.RectangleContainsScreenPoint(rect, screenPosition, null)) return button;
+                if (button && button.IsActive() && button.IsInteractable() && rect && RectTransformUtility.RectangleContainsScreenPoint(rect, screenPosition, null)) return button;
             }
             return null;
         }
 
         private static bool BuildUiButtonActivatedOnOrAfter(Button button, int pressFrame)
         {
-            SlopCityCityForgeActionButton immediate = button as SlopCityCityForgeActionButton;
-            return immediate && immediate.LastPointerDownActivationFrame >= pressFrame;
+            SlopCityCityForgeActionButton action = button as SlopCityCityForgeActionButton;
+            return action && action.LastActivationFrame >= pressFrame;
+        }
+
+        private static bool BuildUiTouchIsPresent(int fingerId)
+        {
+            if (fingerId < 0) return false;
+            for (int index = 0; index < Input.touchCount; index++) if (Input.GetTouch(index).fingerId == fingerId) return true;
+            return SlopCityPlayerInput.TouchIsActive(fingerId);
+        }
+
+        private static void InvokeBuildUiFallback(Button button, int pointerId)
+        {
+            if (!button || !button.IsActive() || !button.IsInteractable()) return;
+            SlopCityCityForgeActionButton action = button as SlopCityCityForgeActionButton;
+            if (action) action.SuppressNextPointerClick(pointerId);
+            button.onClick.Invoke();
+        }
+
+        private void ClearBuildUiTouchCapture()
+        {
+            buildUiTouchCapture = null;
+            buildUiTouchFingerId = -1;
+            buildUiTouchPressFrame = -1;
+            buildUiTouchCanceled = false;
         }
 
         private void ResetBuildUiPointerActivation()
         {
             buildUiMouseCapture = null;
+            buildUiMouseSurfaceCapture = false;
             buildUiMousePressFrame = -1;
-            buildUiTouchCapture = null;
-            buildUiTouchFingerId = -1;
-            buildUiTouchPressFrame = -1;
-            buildUiTouchCanceled = false;
+            ClearBuildUiTouchCapture();
             buildUiTouchReleasedThisFrame = false;
+            suppressBuildUiTouchUntilNoTouches = false;
+        }
+
+        private void CancelBuildUiPointerActivation()
+        {
+            bool hadBuildUiTouch = suppressBuildUiTouchUntilNoTouches || buildUiTouchFingerId >= 0;
+            ResetBuildUiPointerActivation();
+            suppressBuildUiTouchUntilNoTouches = hadBuildUiTouch;
         }
 
         private void SetLauncherStatus(string value)
@@ -1171,12 +1217,12 @@ namespace SlopCity
             RectTransform rect = item.GetComponent<RectTransform>(); rect.anchorMin = new Vector2(0f, 1f); rect.anchorMax = new Vector2(0f, 1f); rect.pivot = new Vector2(0f, 1f); rect.anchoredPosition = anchored; rect.sizeDelta = size;
             Text text = item.GetComponent<Text>(); text.text = value; text.font = Resources.GetBuiltinResource<Font>("Arial.ttf"); text.fontSize = fontSize; text.color = Color.white; text.alignment = TextAnchor.MiddleLeft; text.raycastTarget = false; return text;
         }
-        private static Button Button(Transform parent, string label, Vector2 anchored, Vector2 size)
+        private static Button Button(Transform parent, string label, Vector2 anchored, Vector2 size, bool invokeOnMousePointerDown = false)
         {
             GameObject item = new GameObject("Button_" + label, typeof(RectTransform), typeof(Image)); item.transform.SetParent(parent, false);
             RectTransform rect = item.GetComponent<RectTransform>(); rect.anchorMin = new Vector2(0f, 1f); rect.anchorMax = new Vector2(0f, 1f); rect.pivot = new Vector2(0f, 1f); rect.anchoredPosition = anchored; rect.sizeDelta = size;
             Image image = item.GetComponent<Image>(); image.color = new Color(.23f, .34f, .25f, 1f);
-            Button button = item.AddComponent<SlopCityCityForgeActionButton>();
+            SlopCityCityForgeActionButton button = item.AddComponent<SlopCityCityForgeActionButton>(); button.InvokeOnMousePointerDown = invokeOnMousePointerDown;
             Text text = Label(item.transform, label, 13, Vector2.zero, size); text.alignment = TextAnchor.MiddleCenter; RectTransform textRect = text.GetComponent<RectTransform>(); textRect.anchorMin = Vector2.zero; textRect.anchorMax = Vector2.one; textRect.pivot = new Vector2(.5f, .5f); textRect.anchoredPosition = Vector2.zero; return button;
         }
         private void SetUi(bool visible) { if (canvas) canvas.gameObject.SetActive(visible); }
@@ -1241,7 +1287,7 @@ namespace SlopCity
             float pan = topDownHeight * .45f * Time.unscaledDeltaTime; Vector3 delta = new Vector3(Input.GetAxisRaw("Horizontal") * pan, 0f, Input.GetAxisRaw("Vertical") * pan);
             if (delta.sqrMagnitude > 0f) buildCamera.transform.position += delta;
             float wheel = Input.GetAxis("Mouse ScrollWheel"); if (Mathf.Abs(wheel) > .001f) { topDownHeight = Mathf.Clamp(topDownHeight - wheel * 45f, 40f, 280f); buildCamera.orthographicSize = topDownHeight * .55f; buildCamera.transform.position = new Vector3(buildCamera.transform.position.x, topDownHeight, buildCamera.transform.position.z); }
-            if (Input.touchCount == 1 && buildUiTouchFingerId < 0)
+            if (Input.touchCount == 1 && !suppressBuildUiTouchUntilNoTouches && buildUiTouchFingerId < 0)
             {
                 Touch touch = Input.GetTouch(0);
                 if (touch.phase == TouchPhase.Began) { lastTouchPosition = touch.position; touchPanned = false; }
@@ -1255,7 +1301,7 @@ namespace SlopCity
                 }
                 lastPinchDistance = 0f;
             }
-            else if (Input.touchCount >= 2 && buildUiTouchFingerId < 0)
+            else if (Input.touchCount >= 2 && !suppressBuildUiTouchUntilNoTouches && buildUiTouchFingerId < 0)
             {
                 Touch first = Input.GetTouch(0); Touch second = Input.GetTouch(1);
                 float distance = Vector2.Distance(first.position, second.position);
@@ -1270,11 +1316,11 @@ namespace SlopCity
         }
         private void OnApplicationFocus(bool focused)
         {
-            if (!focused) { ResetLauncherPointerActivation(); ResetBuildUiPointerActivation(); }
+            if (!focused) { ResetLauncherPointerActivation(); CancelBuildUiPointerActivation(); }
         }
         private void OnApplicationPause(bool paused)
         {
-            if (paused) { ResetLauncherPointerActivation(); ResetBuildUiPointerActivation(); }
+            if (paused) { ResetLauncherPointerActivation(); CancelBuildUiPointerActivation(); }
         }
         private void OnDisable() { ResetLauncherPointerActivation(); ResetBuildUiPointerActivation(); }
         private struct CameraState { public Vector3 position; public Quaternion rotation; public bool orthographic; public float orthographicSize; }
@@ -1286,24 +1332,52 @@ namespace SlopCity
         }
     }
 
-    /// <summary>Consumes a City Forge mouse gesture at pointer down before a platform can lose a short mouse-up event.</summary>
+    /// <summary>Tracks City Forge button activation and gives the launcher an optional pointer-down fast path.</summary>
     public sealed class SlopCityCityForgeActionButton : Button
     {
+        private const int NoPointer = int.MinValue;
+        private int suppressedPointerClickId = NoPointer;
+        private int suppressedPointerClickFrame = -1;
+        public bool InvokeOnMousePointerDown { get; set; }
         public int PointerDownActivationSequence { get; private set; }
-        public int LastPointerDownActivationFrame { get; private set; } = -1;
+        public int LastActivationFrame { get; private set; } = -1;
+
+        public void SuppressNextPointerClick(int pointerId)
+        {
+            suppressedPointerClickId = pointerId;
+            suppressedPointerClickFrame = Time.frameCount;
+        }
+
         public override void OnPointerDown(PointerEventData eventData)
         {
+            // Clear a suppression left by a raw fallback that never received
+            // its matching UGUI click before accepting a new gesture.
+            if (eventData.pointerId == suppressedPointerClickId && Time.frameCount > suppressedPointerClickFrame)
+            {
+                suppressedPointerClickId = NoPointer;
+                suppressedPointerClickFrame = -1;
+            }
             base.OnPointerDown(eventData);
-            if (eventData.pointerId == PointerInputModule.kMouseLeftId && eventData.button == PointerEventData.InputButton.Left && IsActive() && IsInteractable())
+            if (InvokeOnMousePointerDown && eventData.pointerId == PointerInputModule.kMouseLeftId && eventData.button == PointerEventData.InputButton.Left && IsActive() && IsInteractable())
             {
                 PointerDownActivationSequence++;
-                LastPointerDownActivationFrame = Time.frameCount;
+                LastActivationFrame = Time.frameCount;
+                SuppressNextPointerClick(eventData.pointerId);
                 onClick.Invoke();
             }
         }
 
-        // Pointer-down deliberately owns the activation so a normal click is
-        // never dispatched twice. Keyboard Submit remains Button's default.
-        public override void OnPointerClick(PointerEventData eventData) { }
+        public override void OnPointerClick(PointerEventData eventData)
+        {
+            if (eventData.pointerId == suppressedPointerClickId)
+            {
+                suppressedPointerClickId = NoPointer;
+                suppressedPointerClickFrame = -1;
+                return;
+            }
+            if (!IsActive() || !IsInteractable()) return;
+            LastActivationFrame = Time.frameCount;
+            base.OnPointerClick(eventData);
+        }
     }
 }
