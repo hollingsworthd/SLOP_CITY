@@ -819,7 +819,7 @@ namespace SlopCity
             CanvasScaler scaler = root.GetComponent<CanvasScaler>(); scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize; scaler.referenceResolution = new Vector2(1280, 720);
             Button button = Button(root.transform, "BUILD CITY", Vector2.zero, new Vector2(132f, 40f));
             RectTransform rect = button.GetComponent<RectTransform>(); rect.anchorMin = Vector2.zero; rect.anchorMax = Vector2.zero; rect.pivot = Vector2.zero; rect.anchoredPosition = new Vector2(18f, 18f);
-            button.onClick.AddListener(Open); SetLauncher(editingEnabled);
+            button.onClick.AddListener(() => Open()); SetLauncher(editingEnabled);
         }
 
         private void SetLauncher(bool visible) { if (launcherCanvas) launcherCanvas.gameObject.SetActive(visible); }

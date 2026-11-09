@@ -105,15 +105,15 @@ namespace SlopCity
             if (SlopCityCityForge.IsProtectedOldCity(coord) || !CityForgeIds.IsHash(baseHash)) { error = path + " has a protected coordinate or invalid base hash."; return false; }
             long revision = 0;
             if (raw.ContainsKey("revision") && !Integer(raw, "revision", 1, MaximumSafeInteger, path + ".revision", out revision, out error)) return false;
-            if (!Array(raw, "roads", path + ".roads", SlopCityCityForge.MaximumRoadRecords, out List<object> rawRoads, out error)
-                || !Array(raw, "removedRoadEdges", path + ".removedRoadEdges", SlopCityCityForge.MaximumRoadRecords, out List<object> removed, out error)
-                || !Array(raw, "parcels", path + ".parcels", SlopCityCityForge.MaximumParcelRecords, out List<object> rawParcels, out error)
-                || !Array(raw, "buildings", path + ".buildings", SlopCityCityForge.MaximumBuildingRecords, out List<object> rawBuildings, out error)
-                || !Array(raw, "services", path + ".services", SlopCityCityForge.MaximumServiceRecords, out List<object> rawServices, out error)
-                || !Array(raw, "screens", path + ".screens", SlopCityCityForge.MaximumScreenRecords, out List<object> rawScreens, out error)
-                || !Array(raw, "landmarks", path + ".landmarks", SlopCityCityForge.MaximumLandmarkRecords, out List<object> rawLandmarks, out error)
-                || !Array(raw, "situations", path + ".situations", 96, out List<object> rawSituations, out error)
-                || !Array(raw, "demolishedIds", path + ".demolishedIds", SlopCityCityForge.MaximumBuildingRecords + SlopCityCityForge.MaximumServiceRecords, out List<object> demolished, out error)) return false;
+            if (!ReadArray(raw, "roads", path + ".roads", SlopCityCityForge.MaximumRoadRecords, out List<object> rawRoads, out error)
+                || !ReadArray(raw, "removedRoadEdges", path + ".removedRoadEdges", SlopCityCityForge.MaximumRoadRecords, out List<object> removed, out error)
+                || !ReadArray(raw, "parcels", path + ".parcels", SlopCityCityForge.MaximumParcelRecords, out List<object> rawParcels, out error)
+                || !ReadArray(raw, "buildings", path + ".buildings", SlopCityCityForge.MaximumBuildingRecords, out List<object> rawBuildings, out error)
+                || !ReadArray(raw, "services", path + ".services", SlopCityCityForge.MaximumServiceRecords, out List<object> rawServices, out error)
+                || !ReadArray(raw, "screens", path + ".screens", SlopCityCityForge.MaximumScreenRecords, out List<object> rawScreens, out error)
+                || !ReadArray(raw, "landmarks", path + ".landmarks", SlopCityCityForge.MaximumLandmarkRecords, out List<object> rawLandmarks, out error)
+                || !ReadArray(raw, "situations", path + ".situations", 96, out List<object> rawSituations, out error)
+                || !ReadArray(raw, "demolishedIds", path + ".demolishedIds", SlopCityCityForge.MaximumBuildingRecords + SlopCityCityForge.MaximumServiceRecords, out List<object> demolished, out error)) return false;
 
             if (!ReadRoads(rawRoads, path + ".roads", out List<CityForgeRoad> roads, out HashSet<string> roadEdges, out error)
                 || !ReadRemovedRoads(removed, roadEdges, path + ".removedRoadEdges", out List<string> removedEdges, out error)
@@ -168,7 +168,7 @@ namespace SlopCity
                 if (!(raw[index] is Dictionary<string, object> row) || !Exact(row, new[] { "id", "cells", "zone" }, Array.Empty<string>(), itemPath, out error)
                     || !String(row, "id", itemPath + ".id", out string id, out error) || !String(row, "zone", itemPath + ".zone", out string zone, out error)
                     || !CityForgeIds.IsId(id) || byId.ContainsKey(id) || !Zone(zone, out CityForgeZone typed)
-                    || !Array(row, "cells", itemPath + ".cells", 81, out List<object> cells, out error) || cells.Count == 0) { error = itemPath + " is not an approved parcel."; return false; }
+                    || !ReadArray(row, "cells", itemPath + ".cells", 81, out List<object> cells, out error) || cells.Count == 0) { error = itemPath + " is not an approved parcel."; return false; }
                 CityForgeParcel parcel = new CityForgeParcel { id = id, zone = typed, cells = new List<int>(), entranceEdge = CityForgeDirection.North };
                 foreach (object rawCell in cells)
                 {
@@ -452,7 +452,7 @@ namespace SlopCity
             if (!value.TryGetValue(key, out object raw) || !(raw is Dictionary<string, object> objectValue)) { error = path + " must be an object."; return false; }
             result = objectValue; return true;
         }
-        private static bool Array(Dictionary<string, object> value, string key, string path, int maximum, out List<object> result, out string error)
+        private static bool ReadArray(Dictionary<string, object> value, string key, string path, int maximum, out List<object> result, out string error)
         {
             result = null; error = null;
             if (!value.TryGetValue(key, out object raw) || !(raw is List<object> array) || array.Count > maximum) { error = path + " must be a bounded array."; return false; }
@@ -517,7 +517,7 @@ namespace SlopCity
                 || !Exact(rawPage, new[] { "centre", "radius", "chunks" }, Array.Empty<string>(), "$.page", out error)
                 || !Coord(rawPage, "centre", "$.page.centre", out CityForgeCoord centre, out error)
                 || !Integer(rawPage, "radius", 0, MaximumPageRadius, "$.page.radius", out long radiusLong, out error)
-                || !Array(rawPage, "chunks", "$.page.chunks", (int)((radiusLong * 2 + 1) * (radiusLong * 2 + 1)), out List<object> chunks, out error)) return false;
+                || !ReadArray(rawPage, "chunks", "$.page.chunks", (int)((radiusLong * 2 + 1) * (radiusLong * 2 + 1)), out List<object> chunks, out error)) return false;
             if (chunks.Count != 1) { error = "A hosted City Forge page must contain exactly one chunk."; return false; }
             bool canEdit = false;
             if (root.ContainsKey("canEdit"))
@@ -569,7 +569,7 @@ namespace SlopCity
                 || !String(root, "chunkMapRoot", "$.chunkMapRoot", out string mapRoot, out error)
                 || !Coord(root, "centre", "$.centre", out CityForgeCoord centre, out error)
                 || !Integer(root, "radius", 0, 6, "$.radius", out long radius, out error)
-                || !Array(root, "chunks", "$.chunks", SlopCityCityForge.MaximumStrategicSummaryRecords, out List<object> rows, out error)) return false;
+                || !ReadArray(root, "chunks", "$.chunks", SlopCityCityForge.MaximumStrategicSummaryRecords, out List<object> rows, out error)) return false;
             if (!CityForgeIds.IsHash(mapRoot) || !SlopCityCityForge.IsBuildable(centre) || revision != expectedHead.activeWorldRevision || !string.Equals(mapRoot, expectedHead.chunkMapRoot, StringComparison.Ordinal))
             {
                 error = "The City Forge strategic map does not match the current World Head.";
@@ -659,7 +659,7 @@ namespace SlopCity
                 || !Exact(root, new[] { "worldRevision", "chunkMapRoot", "outcomes" }, Array.Empty<string>(), "$", out error)
                 || !Integer(root, "worldRevision", 1, MaximumSafeInteger, "$.worldRevision", out long revision, out error)
                 || !String(root, "chunkMapRoot", "$.chunkMapRoot", out string mapRoot, out error)
-                || !Array(root, "outcomes", "$.outcomes", SlopCityCityForge.MaximumOutcomeIndexEntries, out List<object> rows, out error)) return false;
+                || !ReadArray(root, "outcomes", "$.outcomes", SlopCityCityForge.MaximumOutcomeIndexEntries, out List<object> rows, out error)) return false;
             if (!CityForgeIds.IsHash(mapRoot) || revision != expectedHead.activeWorldRevision || !string.Equals(mapRoot, expectedHead.chunkMapRoot, StringComparison.Ordinal))
             {
                 error = "The City Forge outcome index does not match the current World Head.";

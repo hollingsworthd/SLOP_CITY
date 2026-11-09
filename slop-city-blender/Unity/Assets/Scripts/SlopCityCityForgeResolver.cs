@@ -1087,6 +1087,11 @@ namespace SlopCity
             else return false;
             x = value[0] - '0'; z = value[2] - '0'; return true;
         }
+        private static string RoadEdge(CityForgeRoad road)
+        {
+            return road.cellX.ToString(CultureInfo.InvariantCulture) + "," + road.cellZ.ToString(CultureInfo.InvariantCulture) + ":" +
+                (road.direction == CityForgeDirection.North ? "north" : road.direction == CityForgeDirection.East ? "east" : road.direction == CityForgeDirection.South ? "south" : "west");
+        }
         private static string RoadLocalKey(int x, int z, CityForgeDirection direction) { return x.ToString(CultureInfo.InvariantCulture) + ":" + z.ToString(CultureInfo.InvariantCulture) + ":" + ((int)direction).ToString(CultureInfo.InvariantCulture); }
     }
 

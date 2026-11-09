@@ -179,7 +179,7 @@ namespace SlopCity
             byte[] input = Encoding.UTF8.GetBytes(value ?? string.Empty);
             using (MemoryStream target = new MemoryStream())
             {
-                using (DeflateStream stream = new DeflateStream(target, CompressionLevel.Optimal, true)) stream.Write(input, 0, input.Length);
+                using (DeflateStream stream = new DeflateStream(target, System.IO.Compression.CompressionLevel.Optimal, true)) stream.Write(input, 0, input.Length);
                 return Convert.ToBase64String(target.ToArray());
             }
         }
