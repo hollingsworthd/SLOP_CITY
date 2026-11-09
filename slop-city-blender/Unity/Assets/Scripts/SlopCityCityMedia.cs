@@ -292,7 +292,10 @@ namespace SlopCity
 
         public void RegisterScreen(SlopCityCityScreen screen)
         {
-            if (!screen || !screen.isActiveAndEnabled || !isActiveAndEnabled || !screen.Display || !screenShader || !screenShader.isSupported || screens.Contains(screen)) return;
+            // Never let a construction or scene-discovery caller bypass the
+            // bounded admission layer. City Forge screen fixtures remain
+            // physical while unadmitted, but own no media resources.
+            if (!screen || !screen.MediaAdmitted || !screen.isActiveAndEnabled || !isActiveAndEnabled || !screen.Display || !screenShader || !screenShader.isSupported || screens.Contains(screen)) return;
             int selected = Mathf.Clamp(screen.Channel, 0, ChannelCount - 1);
             if (channels[selected] == null) return;
             if (!RetryRetiredScreenResources())
@@ -437,6 +440,7 @@ namespace SlopCity
 
         private void RemoveScreen(ScreenState display)
         {
+            string assignedClip = display.screen ? display.screen.ClipKey : null;
             display.generation++;
             try
             {
@@ -452,7 +456,10 @@ namespace SlopCity
                 displays.Remove(display);
                 candidates.Remove(display);
                 CleanupMedia(() => { if (display.screen) display.screen.Restore(); });
-                ReleaseAssignedClipRef(display.screen ? display.screen.ClipKey : null);
+                ReleaseAssignedClipRef(assignedClip);
+                // An evicted City Forge fixture returns to a neutral physical
+                // screen and cannot retain an old clip identifier or title.
+                if (display.screen) display.screen.ClearAssignedClip();
                 ReleaseScreenResources(display);
             }
             // Retry entries are shared clip/catalog backoff, rather than screen

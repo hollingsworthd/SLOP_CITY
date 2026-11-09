@@ -1,0 +1,938 @@
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using UnityEngine;
+using UnityEngine.EventSystems;
+using UnityEngine.UI;
+
+namespace SlopCity
+{
+    /// <summary>Public top-down City Forge editor for bounded grid plans.</summary>
+    [DisallowMultipleComponent]
+    public sealed class SlopCityCityForgeBuildMode : MonoBehaviour
+    {
+        public enum View { Streets, Lots, Buildings, Services, Life }
+
+        [SerializeField] private SlopCityCityForgeController controller;
+        [SerializeField] private Camera buildCamera;
+        [SerializeField] private MonoBehaviour previewSinkComponent;
+        [SerializeField] private KeyCode toggleKey = KeyCode.B;
+        [SerializeField, Range(40f, 280f)] private float topDownHeight = 130f;
+        [SerializeField] private bool editingEnabled = true;
+        private Canvas canvas;
+        private Canvas launcherCanvas;
+        private Text heading, message;
+        private Button undoButton, redoButton;
+        private Button roadButton, removeRoadButton, zoneButton, kitButton, facadeButton, roofButton, storefrontButton, entranceButton, floorsButton, interiorButton, serviceButton, landmarkButton, situationButton, situationStateButton, mountButton, hostButton, targetButton, deviceButton;
+        private readonly Dictionary<View, Button> viewButtons = new Dictionary<View, Button>();
+        private CityForgeCoord selected;
+        private CityForgeChunkPlan draft;
+        private SlopCityCityForgeDraftHistory history;
+        private View view;
+        private bool opened;
+        private CityForgeRoadClass roadClass = CityForgeRoadClass.LocalStreet;
+        private CityForgeZone lotZone = CityForgeZone.Home;
+        private bool removeRoad;
+        private string buildingBlueprint = "walk-up", facade = "wet-masonry", roof = "service-roof", storefront = "none", interior = "";
+        private string serviceType = "care-station", landmarkClass = "", landmarkOutcome = "", situationTemplate = "", situationState = "available", screenMount = "interior-wall-tv", screenDevice = "public-crt-01";
+        private int screenHostMode;
+        private string screenHostId = string.Empty;
+        private int buildingFloors = 2;
+        private CityForgeDirection entrance = CityForgeDirection.North;
+        private readonly HashSet<int> lotFootprint = new HashSet<int>();
+        // A boundary connection is one player gesture but two authoritative
+        // plans. Keep that small atomic set separate from the selected canvas
+        // block so it can be previewed, undone, and committed together.
+        private readonly Dictionary<CityForgeCoord, CityForgeChunkPlan> atomicDrafts = new Dictionary<CityForgeCoord, CityForgeChunkPlan>();
+        private readonly Dictionary<CityForgeCoord, CityForgeChunkPlan> atomicBaselines = new Dictionary<CityForgeCoord, CityForgeChunkPlan>();
+        private readonly Stack<Dictionary<CityForgeCoord, CityForgeChunkPlan>> atomicUndo = new Stack<Dictionary<CityForgeCoord, CityForgeChunkPlan>>();
+        private readonly Stack<Dictionary<CityForgeCoord, CityForgeChunkPlan>> atomicRedo = new Stack<Dictionary<CityForgeCoord, CityForgeChunkPlan>>();
+        private CameraState originalCamera;
+        private ISlopCityCityForgeDraftPreviewSink previewSink;
+        private ISlopCityCityForgeStrategicMapSink strategicMap;
+        private ISlopCityCityForgeStrategicSummarySink strategicSummaryMap;
+        private CityForgeCoord pendingNavigation;
+        private bool hasPendingNavigation;
+        private SlopCityFirstPerson firstPerson;
+        private bool firstPersonWasEnabled;
+        private Vector2 lastTouchPosition;
+        private float lastPinchDistance;
+        private bool touchPanned;
+
+        public bool IsOpen { get { return opened; } }
+        public bool EditingEnabled { get { return editingEnabled; } }
+        public View ActiveView { get { return view; } }
+        public CityForgeCoord SelectedChunk { get { return selected; } }
+        public CityForgeChunkPlan Draft { get { return draft == null ? null : draft.Clone(); } }
+        /// <summary>Only the plans materially changed from their loaded baseline.</summary>
+        public IReadOnlyList<CityForgeChunkPlan> AtomicDrafts { get { return PlansForCommit(); } }
+        public bool HasPendingNavigation { get { return hasPendingNavigation; } }
+        public CityForgeCoord PendingNavigation { get { return pendingNavigation; } }
+        public event Action<CityForgeChunkPlan> PreviewRequested;
+        /// <summary>Raised with a clone after an accepted local edit, undo, or redo; never merely on opening a block.</summary>
+        public event Action<CityForgeChunkPlan> DraftChanged;
+        public event Action<CityForgeResolvedChunk> DraftPreviewCompiled;
+        public event Action<IReadOnlyList<CityForgeChunkPlan>> CommitRequested;
+        public event Action<bool> BuildModeChanged;
+        /// <summary>Raised on close so public/offline streaming can return to the walker's neighborhood without a topology reload.</summary>
+        public event Action<CityForgeCoord> PlayerNeighbourhoodRequested;
+        /// <summary>Bridge hook: return false until the requested center and all radius-one neighbors are loaded and verified.</summary>
+        public event Func<CityForgeCoord, bool> EnsureChunkLoaded;
+        /// <summary>Bridge hook: return false until the durable draft for this verified chunk has been hydrated.</summary>
+        public event Func<CityForgeCoord, bool> EnsureDraftLoaded;
+        /// <summary>Bridge hook for a reciprocal boundary peer; it must not navigate or replace the selected center.</summary>
+        public event Func<CityForgeCoord, bool> EnsureAtomicNeighbourLoaded;
+        public event Action<CityForgeCoord> ChunkNavigationRequested;
+
+        private void Awake()
+        {
+            if (!controller) controller = GetComponent<SlopCityCityForgeController>();
+            if (!buildCamera) buildCamera = Camera.main;
+            previewSink = previewSinkComponent as ISlopCityCityForgeDraftPreviewSink ?? FindPreviewSink();
+            strategicMap = FindStrategicMap();
+            strategicSummaryMap = strategicMap as ISlopCityCityForgeStrategicSummarySink;
+            if (controller) controller.StrategicMapChanged += HandleStrategicMapChanged;
+            CreateUi(); CreateLauncher(); SetUi(false);
+        }
+
+        private void Update()
+        {
+            if (editingEnabled && Input.GetKeyDown(toggleKey)) { if (opened) Close(); else Open(); }
+            if (!opened) return;
+            MoveCamera();
+            if (Input.GetKeyDown(KeyCode.Z) && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))) Undo();
+            if (Input.GetKeyDown(KeyCode.Y) && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))) Redo();
+            if (Input.GetMouseButtonDown(0) && Input.touchCount == 0 && !(EventSystem.current && EventSystem.current.IsPointerOverGameObject())) ClickMap(Input.mousePosition);
+            if (Input.touchCount == 1)
+            {
+                Touch touch = Input.GetTouch(0);
+                if (touch.phase == TouchPhase.Ended || touch.phase == TouchPhase.Canceled)
+                {
+                    if (!touchPanned && !(EventSystem.current && EventSystem.current.IsPointerOverGameObject(touch.fingerId))) ClickMap(touch.position);
+                    touchPanned = false;
+                }
+            }
+        }
+
+        public bool Open()
+        {
+            if (!editingEnabled || opened || !controller || !controller.IsInitialized) return false;
+            selected = new CityForgeCoord(2, 0);
+            if (!EnsureLoaded(selected)) return false;
+            if (!EnsureDraft(selected)) return false;
+            try { draft = controller.BeginDraft(selected); }
+            catch (Exception error) { SetMessage(error.Message); return false; }
+            ResetAtomicDrafts(draft); history = new SlopCityCityForgeDraftHistory(draft); opened = true; view = View.Streets;
+            GateFirstPerson(true); CaptureCamera(); controller.SetBuildMode(true); controller.StreamAt(selected); ShowStrategicMap(); SetUi(true); SetLauncher(false); RefreshUi(); BuildModeChanged?.Invoke(true); return true;
+        }
+
+        public void Close()
+        {
+            if (!opened) return;
+            opened = false; previewSink?.ClearCityForgeDraftPreview(); strategicMap?.ClearCityForgeStrategicMap(); if (controller && controller.IsInitialized) controller.SetBuildMode(false); RestoreCamera(); GateFirstPerson(false); SetUi(false); SetLauncher(editingEnabled);
+            SlopCityFirstPerson player = FindObjectOfType<SlopCityFirstPerson>();
+            if (player) PlayerNeighbourhoodRequested?.Invoke(new CityForgeCoord(Mathf.FloorToInt(player.transform.position.x / SlopCityCityForge.ChunkSizeMeters), Mathf.FloorToInt(player.transform.position.z / SlopCityCityForge.ChunkSizeMeters)));
+            BuildModeChanged?.Invoke(false);
+        }
+
+        public bool SelectChunk(CityForgeCoord coordinate)
+        {
+            if (!opened || !controller) return false;
+            if (!EnsureLoaded(coordinate)) return false;
+            if (!controller.CanDraft(coordinate)) { SetMessage("Survey an adjoining block first."); return false; }
+            if (!EnsureDraft(coordinate)) return false;
+            try { draft = controller.BeginDraft(coordinate); }
+            catch (Exception error) { SetMessage(error.Message); return false; }
+            selected = coordinate; ResetAtomicDrafts(draft); history = new SlopCityCityForgeDraftHistory(draft); controller.StreamAt(selected); ShowStrategicMap(); FocusCamera(); RefreshUi(); return true;
+        }
+
+        public void SelectView(View next) { view = next; RefreshUi(); }
+        public bool TrySetRoad(int cellX, int cellZ, CityForgeDirection direction, CityForgeRoadClass roadClass, bool remove)
+        {
+            if (draft == null || cellX < 0 || cellX > 8 || cellZ < 0 || cellZ > 8) return false;
+            CanonicalRoad(ref cellX, ref cellZ, ref direction);
+            CityForgeChunkPlan next = draft.Clone();
+            SetRoad(next, cellX, cellZ, direction, roadClass, remove);
+            CityForgeRoad road = new CityForgeRoad { cellX = cellX, cellZ = cellZ, direction = direction, roadClass = roadClass };
+            if (!road.IsBoundary) return Apply(next, remove ? "Street removal planned." : "Street planned.");
+
+            CityForgeCoord neighbour = SlopCityCityForge.Neighbour(selected, direction);
+            if (SlopCityCityForge.IsProtectedOldCity(neighbour)) { SetMessage("The Old City boundary cannot be changed."); return false; }
+            if (!EnsureAtomicNeighbour(neighbour) || !EnsureDraft(neighbour)) return false;
+            if (!TryGetAtomicDraft(neighbour, out CityForgeChunkPlan reciprocal)) return false;
+            ReciprocalRoad(cellX, cellZ, direction, out int reciprocalX, out int reciprocalZ, out CityForgeDirection reciprocalDirection);
+            SetRoad(reciprocal, reciprocalX, reciprocalZ, reciprocalDirection, roadClass, remove);
+            return ApplyAtomic(new Dictionary<CityForgeCoord, CityForgeChunkPlan>
+            {
+                { next.coord, next }, { reciprocal.coord, reciprocal }
+            }, remove ? "Street removal planned on both sides of the boundary." : "Street connection planned on both sides of the boundary.");
+        }
+        public bool TryPlaceLot(IEnumerable<int> cells, CityForgeZone zone, string parcelId = null)
+        {
+            if (draft == null) return false; List<int> selectedCells = (cells ?? Enumerable.Empty<int>()).Distinct().ToList();
+            if (selectedCells.Count == 0 || selectedCells.Count > 81 || selectedCells.Any(item => item < 0 || item >= 81) || (draft.parcels ?? new List<CityForgeParcel>()).Any(parcel => parcel != null && parcel.cells != null && parcel.cells.Intersect(selectedCells).Any())) return false;
+            CityForgeChunkPlan next = draft.Clone(); next.parcels.Add(new CityForgeParcel { id = string.IsNullOrEmpty(parcelId) ? NextId("parcel") : parcelId, zone = zone, cells = selectedCells, entranceEdge = CityForgeDirection.North }); return Apply(next, "Lot planned.");
+        }
+        public bool TryPlaceBuilding(string parcelId, string blueprintId, string facadeId, string roofId, int floors, CityForgeDirection entrance, string storefrontId = null, string interiorRole = null)
+        {
+            if (draft == null || (draft.buildings ?? new List<CityForgeBuilding>()).Any(item => item != null && item.parcelId == parcelId)) return false;
+            CityForgeChunkPlan next = draft.Clone(); next.buildings.Add(new CityForgeBuilding { id = NextId("building"), parcelId = parcelId, blueprintId = blueprintId, facadeId = facadeId, roofId = roofId, floors = floors, entranceEdge = entrance, storefrontId = storefrontId ?? string.Empty, interiorRole = interiorRole ?? string.Empty }); return Apply(next, "Building kit placed.");
+        }
+        public bool TryPlaceService(string parcelId, string type)
+        {
+            if (draft == null) return false; CityForgeChunkPlan next = draft.Clone(); next.services.Add(new CityForgeService { id = NextId("service"), parcelId = parcelId, type = type }); return Apply(next, "Service planned.");
+        }
+        public bool TryPlaceScreen(string hostId, string mountId, string deviceId)
+        {
+            if (draft == null) return false; CityForgeChunkPlan next = draft.Clone(); next.screens.Add(new CityForgeScreen { screenId = NextId("screen"), hostId = hostId, screenMountId = mountId, deviceId = deviceId }); return Apply(next, "Physical screen fixture planned.");
+        }
+        public bool TryDemolish(string structureId)
+        {
+            if (draft == null || string.IsNullOrEmpty(structureId)) return false; CityForgeChunkPlan next = draft.Clone();
+            next.buildings.RemoveAll(item => item != null && item.id == structureId); next.services.RemoveAll(item => item != null && item.id == structureId); next.screens.RemoveAll(item => item != null && item.hostId == structureId);
+            if (!next.demolishedIds.Contains(structureId)) next.demolishedIds.Add(structureId); return Apply(next, "Demolition planned.");
+        }
+        public bool TrySetLandmarkState(string landmarkId, string state)
+        {
+            if (draft == null) return false; CityForgeChunkPlan next = draft.Clone(); CityForgeLandmark item = next.landmarks.FirstOrDefault(value => value != null && value.id == landmarkId); if (item == null) return false; item.state = state; return Apply(next, "Cityworks lifecycle updated.");
+        }
+        public bool TryPlaceSituation(string landmarkId, string templateId, string state = "available", string stableSeed = null)
+        {
+            if (draft == null || string.IsNullOrEmpty(landmarkId) || string.IsNullOrEmpty(templateId)
+                || (draft.situations ?? new List<CityForgeSituationState>()).Any(item => item != null && item.landmarkId == landmarkId && item.situationId == templateId)) return false;
+            CityForgeChunkPlan next = draft.Clone();
+            next.situations.Add(new CityForgeSituationState { id = NextId("situation"), landmarkId = landmarkId, situationId = templateId, state = state, stableSeed = string.IsNullOrEmpty(stableSeed) ? Seed("situation") : stableSeed });
+            return Apply(next, "CitySituation opportunity planned.");
+        }
+        public bool TrySetSituationState(string situationId, string state)
+        {
+            if (draft == null || string.IsNullOrEmpty(situationId)) return false;
+            CityForgeChunkPlan next = draft.Clone(); CityForgeSituationState item = next.situations.FirstOrDefault(value => value != null && value.id == situationId);
+            if (item == null) return false; item.state = state; return Apply(next, "CitySituation lifecycle updated.");
+        }
+        public void Undo()
+        {
+            if (atomicUndo.Count == 0) return;
+            Dictionary<CityForgeCoord, CityForgeChunkPlan> restore = atomicUndo.Pop();
+            atomicRedo.Push(CloneDraftMap(atomicDrafts));
+            RestoreAtomicDrafts(restore); SetMessage("Draft edit undone."); RefreshUi(); NotifyDraftsChanged();
+        }
+
+        public void Redo()
+        {
+            if (atomicRedo.Count == 0) return;
+            Dictionary<CityForgeCoord, CityForgeChunkPlan> restore = atomicRedo.Pop();
+            atomicUndo.Push(CloneDraftMap(atomicDrafts));
+            RestoreAtomicDrafts(restore); SetMessage("Draft edit restored."); RefreshUi(); NotifyDraftsChanged();
+        }
+
+        public void Preview()
+        {
+            if (draft == null) return;
+            List<CityForgeChunkPlan> plans = PlansForCommit();
+            if (!controller.TryResolveDraftPreview(plans, selected, out CityForgeResolvedChunk preview, out CityForgeValidation validation)) { SetMessage(validation.Messages.FirstOrDefault() ?? "Check this plan first."); return; }
+            previewSink?.ShowCityForgeDraftPreview(preview); PreviewRequested?.Invoke(draft.Clone()); DraftPreviewCompiled?.Invoke(preview); SetMessage("Preview is valid and shown separately from accepted streets.");
+        }
+
+        public void Commit()
+        {
+            List<CityForgeChunkPlan> plans = PlansForCommit();
+            if (plans.Count == 0) { SetMessage("Make a City Forge edit before committing."); return; }
+            if (!controller.ValidateDraftOnly(plans, out CityForgeValidation validation)) { SetMessage(validation.Messages.FirstOrDefault() ?? "Check this plan first."); return; }
+            if (CommitRequested != null) { CommitRequested(plans.Select(item => item.Clone()).ToList()); SetMessage("Submitting plan…"); return; }
+            if (!controller.TryCommit(plans, out validation)) { SetMessage(validation.Messages.FirstOrDefault() ?? "Commit failed."); return; }
+            draft = controller.BeginDraft(selected); ResetAtomicDrafts(draft); history = new SlopCityCityForgeDraftHistory(draft); SetMessage("Accepted locally."); RefreshUi();
+        }
+
+        /// <summary>Called by a hosted bridge only after its authoritative D1 response is verified.</summary>
+        public bool ApplyAuthoritativeCommit(CityForgeWorldHead head, IEnumerable<CityForgeChunkPlan> plans, out CityForgeValidation validation)
+        {
+            if (!controller.ApplyAuthoritativeCommit(head, plans, out validation)) { SetMessage(validation.Messages.FirstOrDefault() ?? "The hosted commit was refused."); return false; }
+            if (opened && controller.TryGetAccepted(selected, out CityForgeChunkPlan accepted)) { draft = accepted; ResetAtomicDrafts(draft); history = new SlopCityCityForgeDraftHistory(draft); }
+            SetMessage("Accepted by the City Forge world."); RefreshUi(); return true;
+        }
+
+        public void SetStatusMessage(string value) { SetMessage(value); }
+
+        /// <summary>Lets an offline setup or a hosted owner bridge expose this editor only when the player may edit.</summary>
+        public void SetEditingEnabled(bool value)
+        {
+            if (editingEnabled == value) return;
+            editingEnabled = value;
+            if (!editingEnabled && opened) Close();
+            SetLauncher(editingEnabled && !opened);
+        }
+
+        private bool EnsureLoaded(CityForgeCoord coordinate, bool navigation = true)
+        {
+            pendingNavigation = coordinate;
+            hasPendingNavigation = true;
+            if (navigation) ChunkNavigationRequested?.Invoke(coordinate);
+            if (EnsureChunkLoaded == null) { hasPendingNavigation = false; return true; }
+            foreach (Delegate callback in EnsureChunkLoaded.GetInvocationList())
+                if (!((Func<CityForgeCoord, bool>)callback)(coordinate)) { SetMessage("Loading this City Forge neighborhood…"); return false; }
+            hasPendingNavigation = false;
+            return true;
+        }
+
+        private bool EnsureDraft(CityForgeCoord coordinate)
+        {
+            if (EnsureDraftLoaded == null) return true;
+            foreach (Delegate callback in EnsureDraftLoaded.GetInvocationList())
+                if (!((Func<CityForgeCoord, bool>)callback)(coordinate)) { SetMessage("Loading your saved City Forge draft…"); return false; }
+            return true;
+        }
+
+        private bool EnsureAtomicNeighbour(CityForgeCoord coordinate)
+        {
+            if (EnsureAtomicNeighbourLoaded == null) return EnsureLoaded(coordinate, false);
+            foreach (Delegate callback in EnsureAtomicNeighbourLoaded.GetInvocationList())
+                if (!((Func<CityForgeCoord, bool>)callback)(coordinate)) { SetMessage("Loading the matching City Forge boundary block…"); return false; }
+            return true;
+        }
+
+        private void ResetAtomicDrafts(CityForgeChunkPlan initial)
+        {
+            atomicDrafts.Clear(); atomicBaselines.Clear(); atomicUndo.Clear(); atomicRedo.Clear();
+            if (initial == null) return;
+            atomicDrafts[initial.coord] = initial.Clone();
+            atomicBaselines[initial.coord] = BaselineFor(initial);
+        }
+
+        private CityForgeChunkPlan BaselineFor(CityForgeChunkPlan plan)
+        {
+            if (controller.TryGetAccepted(plan.coord, out CityForgeChunkPlan accepted)) return accepted;
+            CityForgeChunkPlan baseline = plan.Clone();
+            baseline.roads = new List<CityForgeRoad>(); baseline.removedRoadEdges = new List<string>(); baseline.parcels = new List<CityForgeParcel>();
+            baseline.buildings = new List<CityForgeBuilding>(); baseline.services = new List<CityForgeService>(); baseline.screens = new List<CityForgeScreen>();
+            baseline.landmarks = new List<CityForgeLandmark>(); baseline.situations = new List<CityForgeSituationState>(); baseline.demolishedIds = new List<string>(); baseline.packedBlobHash = string.Empty;
+            return baseline;
+        }
+
+        private bool TryGetAtomicDraft(CityForgeCoord coordinate, out CityForgeChunkPlan result)
+        {
+            if (atomicDrafts.TryGetValue(coordinate, out CityForgeChunkPlan current)) { result = current.Clone(); return true; }
+            if (atomicDrafts.Count >= 4) { SetMessage("A City Forge boundary commit can change at most four blocks."); result = null; return false; }
+            if (!controller.CanDraft(coordinate)) { SetMessage("Survey an adjoining accepted block first."); result = null; return false; }
+            try { result = controller.BeginDraft(coordinate); }
+            catch (Exception error) { SetMessage(error.Message); result = null; return false; }
+            atomicDrafts[coordinate] = result.Clone(); atomicBaselines[coordinate] = BaselineFor(result); return true;
+        }
+
+        private static Dictionary<CityForgeCoord, CityForgeChunkPlan> CloneDraftMap(IDictionary<CityForgeCoord, CityForgeChunkPlan> source)
+        {
+            Dictionary<CityForgeCoord, CityForgeChunkPlan> clone = new Dictionary<CityForgeCoord, CityForgeChunkPlan>();
+            foreach (KeyValuePair<CityForgeCoord, CityForgeChunkPlan> pair in source) clone[pair.Key] = pair.Value == null ? null : pair.Value.Clone();
+            return clone;
+        }
+
+        private void PushAtomicUndo()
+        {
+            atomicUndo.Push(CloneDraftMap(atomicDrafts)); atomicRedo.Clear();
+            if (atomicUndo.Count <= 64) return;
+            Dictionary<CityForgeCoord, CityForgeChunkPlan>[] snapshots = atomicUndo.Reverse().Skip(1).Reverse().ToArray();
+            atomicUndo.Clear(); foreach (Dictionary<CityForgeCoord, CityForgeChunkPlan> snapshot in snapshots.Reverse()) atomicUndo.Push(snapshot);
+        }
+
+        private void RestoreAtomicDrafts(Dictionary<CityForgeCoord, CityForgeChunkPlan> restore)
+        {
+            atomicDrafts.Clear();
+            foreach (KeyValuePair<CityForgeCoord, CityForgeChunkPlan> pair in restore)
+            {
+                CityForgeChunkPlan value = pair.Value.Clone(); atomicDrafts[pair.Key] = value;
+                if (!atomicBaselines.ContainsKey(pair.Key)) atomicBaselines[pair.Key] = BaselineFor(value);
+                controller.TrySavePrivateDraft(value, out string ignored);
+            }
+            if (atomicDrafts.TryGetValue(selected, out CityForgeChunkPlan current)) draft = current.Clone();
+            history = new SlopCityCityForgeDraftHistory(draft);
+        }
+
+        private List<CityForgeChunkPlan> PlansForCommit()
+        {
+            List<CityForgeChunkPlan> plans = new List<CityForgeChunkPlan>();
+            foreach (KeyValuePair<CityForgeCoord, CityForgeChunkPlan> pair in atomicDrafts.OrderBy(item => item.Key))
+            {
+                if (!atomicBaselines.TryGetValue(pair.Key, out CityForgeChunkPlan baseline)
+                    || !string.Equals(SlopCityCityForgeCanonical.Pack(pair.Value), SlopCityCityForgeCanonical.Pack(baseline), StringComparison.Ordinal)) plans.Add(pair.Value.Clone());
+            }
+            return plans;
+        }
+
+        private bool ApplyAtomic(IDictionary<CityForgeCoord, CityForgeChunkPlan> updates, string success)
+        {
+            if (updates == null || updates.Count == 0 || updates.Count > 4) return false;
+            foreach (CityForgeChunkPlan value in updates.Values)
+                if (value == null || !controller.CanDraft(value.coord)) { SetMessage("Survey an adjoining accepted block before planning there."); return false; }
+            foreach (CityForgeChunkPlan value in updates.Values)
+                if (!controller.TrySavePrivateDraft(value, out string error)) { SetMessage(error ?? "That edit is unavailable."); return false; }
+            PushAtomicUndo();
+            foreach (KeyValuePair<CityForgeCoord, CityForgeChunkPlan> pair in updates)
+            {
+                atomicDrafts[pair.Key] = pair.Value.Clone();
+                if (!atomicBaselines.ContainsKey(pair.Key)) atomicBaselines[pair.Key] = BaselineFor(pair.Value);
+            }
+            if (atomicDrafts.TryGetValue(selected, out CityForgeChunkPlan current)) draft = current.Clone();
+            history = new SlopCityCityForgeDraftHistory(draft); SetMessage(success); RefreshUi(); NotifyDraftsChanged(updates.Values); return true;
+        }
+
+        private void NotifyDraftsChanged(IEnumerable<CityForgeChunkPlan> values = null)
+        {
+            if (DraftChanged == null) return;
+            foreach (CityForgeChunkPlan value in (values ?? atomicDrafts.Values).Where(item => item != null).OrderBy(item => item.coord)) DraftChanged(value.Clone());
+        }
+
+        private static void CanonicalRoad(ref int x, ref int z, ref CityForgeDirection direction)
+        {
+            if (direction == CityForgeDirection.West && x > 0) { x--; direction = CityForgeDirection.East; }
+            if (direction == CityForgeDirection.South && z > 0) { z--; direction = CityForgeDirection.North; }
+        }
+
+        private static void ReciprocalRoad(int x, int z, CityForgeDirection direction, out int reciprocalX, out int reciprocalZ, out CityForgeDirection reciprocalDirection)
+        {
+            reciprocalDirection = SlopCityCityForge.Opposite(direction); reciprocalX = x; reciprocalZ = z;
+            if (direction == CityForgeDirection.East) reciprocalX = 0;
+            else if (direction == CityForgeDirection.West) reciprocalX = SlopCityCityForge.GridSize - 1;
+            else if (direction == CityForgeDirection.North) reciprocalZ = 0;
+            else reciprocalZ = SlopCityCityForge.GridSize - 1;
+        }
+
+        private static void SetRoad(CityForgeChunkPlan plan, int x, int z, CityForgeDirection direction, CityForgeRoadClass roadClass, bool remove)
+        {
+            if (plan.roads == null) plan.roads = new List<CityForgeRoad>();
+            if (plan.removedRoadEdges == null) plan.removedRoadEdges = new List<string>();
+            string edge = CanonicalEdge(x, z, direction);
+            plan.roads.RemoveAll(item => item != null && CanonicalEdge(item.cellX, item.cellZ, item.direction) == edge);
+            plan.removedRoadEdges.RemoveAll(item => item == edge);
+            if (remove) plan.removedRoadEdges.Add(edge);
+            else plan.roads.Add(new CityForgeRoad { cellX = x, cellZ = z, direction = direction, roadClass = roadClass });
+        }
+
+        private ISlopCityCityForgeDraftPreviewSink FindPreviewSink()
+        {
+            foreach (MonoBehaviour component in GetComponents<MonoBehaviour>())
+            {
+                ISlopCityCityForgeDraftPreviewSink candidate = component as ISlopCityCityForgeDraftPreviewSink;
+                if (candidate != null) return candidate;
+            }
+            return null;
+        }
+
+        private ISlopCityCityForgeStrategicMapSink FindStrategicMap()
+        {
+            foreach (MonoBehaviour component in GetComponents<MonoBehaviour>())
+            {
+                ISlopCityCityForgeStrategicMapSink candidate = component as ISlopCityCityForgeStrategicMapSink;
+                if (candidate != null) return candidate;
+            }
+            return null;
+        }
+
+        private void ShowStrategicMap()
+        {
+            if (controller == null || strategicMap == null) return;
+            if (strategicSummaryMap != null)
+                strategicSummaryMap.ShowCityForgeStrategicMap(controller.WorldHead, selected, 6, controller.AcceptedChunks, controller.StrategicChunks);
+            else strategicMap.ShowCityForgeStrategicMap(controller.WorldHead, selected, 6, controller.AcceptedChunks);
+        }
+
+        private void HandleStrategicMapChanged()
+        {
+            if (opened) ShowStrategicMap();
+        }
+
+        private void ClickMap(Vector3 screenPosition)
+        {
+            if (!buildCamera) return;
+            Ray ray = buildCamera.ScreenPointToRay(screenPosition);
+            if (!new Plane(Vector3.up, Vector3.zero).Raycast(ray, out float distance)) return;
+            Vector3 point = ray.GetPoint(distance);
+            CityForgeCoord coord = new CityForgeCoord(Mathf.FloorToInt(point.x / SlopCityCityForge.ChunkSizeMeters), Mathf.FloorToInt(point.z / SlopCityCityForge.ChunkSizeMeters));
+            if (!coord.Equals(selected)) { SelectChunk(coord); return; }
+            int x = Mathf.Clamp(Mathf.FloorToInt((point.x - coord.x * SlopCityCityForge.ChunkSizeMeters) / SlopCityCityForge.CellSizeMeters), 0, 8);
+            int z = Mathf.Clamp(Mathf.FloorToInt((point.z - coord.z * SlopCityCityForge.ChunkSizeMeters) / SlopCityCityForge.CellSizeMeters), 0, 8);
+            if (view == View.Streets) ToggleStreet(x, z);
+            else if (view == View.Lots) AddLot(x, z);
+            else if (view == View.Buildings) AddBuilding(x, z);
+            else if (view == View.Services) AddService(x, z);
+            else AddLife(x, z);
+        }
+
+        private void ToggleStreet(int x, int z)
+        {
+            TrySetRoad(x, z, entrance, roadClass, removeRoad);
+        }
+
+        private void AddLot(int x, int z)
+        {
+            int cell = x + z * 9;
+            if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift))
+            {
+                if (!lotFootprint.Add(cell)) lotFootprint.Remove(cell);
+                SetMessage(lotFootprint.Count + " grid cells selected for a lot footprint."); return;
+            }
+            List<int> footprint = lotFootprint.Count == 0 ? new List<int> { cell } : lotFootprint.Concat(new[] { cell }).Distinct().ToList();
+            if (TryPlaceLot(footprint, lotZone)) lotFootprint.Clear();
+        }
+
+        private void AddBuilding(int x, int z)
+        {
+            CityForgeParcel parcel = ParcelAt(x, z);
+            if (parcel == null) { SetMessage("Add a lot first."); return; }
+            if ((draft.buildings ?? new List<CityForgeBuilding>()).Any(item => item != null && item.parcelId == parcel.id)) { SetMessage("That lot already has a building."); return; }
+            TryPlaceBuilding(parcel.id, buildingBlueprint, facade, roof, buildingFloors, entrance, storefront == "none" ? null : storefront, interior);
+        }
+
+        private void AddService(int x, int z)
+        {
+            CityForgeParcel parcel = ParcelAt(x, z);
+            if (parcel == null) { SetMessage("Add a lot first."); return; }
+            CityForgeChunkPlan next = draft.Clone();
+            next.services.Add(new CityForgeService { id = NextId("service"), type = serviceType, parcelId = parcel.id });
+            Apply(next, "Service added.");
+        }
+
+        private void AddCityworks(int x, int z)
+        {
+            CityForgeParcel parcel = ParcelAt(x, z);
+            if (parcel == null) { SetMessage("Add a lot first."); return; }
+            CityForgeChunkPlan next = draft.Clone();
+            LandmarkChoice choice = SelectedLandmarkChoice(parcel.zone);
+            next.landmarks.Add(new CityForgeLandmark { id = NextId("landmark"), classId = choice.classId, outcomeId = choice.outcomeId, parcelId = parcel.id, state = "unavailable", stableSeed = Seed("landmark") });
+            Apply(next, "Cityworks site added.");
+        }
+
+        private void AddLife(int x, int z)
+        {
+            CityForgeParcel parcel = ParcelAt(x, z);
+            if (parcel == null) { SetMessage("Add a Cityworks lot first."); return; }
+            CityForgeLandmark landmark = (draft.landmarks ?? new List<CityForgeLandmark>()).FirstOrDefault(item => item != null && item.parcelId == parcel.id);
+            if (landmark == null) { AddCityworks(x, z); return; }
+            CityForgeSituationState existing = (draft.situations ?? new List<CityForgeSituationState>()).FirstOrDefault(item => item != null && item.landmarkId == landmark.id && item.situationId == situationTemplate);
+            if (existing == null)
+            {
+                if (string.IsNullOrEmpty(situationTemplate)) CycleSituationTemplate();
+                TryPlaceSituation(landmark.id, situationTemplate, situationState);
+                return;
+            }
+            TrySetSituationState(existing.id, NextSituationState(existing.state));
+        }
+
+        private LandmarkChoice SelectedLandmarkChoice(CityForgeZone zone)
+        {
+            List<LandmarkChoice> choices = LandmarkChoices(zone);
+            LandmarkChoice selected = choices.FirstOrDefault(item => item.classId == landmarkClass && item.outcomeId == landmarkOutcome);
+            return string.IsNullOrEmpty(selected.classId) ? choices.FirstOrDefault() : selected;
+        }
+
+        private bool Apply(CityForgeChunkPlan next, string success)
+        {
+            return ApplyAtomic(new Dictionary<CityForgeCoord, CityForgeChunkPlan> { { next.coord, next } }, success);
+        }
+
+        private CityForgeParcel ParcelAt(int x, int z)
+        {
+            int cell = x + z * 9;
+            return (draft.parcels ?? new List<CityForgeParcel>()).FirstOrDefault(item => item != null && item.cells != null && item.cells.Contains(cell));
+        }
+
+        private string NextId(string prefix) { return NextId(draft, prefix); }
+
+        private static string NextId(CityForgeChunkPlan source, string prefix)
+        {
+            HashSet<string> used = new HashSet<string>((source?.parcels ?? new List<CityForgeParcel>()).Where(item => item != null).Select(item => item.id)
+                .Concat((source?.buildings ?? new List<CityForgeBuilding>()).Where(item => item != null).Select(item => item.id))
+                .Concat((source?.services ?? new List<CityForgeService>()).Where(item => item != null).Select(item => item.id))
+                .Concat((source?.screens ?? new List<CityForgeScreen>()).Where(item => item != null).Select(item => item.screenId))
+                .Concat((source?.landmarks ?? new List<CityForgeLandmark>()).Where(item => item != null).Select(item => item.id))
+                .Concat((source?.situations ?? new List<CityForgeSituationState>()).Where(item => item != null).Select(item => item.id)), StringComparer.Ordinal);
+            int index = 1; string value; do { value = prefix + "-" + index; index++; } while (used.Contains(value)); return value;
+        }
+        private string Seed(string prefix) { return SlopCityCityForge.Sha256(prefix + "|" + selected + "|" + (draft == null ? 0 : draft.revision)).Substring(0, 16); }
+        private static string CanonicalEdge(int x, int z, CityForgeDirection direction)
+        {
+            if (direction == CityForgeDirection.West && x > 0) { x--; direction = CityForgeDirection.East; }
+            if (direction == CityForgeDirection.South && z > 0) { z--; direction = CityForgeDirection.North; }
+            string side = direction == CityForgeDirection.North ? "north" : direction == CityForgeDirection.East ? "east" : direction == CityForgeDirection.South ? "south" : "west";
+            return x + "," + z + ":" + side;
+        }
+
+        private void CycleRoadClass() { roadClass = (CityForgeRoadClass)(((int)roadClass + 1) % 5); RefreshUi(); }
+        private void ToggleRoadRemoval() { removeRoad = !removeRoad; RefreshUi(); }
+        private void CycleLotZone()
+        {
+            lotZone = (CityForgeZone)(((int)lotZone + 1) % 6);
+            string[] preferred = { "walk-up", "workshop", "corner-shop", "care-station", "studio", "garden" }; buildingBlueprint = preferred[(int)lotZone];
+            landmarkClass = landmarkOutcome = string.Empty;
+            RefreshUi();
+        }
+        private void CycleBuildingKit()
+        {
+            string[] options = { "walk-up", "courtyard-home", "tower-residence", "live-work-block", "workshop", "repair-bay", "clinic", "laundry", "depot", "small-office", "corner-shop", "market-hall", "cafe", "exchange", "kiosk", "care-station", "library-room", "utility-office", "community-hall", "screening-room", "studio", "venue", "archive", "performance-space", "garden", "plaza", "water-node", "power-relay", "shelter", "service-yard" };
+            int index = Array.IndexOf(options, buildingBlueprint); buildingBlueprint = options[(index + 1 + options.Length) % options.Length]; RefreshUi();
+        }
+        private void CycleFacade() { string[] values = { "wet-masonry", "poured-concrete", "glazed-ceramic", "oxidized-metal", "painted-render", "brick-utility", "night-glass", "garden-lattice" }; facade = values[(Array.IndexOf(values, facade) + 1 + values.Length) % values.Length]; RefreshUi(); }
+        private void CycleRoof() { string[] values = { "service-roof", "rain-garden", "solar-rack", "water-tank", "relay-array", "lantern-roof", "terrace", "greenhouse", "vent-stack", "civic-canopy", "screen-crown", "utility-bridge" }; roof = values[(Array.IndexOf(values, roof) + 1 + values.Length) % values.Length]; RefreshUi(); }
+        private void CycleStorefront() { string[] values = { "none", "shutter", "awning", "glazed", "arcade", "market-stall" }; storefront = values[(Array.IndexOf(values, storefront) + 1 + values.Length) % values.Length]; RefreshUi(); }
+        private void CycleInterior()
+        {
+            string[] values = { "", "home-room", "workshop-floor", "repair-counter", "care-room", "laundry-room", "depot-bay", "office-floor", "shop-floor", "market-floor", "cafe-room", "exchange-room", "library-room", "community-room", "screening-room", "studio-room", "venue-room", "archive-room", "performance-room", "utility-room", "shelter-room" };
+            interior = values[(Array.IndexOf(values, interior) + 1 + values.Length) % values.Length]; RefreshUi();
+        }
+        private void CycleService()
+        {
+            string[] values = { "care-station", "repair-counter", "laundry-service", "delivery-bay", "neighborhood-office", "market-stall", "food-counter", "exchange-desk", "library-desk", "utility-desk", "community-room", "screening-service", "studio-service", "venue-door", "archive-desk", "garden-steward", "water-service", "power-service", "shelter-desk", "service-yard-bay" };
+            serviceType = values[(Array.IndexOf(values, serviceType) + 1 + values.Length) % values.Length]; RefreshUi();
+        }
+        private List<LandmarkChoice> LandmarkChoices(CityForgeZone zone)
+        {
+            List<LandmarkChoice> result = new List<LandmarkChoice>();
+            foreach (CityForgeLandmarkClass item in SlopCityCityForgeCatalog.Default.LandmarkClasses.OrderBy(value => value.id, StringComparer.Ordinal))
+                if (item.compatibleZones != null && Array.IndexOf(item.compatibleZones, zone) >= 0)
+                    foreach (string outcome in item.outcomes ?? Array.Empty<string>()) result.Add(new LandmarkChoice(item.id, outcome));
+            return result;
+        }
+        private void CycleLandmarkOutcome()
+        {
+            List<LandmarkChoice> choices = LandmarkChoices(lotZone); if (choices.Count == 0) return;
+            int current = choices.FindIndex(item => item.classId == landmarkClass && item.outcomeId == landmarkOutcome);
+            LandmarkChoice next = choices[(current + 1 + choices.Count) % choices.Count]; landmarkClass = next.classId; landmarkOutcome = next.outcomeId; RefreshUi();
+        }
+        private void CycleSituationTemplate()
+        {
+            string[] choices = SlopCityCityForgeCatalog.Default.Situations.OrderBy(item => item, StringComparer.Ordinal).ToArray();
+            if (choices.Length == 0) return;
+            int current = Array.IndexOf(choices, situationTemplate); situationTemplate = choices[(current + 1 + choices.Length) % choices.Length]; RefreshUi();
+        }
+        private void CycleSituationState()
+        {
+            string[] states = { "available", "active", "resolved", "paused", "archived", "unavailable" };
+            int current = Array.IndexOf(states, situationState); situationState = states[(current + 1 + states.Length) % states.Length]; RefreshUi();
+        }
+        private static string NextSituationState(string state)
+        {
+            if (state == "unavailable") return "available";
+            if (state == "available") return "active";
+            if (state == "active") return "resolved";
+            if (state == "resolved") return "archived";
+            if (state == "paused") return "available";
+            return "archived";
+        }
+        private void CycleScreenMount()
+        {
+            string[] values = { "interior-wall-tv", "facade-media-wall", "plaza-civic-support", "street-kiosk-screen" };
+            screenMount = values[(Array.IndexOf(values, screenMount) + 1 + values.Length) % values.Length]; screenHostId = string.Empty; RefreshUi();
+        }
+        private void CycleScreenHost() { screenHostMode = (screenHostMode + 1) % 3; screenHostId = string.Empty; RefreshUi(); }
+        private void CycleScreenTarget()
+        {
+            List<string> choices = AvailableScreenHosts();
+            if (choices.Count == 0) { SetMessage("No compatible host is available for that mount."); return; }
+            int current = choices.IndexOf(screenHostId); screenHostId = choices[(current + 1 + choices.Count) % choices.Count]; RefreshUi();
+        }
+        private void CycleScreenDevice()
+        {
+            string[] values = { "public-crt-01", "public-led-01", "public-projector-01", "public-window-01" };
+            screenDevice = values[(Array.IndexOf(values, screenDevice) + 1 + values.Length) % values.Length]; RefreshUi();
+        }
+        private void CycleEntrance() { entrance = (CityForgeDirection)(((int)entrance + 1) % 4); RefreshUi(); }
+        private void ChangeFloors(int amount) { buildingFloors = Mathf.Clamp(buildingFloors + amount, 1, 24); RefreshUi(); }
+
+        public bool TryMergeLots(IEnumerable<string> parcelIds, string mergedId = null)
+        {
+            if (draft == null) return false;
+            HashSet<string> ids = new HashSet<string>((parcelIds ?? Enumerable.Empty<string>()).Where(item => !string.IsNullOrEmpty(item)), StringComparer.Ordinal);
+            List<CityForgeParcel> parcels = (draft.parcels ?? new List<CityForgeParcel>()).Where(item => item != null && ids.Contains(item.id)).ToList();
+            if (parcels.Count < 2 || parcels.Select(item => item.zone).Distinct().Count() != 1 || HasParcelDependencies(draft, ids)) { SetMessage("Merge empty lots from one zone before placing structures."); return false; }
+            CityForgeChunkPlan next = draft.Clone(); next.parcels.RemoveAll(item => item != null && ids.Contains(item.id));
+            next.parcels.Add(new CityForgeParcel { id = string.IsNullOrEmpty(mergedId) ? parcels.OrderBy(item => item.id, StringComparer.Ordinal).First().id : mergedId, zone = parcels[0].zone, cells = parcels.SelectMany(item => item.cells ?? new List<int>()).Distinct().OrderBy(item => item).ToList() });
+            return Apply(next, "Lots merged.");
+        }
+
+        public bool TrySplitLot(string parcelId, IEnumerable<IEnumerable<int>> fragments)
+        {
+            if (draft == null || string.IsNullOrEmpty(parcelId)) return false;
+            CityForgeParcel source = (draft.parcels ?? new List<CityForgeParcel>()).FirstOrDefault(item => item != null && item.id == parcelId);
+            List<List<int>> pieces = (fragments ?? Enumerable.Empty<IEnumerable<int>>()).Select(item => (item ?? Enumerable.Empty<int>()).Distinct().OrderBy(cell => cell).ToList()).Where(item => item.Count > 0).ToList();
+            if (source == null || pieces.Count < 2 || HasParcelDependencies(draft, new HashSet<string>(new[] { parcelId }, StringComparer.Ordinal))
+                || !new HashSet<int>(pieces.SelectMany(item => item)).SetEquals(source.cells ?? new List<int>()) || pieces.Sum(item => item.Count) != (source.cells ?? new List<int>()).Count)
+            { SetMessage("Split an empty lot into non-overlapping pieces."); return false; }
+            CityForgeChunkPlan next = draft.Clone(); next.parcels.RemoveAll(item => item != null && item.id == parcelId);
+            for (int index = 0; index < pieces.Count; index++) next.parcels.Add(new CityForgeParcel { id = NextId(next, "parcel"), zone = source.zone, cells = pieces[index] });
+            return Apply(next, "Lot split into " + pieces.Count + " pieces.");
+        }
+
+        private void MergeSelectedLots()
+        {
+            if (lotFootprint.Count == 0) { SetMessage("Shift-tap two or more lot cells, then merge."); return; }
+            HashSet<string> ids = new HashSet<string>((draft.parcels ?? new List<CityForgeParcel>()).Where(item => item != null && item.cells != null && item.cells.Intersect(lotFootprint).Any()).Select(item => item.id), StringComparer.Ordinal);
+            if (TryMergeLots(ids)) lotFootprint.Clear();
+        }
+
+        private void SplitSelectedLot()
+        {
+            int cell = lotFootprint.Count > 0 ? lotFootprint.First() : -1;
+            CityForgeParcel parcel = cell >= 0 ? (draft.parcels ?? new List<CityForgeParcel>()).FirstOrDefault(item => item != null && item.cells != null && item.cells.Contains(cell)) : null;
+            if (parcel == null) { SetMessage("Shift-tap a lot cell, then split its empty lot."); return; }
+            if (TrySplitLot(parcel.id, parcel.cells.Select(value => (IEnumerable<int>)new[] { value }))) lotFootprint.Clear();
+        }
+
+        private static bool HasParcelDependencies(CityForgeChunkPlan plan, ISet<string> ids)
+        {
+            return (plan.buildings ?? new List<CityForgeBuilding>()).Any(item => item != null && ids.Contains(item.parcelId))
+                || (plan.services ?? new List<CityForgeService>()).Any(item => item != null && ids.Contains(item.parcelId))
+                || (plan.landmarks ?? new List<CityForgeLandmark>()).Any(item => item != null && ids.Contains(item.parcelId));
+        }
+        private void PlaceScreenOnLastBuilding()
+        {
+            if (!TryResolveScreenHost(out string host)) { SetMessage("Choose a compatible building, public site, or street screen host."); return; }
+            int capacity = ScreenHostCapacity(host);
+            int occupied = (draft.screens ?? new List<CityForgeScreen>()).Count(item => item != null && item.hostId == host);
+            if (capacity <= occupied) { SetMessage("That shipped screen host has no remaining fixture positions."); return; }
+            TryPlaceScreen(host, screenMount, screenDevice);
+        }
+
+        /// <summary>Chooses a catalog-derived target; callers cannot supply a transform or raw slot.</summary>
+        public bool TrySelectScreenHost(string hostId)
+        {
+            if (string.IsNullOrEmpty(hostId) || !AvailableScreenHosts().Contains(hostId)) return false;
+            screenHostId = hostId;
+            RefreshUi();
+            return true;
+        }
+
+        private List<string> AvailableScreenHosts()
+        {
+            List<string> result = new List<string>();
+            if (draft == null) return result;
+            if (screenHostMode == 0)
+            {
+                foreach (CityForgeBuilding building in (draft.buildings ?? new List<CityForgeBuilding>()).Where(item => item != null).OrderBy(item => item.id, StringComparer.Ordinal))
+                    if (SlopCityCityForgeCatalog.Default.IsBuildingScreenMount(building.blueprintId, screenMount)) result.Add(building.id);
+            }
+            else if (screenHostMode == 1)
+            {
+                if (screenMount != "plaza-civic-support") return result;
+                foreach (CityForgeParcel parcel in (draft.parcels ?? new List<CityForgeParcel>()).Where(item => item != null).OrderBy(item => item.id, StringComparer.Ordinal))
+                    if (SlopCityCityForgeCatalog.Default.GetSiteScreenSlots(parcel.zone) > 0) result.Add("site-" + parcel.id);
+            }
+            else
+            {
+                if (screenMount != "street-kiosk-screen") return result;
+                foreach (CityForgeRoad road in (draft.roads ?? new List<CityForgeRoad>()).Where(item => item != null).OrderBy(item => item.LocalKey, StringComparer.Ordinal))
+                    if (SlopCityCityForgeCatalog.Default.GetRoadScreenSlots(road.roadClass) > 0) result.Add(RoadHostId(road));
+            }
+            return result;
+        }
+
+        private bool TryResolveScreenHost(out string host)
+        {
+            List<string> choices = AvailableScreenHosts();
+            if (choices.Count == 0) { host = null; return false; }
+            if (!choices.Contains(screenHostId)) screenHostId = choices[0];
+            host = screenHostId;
+            return true;
+        }
+
+        private int ScreenHostCapacity(string host)
+        {
+            CityForgeBuilding building = (draft.buildings ?? new List<CityForgeBuilding>()).FirstOrDefault(item => item != null && item.id == host);
+            if (building != null) return SlopCityCityForgeCatalog.Default.GetBuildingScreenSlots(building.blueprintId);
+            if (host != null && host.StartsWith("site-", StringComparison.Ordinal))
+            {
+                CityForgeParcel parcel = (draft.parcels ?? new List<CityForgeParcel>()).FirstOrDefault(item => item != null && "site-" + item.id == host);
+                return parcel == null ? 0 : SlopCityCityForgeCatalog.Default.GetSiteScreenSlots(parcel.zone);
+            }
+            CityForgeRoad road = (draft.roads ?? new List<CityForgeRoad>()).FirstOrDefault(item => item != null && RoadHostId(item) == host);
+            return road == null ? 0 : SlopCityCityForgeCatalog.Default.GetRoadScreenSlots(road.roadClass);
+        }
+
+        private static string RoadHostId(CityForgeRoad road)
+        {
+            string direction = road.direction == CityForgeDirection.North ? "north" : road.direction == CityForgeDirection.East ? "east" : road.direction == CityForgeDirection.South ? "south" : "west";
+            return "road-" + road.cellX + "-" + road.cellZ + "-" + direction;
+        }
+        private void DemolishLast()
+        {
+            CityForgeBuilding building = (draft.buildings ?? new List<CityForgeBuilding>()).LastOrDefault(item => item != null);
+            if (building == null) { SetMessage("There is no building to demolish."); return; }
+            TryDemolish(building.id);
+        }
+        private void RenovateLast()
+        {
+            CityForgeLandmark landmark = (draft.landmarks ?? new List<CityForgeLandmark>()).LastOrDefault(item => item != null);
+            if (landmark == null) { SetMessage("There is no Cityworks site to renovate."); return; }
+            string[] states = { "unavailable", "discovered", "diagnosing", "chosen", "active", "opening", "established", "paused", "renovating" }; int index = Array.IndexOf(states, landmark.state); TrySetLandmarkState(landmark.id, states[(index + 1 + states.Length) % states.Length]);
+        }
+
+        private void CreateUi()
+        {
+            GameObject root = new GameObject("CityForgeBuildMode", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+            root.transform.SetParent(transform, false); canvas = root.GetComponent<Canvas>(); canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            CanvasScaler scaler = root.GetComponent<CanvasScaler>(); scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize; scaler.referenceResolution = new Vector2(1280, 720);
+            Image panel = root.AddComponent<Image>(); panel.color = new Color(.03f, .05f, .06f, .92f);
+            RectTransform rect = root.GetComponent<RectTransform>(); rect.anchorMin = new Vector2(0f, 1f); rect.anchorMax = new Vector2(1f, 1f); rect.pivot = new Vector2(.5f, 1f); rect.sizeDelta = new Vector2(0f, 248f);
+            heading = Label(root.transform, "City Forge", 20, new Vector2(12, -12), new Vector2(620, 28));
+            message = Label(root.transform, "Tap a grid cell to edit. Drag to pan; pinch to zoom. Hold Shift while tapping cells to shape a lot.", 14, new Vector2(12, -218), new Vector2(1230, 22));
+            float x = 12f;
+            foreach (View choice in new[] { View.Streets, View.Lots, View.Buildings, View.Services, View.Life })
+            {
+                View local = choice; Button button = Button(root.transform, choice.ToString(), new Vector2(x, -44), new Vector2(88, 32)); button.onClick.AddListener(() => SelectView(local)); viewButtons.Add(choice, button); x += 94f;
+            }
+            undoButton = Button(root.transform, "Undo", new Vector2(486, -44), new Vector2(64, 32)); undoButton.onClick.AddListener(Undo);
+            redoButton = Button(root.transform, "Redo", new Vector2(556, -44), new Vector2(64, 32)); redoButton.onClick.AddListener(Redo);
+            Button preview = Button(root.transform, "Preview", new Vector2(626, -44), new Vector2(82, 32)); preview.onClick.AddListener(Preview);
+            Button commit = Button(root.transform, "Commit", new Vector2(714, -44), new Vector2(82, 32)); commit.onClick.AddListener(Commit);
+            Button exit = Button(root.transform, "Return", new Vector2(802, -44), new Vector2(82, 32)); exit.onClick.AddListener(Close);
+
+            roadButton = Button(root.transform, "Road", new Vector2(12, -82), new Vector2(112, 32)); roadButton.onClick.AddListener(CycleRoadClass);
+            removeRoadButton = Button(root.transform, "Add road", new Vector2(130, -82), new Vector2(94, 32)); removeRoadButton.onClick.AddListener(ToggleRoadRemoval);
+            zoneButton = Button(root.transform, "Zone", new Vector2(230, -82), new Vector2(104, 32)); zoneButton.onClick.AddListener(CycleLotZone);
+            Button merge = Button(root.transform, "Merge lots", new Vector2(340, -82), new Vector2(88, 32)); merge.onClick.AddListener(MergeSelectedLots);
+            Button split = Button(root.transform, "Split lot", new Vector2(434, -82), new Vector2(82, 32)); split.onClick.AddListener(SplitSelectedLot);
+            kitButton = Button(root.transform, "Kit", new Vector2(522, -82), new Vector2(118, 32)); kitButton.onClick.AddListener(CycleBuildingKit);
+            facadeButton = Button(root.transform, "Facade", new Vector2(646, -82), new Vector2(118, 32)); facadeButton.onClick.AddListener(CycleFacade);
+            roofButton = Button(root.transform, "Roof", new Vector2(770, -82), new Vector2(112, 32)); roofButton.onClick.AddListener(CycleRoof);
+            storefrontButton = Button(root.transform, "Store", new Vector2(888, -82), new Vector2(116, 32)); storefrontButton.onClick.AddListener(CycleStorefront);
+            entranceButton = Button(root.transform, "Entry", new Vector2(1010, -82), new Vector2(106, 32)); entranceButton.onClick.AddListener(CycleEntrance);
+            Button floorDown = Button(root.transform, "Floor −", new Vector2(1122, -82), new Vector2(70, 32)); floorDown.onClick.AddListener(() => ChangeFloors(-1));
+            floorsButton = Button(root.transform, "Floor +", new Vector2(1198, -82), new Vector2(70, 32)); floorsButton.onClick.AddListener(() => ChangeFloors(1));
+
+            interiorButton = Button(root.transform, "Interior", new Vector2(12, -122), new Vector2(170, 32)); interiorButton.onClick.AddListener(CycleInterior);
+            Button screen = Button(root.transform, "Add screen", new Vector2(188, -122), new Vector2(104, 32)); screen.onClick.AddListener(PlaceScreenOnLastBuilding);
+            Button demolish = Button(root.transform, "Demolish", new Vector2(298, -122), new Vector2(104, 32)); demolish.onClick.AddListener(DemolishLast);
+            Button renovate = Button(root.transform, "Renovate", new Vector2(408, -122), new Vector2(104, 32)); renovate.onClick.AddListener(RenovateLast);
+            serviceButton = Button(root.transform, "Service", new Vector2(520, -122), new Vector2(142, 32)); serviceButton.onClick.AddListener(CycleService);
+            landmarkButton = Button(root.transform, "Cityworks", new Vector2(668, -122), new Vector2(156, 32)); landmarkButton.onClick.AddListener(CycleLandmarkOutcome);
+            mountButton = Button(root.transform, "Mount", new Vector2(830, -122), new Vector2(144, 32)); mountButton.onClick.AddListener(CycleScreenMount);
+            hostButton = Button(root.transform, "Host", new Vector2(980, -122), new Vector2(118, 32)); hostButton.onClick.AddListener(CycleScreenHost);
+            deviceButton = Button(root.transform, "Device", new Vector2(1104, -122), new Vector2(164, 32)); deviceButton.onClick.AddListener(CycleScreenDevice);
+            targetButton = Button(root.transform, "Screen target", new Vector2(12, -162), new Vector2(300, 32)); targetButton.onClick.AddListener(CycleScreenTarget);
+            situationButton = Button(root.transform, "Situation", new Vector2(318, -162), new Vector2(360, 32)); situationButton.onClick.AddListener(CycleSituationTemplate);
+            situationStateButton = Button(root.transform, "Situation state", new Vector2(684, -162), new Vector2(220, 32)); situationStateButton.onClick.AddListener(CycleSituationState);
+        }
+
+        private void CreateLauncher()
+        {
+            GameObject root = new GameObject("CityForgeBuildLauncher", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+            root.transform.SetParent(transform, false);
+            launcherCanvas = root.GetComponent<Canvas>(); launcherCanvas.renderMode = RenderMode.ScreenSpaceOverlay;
+            CanvasScaler scaler = root.GetComponent<CanvasScaler>(); scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize; scaler.referenceResolution = new Vector2(1280, 720);
+            Button button = Button(root.transform, "BUILD CITY", Vector2.zero, new Vector2(132f, 40f));
+            RectTransform rect = button.GetComponent<RectTransform>(); rect.anchorMin = Vector2.zero; rect.anchorMax = Vector2.zero; rect.pivot = Vector2.zero; rect.anchoredPosition = new Vector2(18f, 18f);
+            button.onClick.AddListener(Open); SetLauncher(editingEnabled);
+        }
+
+        private void SetLauncher(bool visible) { if (launcherCanvas) launcherCanvas.gameObject.SetActive(visible); }
+
+        private void GateFirstPerson(bool gate)
+        {
+            if (gate)
+            {
+                if (!firstPerson) firstPerson = FindObjectOfType<SlopCityFirstPerson>();
+                if (!firstPerson) return;
+                firstPersonWasEnabled = firstPerson.enabled;
+                // SetExternalMovement keeps the capsule safe; disabling this public
+                // gameplay component for the editor also stops its look/input loop.
+                firstPerson.SetExternalMovement(true);
+                if (firstPersonWasEnabled) firstPerson.enabled = false;
+                return;
+            }
+            if (!firstPerson) return;
+            if (firstPersonWasEnabled) firstPerson.enabled = true;
+            firstPerson.SetExternalMovement(false);
+            firstPersonWasEnabled = false;
+        }
+
+        private static Text Label(Transform parent, string value, int fontSize, Vector2 anchored, Vector2 size)
+        {
+            GameObject item = new GameObject("Label_" + value, typeof(RectTransform), typeof(Text)); item.transform.SetParent(parent, false);
+            RectTransform rect = item.GetComponent<RectTransform>(); rect.anchorMin = new Vector2(0f, 1f); rect.anchorMax = new Vector2(0f, 1f); rect.pivot = new Vector2(0f, 1f); rect.anchoredPosition = anchored; rect.sizeDelta = size;
+            Text text = item.GetComponent<Text>(); text.text = value; text.font = Resources.GetBuiltinResource<Font>("Arial.ttf"); text.fontSize = fontSize; text.color = Color.white; text.alignment = TextAnchor.MiddleLeft; return text;
+        }
+        private static Button Button(Transform parent, string label, Vector2 anchored, Vector2 size)
+        {
+            GameObject item = new GameObject("Button_" + label, typeof(RectTransform), typeof(Image), typeof(Button)); item.transform.SetParent(parent, false);
+            RectTransform rect = item.GetComponent<RectTransform>(); rect.anchorMin = new Vector2(0f, 1f); rect.anchorMax = new Vector2(0f, 1f); rect.pivot = new Vector2(0f, 1f); rect.anchoredPosition = anchored; rect.sizeDelta = size;
+            Image image = item.GetComponent<Image>(); image.color = new Color(.23f, .34f, .25f, 1f); Button button = item.GetComponent<Button>();
+            Text text = Label(item.transform, label, 13, Vector2.zero, size); text.alignment = TextAnchor.MiddleCenter; RectTransform textRect = text.GetComponent<RectTransform>(); textRect.anchorMin = Vector2.zero; textRect.anchorMax = Vector2.one; textRect.pivot = new Vector2(.5f, .5f); textRect.anchoredPosition = Vector2.zero; return button;
+        }
+        private void SetUi(bool visible) { if (canvas) canvas.gameObject.SetActive(visible); }
+        private void RefreshUi()
+        {
+            if (heading) heading.text = "City Forge — " + view + " — block " + selected;
+            if (undoButton) undoButton.interactable = atomicUndo.Count > 0;
+            if (redoButton) redoButton.interactable = atomicRedo.Count > 0;
+            foreach (KeyValuePair<View, Button> pair in viewButtons) if (pair.Value) pair.Value.GetComponent<Image>().color = pair.Key == view ? new Color(.63f, .82f, .35f, 1f) : new Color(.23f, .34f, .25f, 1f);
+            SetButtonLabel(roadButton, "Road: " + roadClass); SetButtonLabel(removeRoadButton, removeRoad ? "Remove road" : "Add road"); SetButtonLabel(zoneButton, "Zone: " + lotZone);
+            SetButtonLabel(kitButton, "Kit: " + buildingBlueprint); SetButtonLabel(facadeButton, "Facade: " + facade); SetButtonLabel(roofButton, "Roof: " + roof); SetButtonLabel(storefrontButton, "Store: " + storefront); SetButtonLabel(entranceButton, "Entry: " + entrance); SetButtonLabel(floorsButton, "Floor + (" + buildingFloors + ")"); SetButtonLabel(interiorButton, "Interior: " + (string.IsNullOrEmpty(interior) ? "none" : interior));
+            string host = screenHostMode == 0 ? "building" : screenHostMode == 1 ? "site" : "road";
+            string target = string.IsNullOrEmpty(screenHostId) ? "choose target" : screenHostId;
+            SetButtonLabel(serviceButton, "Service: " + serviceType); SetButtonLabel(landmarkButton, "Cityworks: " + (string.IsNullOrEmpty(landmarkOutcome) ? "choose" : landmarkOutcome)); SetButtonLabel(mountButton, "Mount: " + screenMount); SetButtonLabel(hostButton, "Host: " + host); SetButtonLabel(targetButton, "Screen target: " + target); SetButtonLabel(deviceButton, "Device: " + screenDevice); SetButtonLabel(situationButton, "Situation: " + (string.IsNullOrEmpty(situationTemplate) ? "choose" : situationTemplate)); SetButtonLabel(situationStateButton, "State: " + situationState);
+        }
+        private static void SetButtonLabel(Button button, string value) { Text text = button ? button.GetComponentInChildren<Text>() : null; if (text) text.text = value; }
+        private void SetMessage(string value) { if (message) message.text = value ?? string.Empty; }
+
+        private void OnDestroy()
+        {
+            if (controller) controller.StrategicMapChanged -= HandleStrategicMapChanged;
+            GateFirstPerson(false);
+        }
+
+        private void CaptureCamera()
+        {
+            if (!buildCamera) return;
+            originalCamera = new CameraState { position = buildCamera.transform.position, rotation = buildCamera.transform.rotation, orthographic = buildCamera.orthographic, orthographicSize = buildCamera.orthographicSize };
+            FocusCamera(); Cursor.visible = true;
+        }
+        private void RestoreCamera()
+        {
+            if (!buildCamera) return;
+            buildCamera.transform.position = originalCamera.position; buildCamera.transform.rotation = originalCamera.rotation; buildCamera.orthographic = originalCamera.orthographic; buildCamera.orthographicSize = originalCamera.orthographicSize; Cursor.visible = false;
+        }
+        private void FocusCamera()
+        {
+            if (!buildCamera) return;
+            buildCamera.orthographic = true; buildCamera.orthographicSize = topDownHeight * .55f; buildCamera.transform.position = new Vector3((selected.x + .5f) * 72f, topDownHeight, (selected.z + .5f) * 72f); buildCamera.transform.rotation = Quaternion.Euler(90f, 0f, 0f);
+        }
+        private void MoveCamera()
+        {
+            if (!buildCamera) return;
+            float pan = topDownHeight * .45f * Time.unscaledDeltaTime; Vector3 delta = new Vector3(Input.GetAxisRaw("Horizontal") * pan, 0f, Input.GetAxisRaw("Vertical") * pan);
+            if (delta.sqrMagnitude > 0f) buildCamera.transform.position += delta;
+            float wheel = Input.GetAxis("Mouse ScrollWheel"); if (Mathf.Abs(wheel) > .001f) { topDownHeight = Mathf.Clamp(topDownHeight - wheel * 45f, 40f, 280f); buildCamera.orthographicSize = topDownHeight * .55f; buildCamera.transform.position = new Vector3(buildCamera.transform.position.x, topDownHeight, buildCamera.transform.position.z); }
+            if (Input.touchCount == 1)
+            {
+                Touch touch = Input.GetTouch(0);
+                if (touch.phase == TouchPhase.Began) { lastTouchPosition = touch.position; touchPanned = false; }
+                else if (touch.phase == TouchPhase.Moved || touch.phase == TouchPhase.Stationary)
+                {
+                    Vector2 movement = touch.position - lastTouchPosition;
+                    if (movement.sqrMagnitude > 9f) touchPanned = true;
+                    float metresPerPixel = topDownHeight / Mathf.Max(240f, Screen.height);
+                    buildCamera.transform.position -= new Vector3(movement.x * metresPerPixel, 0f, movement.y * metresPerPixel);
+                    lastTouchPosition = touch.position;
+                }
+                lastPinchDistance = 0f;
+            }
+            else if (Input.touchCount >= 2)
+            {
+                Touch first = Input.GetTouch(0); Touch second = Input.GetTouch(1);
+                float distance = Vector2.Distance(first.position, second.position);
+                if (lastPinchDistance > 0f)
+                {
+                    float change = distance - lastPinchDistance;
+                    if (Mathf.Abs(change) > .01f) { topDownHeight = Mathf.Clamp(topDownHeight - change * .16f, 40f, 280f); buildCamera.orthographicSize = topDownHeight * .55f; buildCamera.transform.position = new Vector3(buildCamera.transform.position.x, topDownHeight, buildCamera.transform.position.z); }
+                }
+                lastPinchDistance = distance; touchPanned = true;
+            }
+            else lastPinchDistance = 0f;
+        }
+        private struct CameraState { public Vector3 position; public Quaternion rotation; public bool orthographic; public float orthographicSize; }
+        private struct LandmarkChoice
+        {
+            public string classId;
+            public string outcomeId;
+            public LandmarkChoice(string classValue, string outcomeValue) { classId = classValue; outcomeId = outcomeValue; }
+        }
+    }
+}

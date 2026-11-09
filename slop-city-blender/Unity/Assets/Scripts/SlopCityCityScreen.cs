@@ -10,10 +10,18 @@ namespace SlopCity
         [SerializeField] private Renderer display;
         [SerializeField] private int channel;
         [SerializeField] private bool audioOnly;
+        // Authored screens are admitted by default.  Streamed City Forge
+        // hardware opts out until the shared view-zone admission controller
+        // explicitly grants it a bounded media slot.
+        [SerializeField] private bool mediaAdmitted = true;
         private static readonly HashSet<SlopCityCityScreen> ActiveScreens = new HashSet<SlopCityCityScreen>();
         [SerializeField] private float audibleRange = 14f;
         [SerializeField] private string featuredCreator = "", featuredPostId = "";
         [SerializeField] private float featuredHoldAtSeconds = -1f, featuredHoldSeconds = 10f;
+        // Private tenant overlays use this catalog-derived routing key to keep
+        // physical City Forge street and interior displays on independent media
+        // pools. Public canonical play may leave it empty.
+        [SerializeField] private string screenGroup = "";
         private Material originalMaterial;
         private bool capturedMaterial;
         private string clipKey = "", clipTitle = "";
@@ -21,6 +29,8 @@ namespace SlopCity
         public Renderer Display => display;
         public int Channel => channel;
         public bool AudioOnly => audioOnly;
+        public bool MediaAdmitted => mediaAdmitted;
+        public string ScreenGroup => screenGroup;
         public float AudibleRange => audibleRange;
         public float FocusedAudibleRange => Mathf.Max(audibleRange, 30f);
         public string ClipKey => clipKey;
@@ -29,6 +39,15 @@ namespace SlopCity
         public string FeaturedClipKey => IsFeatured ? featuredCreator + "/" + featuredPostId : "";
         public float FeaturedHoldAtSeconds => featuredHoldAtSeconds;
         public float FeaturedHoldSeconds => featuredHoldSeconds;
+
+        /// <summary>Accept only shipped media groups; a fixture never supplies a playlist or media ID.</summary>
+        public void ConfigureScreenGroup(string group)
+        {
+            string selected = group == "street" || group == "interior" || group == "home" || group == "billboard" ? group : "";
+            if (screenGroup == selected) return;
+            screenGroup = selected;
+            if (SlopCityCityMedia.Instance) SlopCityCityMedia.Instance.RefreshScreenAssignment(this);
+        }
 
         public void ConfigureFeaturedPost(string creator, string postId, float holdAtSeconds, float holdSeconds = 10f)
         {
@@ -75,6 +94,13 @@ namespace SlopCity
             clipTitle = title ?? "";
         }
 
+        /// <summary>Return a physical fixture to its neutral, non-media state.</summary>
+        internal void ClearAssignedClip()
+        {
+            clipKey = "";
+            clipTitle = "";
+        }
+
         public void Configure(Renderer renderer, int selectedChannel = 0, float range = 14f)
         {
             if (SlopCityCityMedia.Instance) SlopCityCityMedia.Instance.UnregisterScreen(this);
@@ -82,6 +108,24 @@ namespace SlopCity
             display = renderer;
             channel = Mathf.Max(0, selectedChannel);
             audibleRange = Mathf.Clamp(range, 3f, 30f);
+            TryRegister();
+        }
+
+        /// <summary>
+        /// Grants or immediately revokes dynamic-media ownership for this physical
+        /// display. Revocation always unregisters synchronously, releasing its
+        /// decoder, retained picture, material and audio-focus participation.
+        /// </summary>
+        public void SetMediaAdmission(bool admitted)
+        {
+            if (mediaAdmitted == admitted) return;
+            mediaAdmitted = admitted;
+            if (!mediaAdmitted)
+            {
+                if (SlopCityCityMedia.Instance) SlopCityCityMedia.Instance.UnregisterScreen(this);
+                Restore();
+                return;
+            }
             TryRegister();
         }
 
@@ -118,7 +162,7 @@ namespace SlopCity
 
         private void TryRegister()
         {
-            if (isActiveAndEnabled && display && SlopCityCityMedia.Instance)
+            if (mediaAdmitted && isActiveAndEnabled && display && SlopCityCityMedia.Instance)
                 SlopCityCityMedia.Instance.RegisterScreen(this);
         }
 
@@ -131,7 +175,7 @@ namespace SlopCity
         {
             PruneActiveScreens();
             foreach (SlopCityCityScreen screen in ActiveScreens)
-                if (screen) media.RegisterScreen(screen);
+                if (screen && screen.mediaAdmitted) media.RegisterScreen(screen);
         }
         /// <summary>Copies the enabled screen registry for non-media consumers without a scene-wide discovery pass.</summary>
         internal static void CopyActiveScreens(List<SlopCityCityScreen> destination)
