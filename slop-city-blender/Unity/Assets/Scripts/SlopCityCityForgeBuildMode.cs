@@ -69,6 +69,14 @@ namespace SlopCity
         private bool cursorStateCaptured;
         private CursorLockMode savedCursorLockState;
         private bool savedCursorVisible;
+        private bool launcherPointerStateKnown;
+        private bool launcherPointerAvailable;
+        private bool launcherMousePressedInside;
+        private int launcherTouchFingerId = -1;
+        private Vector2 launcherTouchStart;
+        private bool launcherTouchCanceled;
+        private int lastLauncherRequestFrame = -1;
+        private const float LauncherTapSlopPixels = 18f;
 
         public bool IsOpen { get { return opened; } }
         public bool EditingEnabled { get { return editingEnabled; } }
@@ -109,13 +117,15 @@ namespace SlopCity
         private void Update()
         {
             RefreshLauncherReadiness();
+            RefreshLauncherInputMode();
             bool openedFromPendingRequest = false;
             if (!opened && pendingOpenWhenReady && editingEnabled && controller && controller.IsInitialized)
             {
                 pendingOpenWhenReady = false;
                 openedFromPendingRequest = Open();
             }
-            if (!openedFromPendingRequest && editingEnabled && Input.GetKeyDown(toggleKey)) { if (opened) Close(); else Open(); }
+            if (!openedFromPendingRequest && editingEnabled && Input.GetKeyDown(toggleKey)) { if (opened) Close(); else RequestLauncherOpen(); }
+            if (!opened) UpdateLauncherPointerActivation();
             if (!opened) return;
             MoveCamera();
             if (Input.GetKeyDown(KeyCode.Z) && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))) Undo();
@@ -868,18 +878,19 @@ namespace SlopCity
             root.transform.SetParent(transform, false);
             launcherCanvas = root.GetComponent<Canvas>(); launcherCanvas.renderMode = RenderMode.ScreenSpaceOverlay; launcherCanvas.overrideSorting = true; launcherCanvas.sortingOrder = CityForgeCanvasSortingOrder;
             CanvasScaler scaler = root.GetComponent<CanvasScaler>(); scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize; scaler.referenceResolution = new Vector2(1280, 720);
-            launcherButton = Button(root.transform, "BUILD CITY", Vector2.zero, new Vector2(188f, 52f));
+            launcherButton = Button(root.transform, "BUILD CITY", Vector2.zero, new Vector2(188f, 52f), true);
             RectTransform rect = launcherButton.GetComponent<RectTransform>(); rect.anchorMin = Vector2.zero; rect.anchorMax = Vector2.zero; rect.pivot = Vector2.zero; rect.anchoredPosition = new Vector2(22f, 22f);
             launcherStatus = Label(root.transform, "Open City Forge · B", 13, Vector2.zero, new Vector2(420f, 24f));
             RectTransform statusRect = launcherStatus.GetComponent<RectTransform>(); statusRect.anchorMin = Vector2.zero; statusRect.anchorMax = Vector2.zero; statusRect.pivot = Vector2.zero; statusRect.anchoredPosition = new Vector2(22f, 80f);
             launcherStatus.alignment = TextAnchor.MiddleLeft;
-            launcherButton.onClick.AddListener(() => Open()); SetLauncher(editingEnabled);
+            launcherButton.onClick.AddListener(RequestLauncherOpen); SetLauncher(editingEnabled);
         }
 
         private void SetLauncher(bool visible)
         {
             if (!launcherCanvas) return;
             launcherCanvas.gameObject.SetActive(visible);
+            if (!visible) ResetLauncherPointerActivation();
             if (visible) RefreshLauncher();
         }
 
@@ -892,17 +903,96 @@ namespace SlopCity
             if (!opened && !pendingOpenWhenReady) RefreshLauncher();
         }
 
+        private void RefreshLauncherInputMode()
+        {
+            bool available = Cursor.lockState != CursorLockMode.Locked;
+            if (launcherPointerStateKnown && launcherPointerAvailable == available) return;
+            launcherPointerStateKnown = true;
+            launcherPointerAvailable = available;
+            if (!opened) RefreshLauncher();
+        }
+
         private void RefreshLauncher()
         {
             launcherReady = editingEnabled && controller && controller.IsInitialized;
             launcherReadinessKnown = true;
+            launcherPointerAvailable = Cursor.lockState != CursorLockMode.Locked;
+            launcherPointerStateKnown = true;
             if (launcherButton)
             {
-                launcherButton.interactable = editingEnabled && !launcherUnavailable;
-                SetButtonLabel(launcherButton, launcherUnavailable ? "CITY FORGE\nUNAVAILABLE" : launcherReady ? "BUILD CITY" : "PREPARING CITY");
+                launcherButton.interactable = editingEnabled && !launcherUnavailable && launcherPointerAvailable;
+                SetButtonLabel(launcherButton, launcherUnavailable ? "CITY FORGE\nUNAVAILABLE" : !launcherPointerAvailable ? "PRESS B\nTO BUILD" : launcherReady ? "BUILD CITY" : "PREPARING CITY");
             }
             if (launcherStatus)
-                launcherStatus.text = launcherUnavailable ? launcherUnavailableMessage : launcherReady ? "Open City Forge · B" : "City Forge is preparing your starter ring…";
+                launcherStatus.text = launcherUnavailable ? launcherUnavailableMessage : !launcherPointerAvailable ? "Press B to open City Forge." : launcherReady ? "Open City Forge · B" : "City Forge is preparing your starter ring…";
+        }
+
+        private void RequestLauncherOpen()
+        {
+            // A pointer-down fast path and the ordinary UGUI click can both
+            // arrive in one frame. Treat the gesture as one player request.
+            if (lastLauncherRequestFrame == Time.frameCount) return;
+            lastLauncherRequestFrame = Time.frameCount;
+            Open();
+        }
+
+        private void UpdateLauncherPointerActivation()
+        {
+            if (!launcherCanvas || !launcherCanvas.gameObject.activeInHierarchy || !launcherButton || !launcherButton.interactable || !launcherPointerAvailable)
+            {
+                ResetLauncherPointerActivation();
+                return;
+            }
+
+            if (Input.touchCount == 0)
+            {
+                bool mouseInside = LauncherContains(Input.mousePosition);
+                if (Input.GetMouseButtonDown(0)) launcherMousePressedInside = mouseInside;
+                if (Input.GetMouseButtonUp(0))
+                {
+                    bool activate = launcherMousePressedInside && mouseInside;
+                    launcherMousePressedInside = false;
+                    if (activate) RequestLauncherOpen();
+                }
+            }
+            else
+            {
+                launcherMousePressedInside = false;
+                for (int index = 0; index < Input.touchCount; index++)
+                {
+                    Touch touch = Input.GetTouch(index);
+                    if (touch.phase == TouchPhase.Began && launcherTouchFingerId < 0 && LauncherContains(touch.position))
+                    {
+                        launcherTouchFingerId = touch.fingerId;
+                        launcherTouchStart = touch.position;
+                        launcherTouchCanceled = false;
+                        continue;
+                    }
+                    if (touch.fingerId != launcherTouchFingerId) continue;
+                    if ((touch.phase == TouchPhase.Moved || touch.phase == TouchPhase.Stationary) && Vector2.Distance(touch.position, launcherTouchStart) > LauncherTapSlopPixels)
+                        launcherTouchCanceled = true;
+                    if (touch.phase == TouchPhase.Ended || touch.phase == TouchPhase.Canceled)
+                    {
+                        bool activate = touch.phase == TouchPhase.Ended && !launcherTouchCanceled && LauncherContains(touch.position);
+                        launcherTouchFingerId = -1;
+                        launcherTouchCanceled = false;
+                        if (activate) RequestLauncherOpen();
+                    }
+                }
+            }
+        }
+
+        private bool LauncherContains(Vector2 screenPosition)
+        {
+            RectTransform rect = launcherButton ? launcherButton.GetComponent<RectTransform>() : null;
+            return rect && RectTransformUtility.RectangleContainsScreenPoint(rect, screenPosition, null);
+        }
+
+        private void ResetLauncherPointerActivation()
+        {
+            launcherMousePressedInside = false;
+            launcherTouchFingerId = -1;
+            launcherTouchCanceled = false;
         }
 
         private void SetLauncherStatus(string value)
@@ -944,11 +1034,12 @@ namespace SlopCity
             RectTransform rect = item.GetComponent<RectTransform>(); rect.anchorMin = new Vector2(0f, 1f); rect.anchorMax = new Vector2(0f, 1f); rect.pivot = new Vector2(0f, 1f); rect.anchoredPosition = anchored; rect.sizeDelta = size;
             Text text = item.GetComponent<Text>(); text.text = value; text.font = Resources.GetBuiltinResource<Font>("Arial.ttf"); text.fontSize = fontSize; text.color = Color.white; text.alignment = TextAnchor.MiddleLeft; text.raycastTarget = false; return text;
         }
-        private static Button Button(Transform parent, string label, Vector2 anchored, Vector2 size)
+        private static Button Button(Transform parent, string label, Vector2 anchored, Vector2 size, bool invokeOnPointerDown = false)
         {
-            GameObject item = new GameObject("Button_" + label, typeof(RectTransform), typeof(Image), typeof(Button)); item.transform.SetParent(parent, false);
+            GameObject item = new GameObject("Button_" + label, typeof(RectTransform), typeof(Image)); item.transform.SetParent(parent, false);
             RectTransform rect = item.GetComponent<RectTransform>(); rect.anchorMin = new Vector2(0f, 1f); rect.anchorMax = new Vector2(0f, 1f); rect.pivot = new Vector2(0f, 1f); rect.anchoredPosition = anchored; rect.sizeDelta = size;
-            Image image = item.GetComponent<Image>(); image.color = new Color(.23f, .34f, .25f, 1f); Button button = item.GetComponent<Button>();
+            Image image = item.GetComponent<Image>(); image.color = new Color(.23f, .34f, .25f, 1f);
+            Button button = invokeOnPointerDown ? item.AddComponent<SlopCityCityForgeLaunchButton>() : item.AddComponent<Button>();
             Text text = Label(item.transform, label, 13, Vector2.zero, size); text.alignment = TextAnchor.MiddleCenter; RectTransform textRect = text.GetComponent<RectTransform>(); textRect.anchorMin = Vector2.zero; textRect.anchorMax = Vector2.one; textRect.pivot = new Vector2(.5f, .5f); textRect.anchoredPosition = Vector2.zero; return button;
         }
         private void SetUi(bool visible) { if (canvas) canvas.gameObject.SetActive(visible); }
@@ -1040,6 +1131,15 @@ namespace SlopCity
             }
             else lastPinchDistance = 0f;
         }
+        private void OnApplicationFocus(bool focused)
+        {
+            if (!focused) ResetLauncherPointerActivation();
+        }
+        private void OnApplicationPause(bool paused)
+        {
+            if (paused) ResetLauncherPointerActivation();
+        }
+        private void OnDisable() { ResetLauncherPointerActivation(); }
         private struct CameraState { public Vector3 position; public Quaternion rotation; public bool orthographic; public float orthographicSize; }
         private struct LandmarkChoice
         {
@@ -1047,5 +1147,19 @@ namespace SlopCity
             public string outcomeId;
             public LandmarkChoice(string classValue, string outcomeValue) { classId = classValue; outcomeId = outcomeValue; }
         }
+    }
+
+    /// <summary>Consumes a launcher gesture at pointer down, before a platform can lose a short mouse-up event.</summary>
+    public sealed class SlopCityCityForgeLaunchButton : Button
+    {
+        public override void OnPointerDown(PointerEventData eventData)
+        {
+            base.OnPointerDown(eventData);
+            if (eventData.button == PointerEventData.InputButton.Left && IsActive() && IsInteractable()) onClick.Invoke();
+        }
+
+        // Pointer-down deliberately owns the activation so a normal click is
+        // never dispatched twice. Keyboard Submit remains Button's default.
+        public override void OnPointerClick(PointerEventData eventData) { }
     }
 }
