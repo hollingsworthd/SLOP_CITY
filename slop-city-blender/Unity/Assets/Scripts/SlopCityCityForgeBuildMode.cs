@@ -86,6 +86,12 @@ namespace SlopCity
         private Button buildUiMouseCapture;
         private bool buildUiMouseSurfaceCapture;
         private int buildUiMousePressFrame = -1;
+        // IMGUI receives native desktop mouse events on platforms where a
+        // legacy StandaloneInputModule can miss a short click. Keep its
+        // capture separate so it can safely converge with UGUI/raw input.
+        private Button buildUiGuiMouseCapture;
+        private bool buildUiGuiMouseSurfaceCapture;
+        private int buildUiGuiMousePressFrame = -1;
         private Button buildUiTouchCapture;
         private int buildUiTouchFingerId = -1;
         private int buildUiTouchPressFrame = -1;
@@ -162,6 +168,44 @@ namespace SlopCity
                     touchPanned = false;
                 }
             }
+        }
+
+        private void OnGUI()
+        {
+            Event current = Event.current;
+            if (current == null || current.button != 0) return;
+            EventType type = current.type == EventType.Used ? current.rawType : current.type;
+            if (type != EventType.MouseDown && type != EventType.MouseUp) return;
+            Vector2 screenPosition = new Vector2(current.mousePosition.x, Screen.height - current.mousePosition.y);
+
+            if (!opened)
+            {
+                if (type == EventType.MouseDown && launcherCanvas && launcherCanvas.gameObject.activeInHierarchy && launcherButton && launcherButton.interactable && launcherPointerAvailable && LauncherContains(screenPosition))
+                {
+                    current.Use();
+                    RequestLauncherOpen();
+                }
+                return;
+            }
+            if (!canvas || !canvas.gameObject.activeInHierarchy) return;
+
+            if (type == EventType.MouseDown)
+            {
+                buildUiGuiMouseSurfaceCapture = BuildUiSurfaceContains(screenPosition);
+                buildUiGuiMouseCapture = buildUiGuiMouseSurfaceCapture ? BuildUiActivatableButtonAt(screenPosition) : null;
+                buildUiGuiMousePressFrame = Time.frameCount;
+                if (buildUiGuiMouseSurfaceCapture) current.Use();
+                return;
+            }
+
+            if (!buildUiGuiMouseSurfaceCapture) return;
+            Button capture = buildUiGuiMouseCapture;
+            bool activate = capture && BuildUiActivatableButtonAt(screenPosition) == capture && !BuildUiButtonActivatedOnOrAfter(capture, buildUiGuiMousePressFrame);
+            buildUiGuiMouseCapture = null;
+            buildUiGuiMouseSurfaceCapture = false;
+            buildUiGuiMousePressFrame = -1;
+            current.Use();
+            if (activate) InvokeBuildUiFallback(capture, PointerInputModule.kMouseLeftId);
         }
 
         public bool Open()
@@ -1149,7 +1193,7 @@ namespace SlopCity
         {
             if (!button || !button.IsActive() || !button.IsInteractable()) return;
             SlopCityCityForgeActionButton action = button as SlopCityCityForgeActionButton;
-            if (action) action.SuppressNextPointerClick(pointerId);
+            if (action) action.RecordFallbackActivation(pointerId);
             button.onClick.Invoke();
         }
 
@@ -1166,6 +1210,9 @@ namespace SlopCity
             buildUiMouseCapture = null;
             buildUiMouseSurfaceCapture = false;
             buildUiMousePressFrame = -1;
+            buildUiGuiMouseCapture = null;
+            buildUiGuiMouseSurfaceCapture = false;
+            buildUiGuiMousePressFrame = -1;
             ClearBuildUiTouchCapture();
             buildUiTouchReleasedThisFrame = false;
             suppressBuildUiTouchUntilNoTouches = false;
@@ -1342,8 +1389,9 @@ namespace SlopCity
         public int PointerDownActivationSequence { get; private set; }
         public int LastActivationFrame { get; private set; } = -1;
 
-        public void SuppressNextPointerClick(int pointerId)
+        public void RecordFallbackActivation(int pointerId)
         {
+            LastActivationFrame = Time.frameCount;
             suppressedPointerClickId = pointerId;
             suppressedPointerClickFrame = Time.frameCount;
         }
@@ -1362,7 +1410,7 @@ namespace SlopCity
             {
                 PointerDownActivationSequence++;
                 LastActivationFrame = Time.frameCount;
-                SuppressNextPointerClick(eventData.pointerId);
+                RecordFallbackActivation(eventData.pointerId);
                 onClick.Invoke();
             }
         }
