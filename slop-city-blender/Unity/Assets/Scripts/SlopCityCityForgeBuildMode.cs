@@ -69,6 +69,8 @@ namespace SlopCity
         private bool cursorStateCaptured;
         private CursorLockMode savedCursorLockState;
         private bool savedCursorVisible;
+        private bool launcherCursorStateKnown;
+        private bool launcherCursorLocked;
         private bool launcherMousePressedInside;
         private int launcherMouseActivationSequence;
         private bool launcherMouseGestureConsumed;
@@ -141,6 +143,7 @@ namespace SlopCity
         private void Update()
         {
             RefreshLauncherReadiness();
+            RefreshLauncherCursorMode();
             bool openedFromPendingRequest = false;
             if (!opened && pendingOpenWhenReady && editingEnabled && controller && controller.IsInitialized)
             {
@@ -972,21 +975,61 @@ namespace SlopCity
             if (!opened && !pendingOpenWhenReady) RefreshLauncher();
         }
 
+        private void RefreshLauncherCursorMode()
+        {
+            bool locked = Cursor.lockState == CursorLockMode.Locked;
+            if (launcherCursorStateKnown && launcherCursorLocked == locked) return;
+            launcherCursorStateKnown = true;
+            launcherCursorLocked = locked;
+            if (!opened) RefreshLauncher();
+        }
+
         private void RefreshLauncher()
         {
             launcherReady = editingEnabled && controller && controller.IsInitialized;
             launcherReadinessKnown = true;
+            launcherCursorLocked = Cursor.lockState == CursorLockMode.Locked;
+            launcherCursorStateKnown = true;
+            ConfigureLauncherLayout(launcherCursorLocked);
             if (launcherButton)
             {
-                // City Forge is an explicit desktop control. A locked
-                // first-person cursor must not turn its visible launch button
-                // into a dead affordance: UGUI and the native pointer fallback
-                // can still receive a deliberate click at the button surface.
+                // A locked pointer reports at the center of the display. Put
+                // the visible control at that real target rather than leaving
+                // a lower-corner button that cannot receive the click.
                 launcherButton.interactable = editingEnabled && !launcherUnavailable;
-                SetButtonLabel(launcherButton, launcherUnavailable ? "CITY FORGE\nUNAVAILABLE" : launcherReady ? "BUILD CITY" : "PREPARING CITY");
+                SetButtonLabel(launcherButton, launcherUnavailable ? "CITY FORGE\nUNAVAILABLE" : !launcherReady ? "PREPARING CITY" : launcherCursorLocked ? "BUILD CITY\nB" : "BUILD CITY");
             }
             if (launcherStatus)
-                launcherStatus.text = launcherUnavailable ? launcherUnavailableMessage : launcherReady ? "Open City Forge · B" : "City Forge is preparing your starter ring…";
+                launcherStatus.text = launcherUnavailable ? launcherUnavailableMessage : !launcherReady ? "City Forge is preparing your starter ring…" : launcherCursorLocked ? "Click or press B to open City Forge" : "Open City Forge · B";
+        }
+
+        private void ConfigureLauncherLayout(bool cursorLocked)
+        {
+            if (launcherButton)
+            {
+                RectTransform buttonRect = launcherButton.GetComponent<RectTransform>();
+                if (buttonRect)
+                {
+                    buttonRect.anchorMin = cursorLocked ? new Vector2(.5f, .5f) : Vector2.zero;
+                    buttonRect.anchorMax = buttonRect.anchorMin;
+                    buttonRect.pivot = cursorLocked ? new Vector2(.5f, .5f) : Vector2.zero;
+                    buttonRect.anchoredPosition = cursorLocked ? Vector2.zero : new Vector2(22f, 22f);
+                    buttonRect.sizeDelta = cursorLocked ? new Vector2(224f, 58f) : new Vector2(188f, 52f);
+                }
+            }
+            if (launcherStatus)
+            {
+                RectTransform statusRect = launcherStatus.GetComponent<RectTransform>();
+                if (statusRect)
+                {
+                    statusRect.anchorMin = cursorLocked ? new Vector2(.5f, .5f) : Vector2.zero;
+                    statusRect.anchorMax = statusRect.anchorMin;
+                    statusRect.pivot = cursorLocked ? new Vector2(.5f, .5f) : Vector2.zero;
+                    statusRect.anchoredPosition = cursorLocked ? new Vector2(0f, 44f) : new Vector2(22f, 80f);
+                    statusRect.sizeDelta = cursorLocked ? new Vector2(360f, 24f) : new Vector2(420f, 24f);
+                }
+                launcherStatus.alignment = cursorLocked ? TextAnchor.MiddleCenter : TextAnchor.MiddleLeft;
+            }
         }
 
         private void RequestLauncherOpen()
