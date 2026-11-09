@@ -156,6 +156,11 @@ namespace SlopCity
             bool mouseStartedOverBuildUi = UpdateBuildUiPointerActivation();
             if (!opened) return;
             MoveCamera();
+            if (Input.GetKeyDown(KeyCode.Alpha1) || Input.GetKeyDown(KeyCode.Keypad1)) SelectView(View.Streets);
+            if (Input.GetKeyDown(KeyCode.Alpha2) || Input.GetKeyDown(KeyCode.Keypad2)) SelectView(View.Lots);
+            if (Input.GetKeyDown(KeyCode.Alpha3) || Input.GetKeyDown(KeyCode.Keypad3)) SelectView(View.Buildings);
+            if (Input.GetKeyDown(KeyCode.Alpha4) || Input.GetKeyDown(KeyCode.Keypad4)) SelectView(View.Services);
+            if (Input.GetKeyDown(KeyCode.Alpha5) || Input.GetKeyDown(KeyCode.Keypad5)) SelectView(View.Life);
             if (Input.GetKeyDown(KeyCode.Z) && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))) Undo();
             if (Input.GetKeyDown(KeyCode.Y) && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))) Redo();
             if (Input.GetMouseButtonDown(0) && Input.touchCount == 0 && !mouseStartedOverBuildUi && !(EventSystem.current && EventSystem.current.IsPointerOverGameObject())) ClickMap(Input.mousePosition);
@@ -899,7 +904,7 @@ namespace SlopCity
             Image panel = root.AddComponent<Image>(); panel.color = new Color(.03f, .05f, .06f, .92f);
             buildUiSurface = root.GetComponent<RectTransform>(); buildUiSurface.anchorMin = new Vector2(0f, 1f); buildUiSurface.anchorMax = new Vector2(1f, 1f); buildUiSurface.pivot = new Vector2(.5f, 1f); buildUiSurface.sizeDelta = new Vector2(0f, 248f);
             heading = Label(root.transform, "City Forge", 20, new Vector2(12, -12), new Vector2(620, 28));
-            message = Label(root.transform, "Tap a grid cell to edit. Drag to pan; pinch to zoom. Hold Shift while tapping cells to shape a lot.", 14, new Vector2(12, -218), new Vector2(1230, 22));
+            message = Label(root.transform, "Tap a grid cell to edit. Drag to pan; pinch to zoom. 1–5 switch views; B returns; Ctrl+Z/Y undo/redo.", 14, new Vector2(12, -218), new Vector2(1230, 22));
             float x = 12f;
             foreach (View choice in new[] { View.Streets, View.Lots, View.Buildings, View.Services, View.Life })
             {
