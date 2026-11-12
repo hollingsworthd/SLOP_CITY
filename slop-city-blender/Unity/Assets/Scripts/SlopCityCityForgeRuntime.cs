@@ -324,7 +324,14 @@ namespace SlopCity
             const float mapHeight = .29f;
             float chunk = SlopCityCityForge.ChunkSizeMeters;
             float cell = SlopCityCityForge.CellSizeMeters;
-            Color grid = new Color(.15f, .42f, .58f);
+            // Give the planning layer its own luminous drafting-table surface.
+            // It remains a collider-free, transient presentation layer, but it
+            // no longer depends on the walker's night-time scene lighting to
+            // make block boundaries legible.
+            EditorPrimitive("PlanSurface", PrimitiveType.Cube, root,
+                new Vector3(chunk * .5f, .252f, chunk * .5f),
+                new Vector3(chunk - .16f, .025f, chunk - .16f), new Color(.025f, .13f, .19f));
+            Color grid = new Color(.20f, .73f, .95f);
             for (int index = 0; index <= SlopCityCityForge.GridSize; index++)
             {
                 float offset = index * cell;

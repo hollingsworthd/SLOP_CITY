@@ -61,6 +61,7 @@ namespace SlopCity
         private bool hasPendingNavigation;
         private SlopCityFirstPerson firstPerson;
         private SlopCityHud hud;
+        private SlopCitySalvageHud salvageHud;
         private bool firstPersonWasEnabled;
         private bool hudSuppressed;
         private Vector2 lastTouchPosition;
@@ -1430,8 +1431,9 @@ namespace SlopCity
             SlopCityHud playerHud = firstPerson ? firstPerson.Hud : null;
             if (playerHud) hud = playerHud;
             if (!hud) hud = FindFirstObjectByType<SlopCityHud>();
-            if (!hud) { hudSuppressed = false; return; }
-            hud.SetExternalOverlaySuppressed(value);
+            if (!salvageHud) salvageHud = firstPerson ? firstPerson.GetComponent<SlopCitySalvageHud>() : FindFirstObjectByType<SlopCitySalvageHud>();
+            if (hud) hud.SetExternalOverlaySuppressed(value);
+            if (salvageHud) salvageHud.SetExternalOverlaySuppressed(value);
             hudSuppressed = value;
         }
 

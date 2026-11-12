@@ -13,6 +13,10 @@ namespace SlopCity
         private Camera view;
         private GameObject panel, desktop, canvasObject;
         private bool initialized;
+        // City Forge is an exclusive, full-screen planning surface. Keep the
+        // inventory's independent canvas out of both the frame and the UI
+        // event path while that surface owns presentation.
+        private bool externalOverlaySuppressed;
         private Text heading, summary, hint, pageLabel;
         private readonly Text[] labels = new Text[8];
         private readonly Button[] rows = new Button[8];
@@ -119,14 +123,30 @@ namespace SlopCity
                 nextLayoutAt = Time.unscaledTime + LayoutRefreshInterval;
                 Layout(); Refresh();
             }
-            if (panel.activeSelf != player.InventoryOpen) panel.SetActive(player.InventoryOpen);
-            desktop.SetActive(input.GameplayEnabled && !input.UseTouchControls);
+            bool visible = !externalOverlaySuppressed;
+            if (panel.activeSelf != (visible && player.InventoryOpen)) panel.SetActive(visible && player.InventoryOpen);
+            desktop.SetActive(visible && input.GameplayEnabled && !input.UseTouchControls);
             if (Time.unscaledTime >= nextPrompt)
             {
                 nextPrompt = Time.unscaledTime + .15f;
                 if (desktop.activeSelf) hint.text = sandbox.SalvagePrompt(view);
                 if (panel.activeSelf && !ReferenceEquals(pawn, null) && !sandbox.CanSellAt(pawn)) { pawn = null; Refresh(); }
             }
+        }
+
+        /// <summary>
+        /// Yields this independent inventory canvas to a full-screen authored
+        /// mode without discarding the player's bag or its open state.
+        /// </summary>
+        public void SetExternalOverlaySuppressed(bool value)
+        {
+            if (externalOverlaySuppressed == value) return;
+            externalOverlaySuppressed = value;
+            if (!canvasObject) return;
+            // Deactivate the owned root rather than one child: this also
+            // removes the GraphicRaycaster from the event path. Update keeps
+            // the child state current and release restores it intact.
+            if (canvasObject.activeSelf == value) canvasObject.SetActive(!value);
         }
         private void Layout() => LayoutForViewport(Screen.width, Screen.height, Screen.safeArea, SlopCityWebPresentation.DisplayPixelRatio);
 
