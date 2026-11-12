@@ -31,6 +31,20 @@ namespace SlopCity
     }
 
     /// <summary>
+    /// A presentation-only planning layer. It receives bounded, catalog-backed
+    /// plan data from Build Mode and never registers fixtures, colliders, media,
+    /// or accepted world state.
+    /// </summary>
+    public interface ISlopCityCityForgeBuildOverlaySink
+    {
+        void ShowCityForgeBuildOverlay(CityForgeWorldHead head, CityForgeCoord selected,
+            CityForgeChunkPlan draft, CityForgeCoord? hoveredCell,
+            CityForgeDirection roadDirection, SlopCityCityForgeBuildMode.View view,
+            bool draftIsValid);
+        void ClearCityForgeBuildOverlay();
+    }
+
+    /// <summary>
     /// Concrete, catalog-only presentation sink for streamed City Forge chunks.
     /// The data model supplies IDs and grid coordinates only; this component
     /// derives every GameObject, collider, scale, orientation, and screen mount
@@ -38,7 +52,7 @@ namespace SlopCity
     /// asset reference from a player plan.
     /// </summary>
     [DisallowMultipleComponent]
-    public sealed class SlopCityCityForgeRuntime : MonoBehaviour, ISlopCityCityForgeChunkSink, ISlopCityCityForgeDraftPreviewSink, ISlopCityCityForgeStrategicSummarySink
+    public sealed class SlopCityCityForgeRuntime : MonoBehaviour, ISlopCityCityForgeChunkSink, ISlopCityCityForgeDraftPreviewSink, ISlopCityCityForgeStrategicSummarySink, ISlopCityCityForgeBuildOverlaySink
     {
         [SerializeField] private Transform listener;
         [SerializeField] private bool constrainedWebGl;
@@ -56,6 +70,8 @@ namespace SlopCity
         private float nextAdmission;
         private ChunkInstance preview;
         private GameObject strategicMap;
+        private GameObject buildOverlay;
+        private bool buildOverlayPresentationActive;
 
         public int ActiveChunkCount { get { return chunks.Count; } }
         public int ActiveFixtureCount { get { return fixtures.Count; } }
@@ -112,7 +128,11 @@ namespace SlopCity
                 BuildLandmarks(instance, chunk);
                 BuildLife(instance, chunk);
                 BuildScreens(instance, chunk);
-                root.SetActive(true);
+                // Build Mode is a clean planning surface, not a second scene
+                // layered over street geometry. A chunk that arrives while the
+                // editor is open remains safely streamed but visually hidden
+                // until the player returns to first person.
+                root.SetActive(!buildOverlayPresentationActive);
                 chunks.Add(coord, instance);
             }
             catch (Exception error)
@@ -220,7 +240,10 @@ namespace SlopCity
                     if (!SlopCityCityForge.IsBuildable(coordinate)) continue;
                     CityForgeBaseChunk baseChunk = generator.Generate(head, coordinate);
                     GameObject tile = Primitive("Skyline_" + baseChunk.skylineId, PrimitiveType.Cube, strategicMap.transform,
-                        ChunkOrigin(coordinate) + new Vector3(36f, -.09f, 36f), new Vector3(70f, .06f, 70f));
+                        // The accepted ground tops out at y=0. Keep the map
+                        // skin just above it so an empty selected block does
+                        // not become an indistinguishable grey field.
+                        ChunkOrigin(coordinate) + new Vector3(36f, .035f, 36f), new Vector3(70f, .06f, 70f));
                     Collider collider = tile.GetComponent<Collider>(); if (collider) collider.enabled = false;
                     Renderer renderer = tile.GetComponent<Renderer>(); if (renderer) SetRendererColor(renderer, SkylineColor(baseChunk.skylineId));
                     if (acceptedPlans != null && acceptedPlans.TryGetValue(coordinate, out CityForgeChunkPlan acceptedPlan) && acceptedPlan != null)
@@ -233,7 +256,192 @@ namespace SlopCity
         public void ClearCityForgeStrategicMap()
         {
             if (!strategicMap) return;
+            strategicMap.SetActive(false);
             Destroy(strategicMap); strategicMap = null;
+        }
+
+        /// <summary>
+        /// Draws the current editor state directly over the selected 9 × 9
+        /// block. This is deliberately a low-cost map treatment rather than a
+        /// second compiled world: a draft can be invalid, but it must still be
+        /// intelligible and safe to revise.
+        /// </summary>
+        public void ShowCityForgeBuildOverlay(CityForgeWorldHead head, CityForgeCoord selected,
+            CityForgeChunkPlan draft, CityForgeCoord? hoveredCell,
+            CityForgeDirection roadDirection, SlopCityCityForgeBuildMode.View view,
+            bool draftIsValid)
+        {
+            DestroyBuildOverlay(false);
+            if (head == null || draft == null || !draft.coord.Equals(selected)) return;
+
+            SetChunkPresentationForBuildOverlay(true);
+
+            buildOverlay = new GameObject("CityForgeBuildOverlay_" + selected);
+            buildOverlay.transform.SetParent(transform, false);
+            buildOverlay.transform.localPosition = ChunkOrigin(selected);
+            Color status = draftIsValid ? new Color(.55f, .94f, .42f) : new Color(1f, .57f, .18f);
+            BuildEditorGrid(buildOverlay.transform, status);
+            BuildEditorLots(buildOverlay.transform, draft);
+            BuildEditorRoads(buildOverlay.transform, draft, status);
+            BuildEditorBuildings(buildOverlay.transform, draft);
+            BuildEditorServicesAndLife(buildOverlay.transform, draft);
+            BuildEditorScreens(buildOverlay.transform, draft);
+            if (hoveredCell.HasValue)
+                BuildEditorHover(buildOverlay.transform, hoveredCell.Value, roadDirection, status, view);
+        }
+
+        public void ClearCityForgeBuildOverlay()
+        {
+            DestroyBuildOverlay(true);
+        }
+
+        private void DestroyBuildOverlay(bool restorePhysicalChunks)
+        {
+            if (buildOverlay)
+            {
+                // A draft can change several times in one frame. Deactivate
+                // the outgoing layer immediately so stale geometry never
+                // flashes through the next state while Unity schedules Destroy.
+                buildOverlay.SetActive(false);
+                Destroy(buildOverlay);
+                buildOverlay = null;
+            }
+            if (restorePhysicalChunks) SetChunkPresentationForBuildOverlay(false);
+        }
+
+        private void SetChunkPresentationForBuildOverlay(bool visible)
+        {
+            if (buildOverlayPresentationActive == visible) return;
+            buildOverlayPresentationActive = visible;
+            foreach (ChunkInstance instance in chunks.Values)
+                if (instance != null && instance.root) instance.root.SetActive(!visible);
+        }
+
+        private static void BuildEditorGrid(Transform root, Color status)
+        {
+            const float lineHeight = .035f;
+            const float mapHeight = .29f;
+            float chunk = SlopCityCityForge.ChunkSizeMeters;
+            float cell = SlopCityCityForge.CellSizeMeters;
+            Color grid = new Color(.12f, .23f, .30f);
+            for (int index = 0; index <= SlopCityCityForge.GridSize; index++)
+            {
+                float offset = index * cell;
+                EditorPrimitive("GridX_" + index, PrimitiveType.Cube, root, new Vector3(offset, mapHeight, chunk * .5f), new Vector3(.07f, lineHeight, chunk), grid);
+                EditorPrimitive("GridZ_" + index, PrimitiveType.Cube, root, new Vector3(chunk * .5f, mapHeight, offset), new Vector3(chunk, lineHeight, .07f), grid);
+            }
+            float border = .18f;
+            EditorPrimitive("PlanBorderNorth", PrimitiveType.Cube, root, new Vector3(chunk * .5f, mapHeight + .015f, chunk), new Vector3(chunk + border, .05f, border), status);
+            EditorPrimitive("PlanBorderSouth", PrimitiveType.Cube, root, new Vector3(chunk * .5f, mapHeight + .015f, 0f), new Vector3(chunk + border, .05f, border), status);
+            EditorPrimitive("PlanBorderEast", PrimitiveType.Cube, root, new Vector3(chunk, mapHeight + .015f, chunk * .5f), new Vector3(border, .05f, chunk + border), status);
+            EditorPrimitive("PlanBorderWest", PrimitiveType.Cube, root, new Vector3(0f, mapHeight + .015f, chunk * .5f), new Vector3(border, .05f, chunk + border), status);
+        }
+
+        private static void BuildEditorLots(Transform root, CityForgeChunkPlan draft)
+        {
+            foreach (CityForgeParcel parcel in (draft.parcels ?? new List<CityForgeParcel>()).Where(item => item != null && item.cells != null).OrderBy(item => item.id, StringComparer.Ordinal))
+            {
+                Color color = EditorZoneColor(parcel.zone);
+                foreach (int item in parcel.cells.Where(cell => cell >= 0 && cell < SlopCityCityForge.GridSize * SlopCityCityForge.GridSize).OrderBy(cell => cell))
+                {
+                    int x = item % SlopCityCityForge.GridSize, z = item / SlopCityCityForge.GridSize;
+                    EditorPrimitive("Lot_" + parcel.id + "_" + item, PrimitiveType.Cube, root,
+                        new Vector3((x + .5f) * SlopCityCityForge.CellSizeMeters, .325f, (z + .5f) * SlopCityCityForge.CellSizeMeters),
+                        new Vector3(SlopCityCityForge.CellSizeMeters - .34f, .045f, SlopCityCityForge.CellSizeMeters - .34f), color);
+                }
+            }
+        }
+
+        private static void BuildEditorRoads(Transform root, CityForgeChunkPlan draft, Color status)
+        {
+            foreach (CityForgeRoad road in (draft.roads ?? new List<CityForgeRoad>()).Where(item => item != null).OrderBy(item => item.LocalKey, StringComparer.Ordinal))
+            {
+                Vector3 edge = RoadEdgeCentre(road) + Vector3.up * .365f;
+                bool northSouth = road.direction == CityForgeDirection.North || road.direction == CityForgeDirection.South;
+                Vector3 size = northSouth
+                    ? new Vector3(SlopCityCityForge.CellSizeMeters - .28f, .065f, 1.05f)
+                    : new Vector3(1.05f, .065f, SlopCityCityForge.CellSizeMeters - .28f);
+                EditorPrimitive("DraftRoad_" + road.LocalKey, PrimitiveType.Cube, root, edge, size, Color.Lerp(RoadColor(road.roadClass), status, .18f));
+            }
+        }
+
+        private static void BuildEditorBuildings(Transform root, CityForgeChunkPlan draft)
+        {
+            foreach (CityForgeBuilding building in (draft.buildings ?? new List<CityForgeBuilding>()).Where(item => item != null).OrderBy(item => item.id, StringComparer.Ordinal))
+            {
+                CityForgeParcel parcel = (draft.parcels ?? new List<CityForgeParcel>()).FirstOrDefault(item => item != null && item.id == building.parcelId);
+                if (parcel == null || parcel.cells == null || parcel.cells.Count == 0) continue;
+                Vector3 center = ParcelCentre(parcel.cells);
+                float span = Mathf.Clamp(Mathf.Sqrt(parcel.cells.Count) * SlopCityCityForge.CellSizeMeters * .72f, 3.2f, 17f);
+                Color color = Color.Lerp(FacadeColor(building.facadeId), Color.white, .22f);
+                EditorPrimitive("DraftBuilding_" + building.id, PrimitiveType.Cube, root, center + Vector3.up * .43f, new Vector3(span, .11f, span), color);
+                Vector3 direction = RoadNormal(building.entranceEdge);
+                EditorPrimitive("DraftEntrance_" + building.id, PrimitiveType.Cube, root, center + direction * (span * .47f) + Vector3.up * .50f, new Vector3(1.2f, .06f, 1.2f), new Color(.92f, .95f, .73f));
+            }
+        }
+
+        private static void BuildEditorServicesAndLife(Transform root, CityForgeChunkPlan draft)
+        {
+            foreach (CityForgeService service in (draft.services ?? new List<CityForgeService>()).Where(item => item != null).OrderBy(item => item.id, StringComparer.Ordinal))
+            {
+                CityForgeParcel parcel = (draft.parcels ?? new List<CityForgeParcel>()).FirstOrDefault(item => item != null && item.id == service.parcelId);
+                if (parcel == null) continue;
+                EditorPrimitive("DraftService_" + service.id, PrimitiveType.Cylinder, root, ParcelCentre(parcel.cells) + Vector3.up * .54f, new Vector3(.7f, .08f, .7f), new Color(.31f, .70f, .96f));
+            }
+            foreach (CityForgeLandmark landmark in (draft.landmarks ?? new List<CityForgeLandmark>()).Where(item => item != null).OrderBy(item => item.id, StringComparer.Ordinal))
+            {
+                CityForgeParcel parcel = (draft.parcels ?? new List<CityForgeParcel>()).FirstOrDefault(item => item != null && item.id == landmark.parcelId);
+                if (parcel == null) continue;
+                EditorPrimitive("DraftCityworks_" + landmark.id, PrimitiveType.Cylinder, root, ParcelCentre(parcel.cells) + Vector3.up * .60f, new Vector3(1.05f, .10f, 1.05f), new Color(.98f, .69f, .24f));
+            }
+        }
+
+        private static void BuildEditorScreens(Transform root, CityForgeChunkPlan draft)
+        {
+            foreach (CityForgeScreen screen in (draft.screens ?? new List<CityForgeScreen>()).Where(item => item != null).OrderBy(item => item.screenId, StringComparer.Ordinal))
+            {
+                CityForgeBuilding building = (draft.buildings ?? new List<CityForgeBuilding>()).FirstOrDefault(item => item != null && item.id == screen.hostId);
+                CityForgeParcel parcel = building == null ? null : (draft.parcels ?? new List<CityForgeParcel>()).FirstOrDefault(item => item != null && item.id == building.parcelId);
+                Vector3 marker = parcel == null ? new Vector3(36f, .65f, 36f) : ParcelCentre(parcel.cells) + Vector3.up * .65f;
+                EditorPrimitive("DraftScreen_" + screen.screenId, PrimitiveType.Cube, root, marker, new Vector3(.9f, .09f, .9f), new Color(.83f, .37f, .93f));
+            }
+        }
+
+        private static void BuildEditorHover(Transform root, CityForgeCoord hovered, CityForgeDirection direction, Color status, SlopCityCityForgeBuildMode.View view)
+        {
+            int x = Mathf.Clamp(hovered.x, 0, SlopCityCityForge.GridSize - 1), z = Mathf.Clamp(hovered.z, 0, SlopCityCityForge.GridSize - 1);
+            float cell = SlopCityCityForge.CellSizeMeters;
+            Vector3 cellCenter = new Vector3((x + .5f) * cell, .71f, (z + .5f) * cell);
+            EditorPrimitive("HoveredCell", PrimitiveType.Cube, root, cellCenter, new Vector3(cell - .5f, .045f, cell - .5f), view == SlopCityCityForgeBuildMode.View.Streets ? status : new Color(.67f, .86f, .98f));
+            if (view != SlopCityCityForgeBuildMode.View.Streets) return;
+            CityForgeRoad road = new CityForgeRoad { cellX = x, cellZ = z, direction = direction };
+            Vector3 edge = RoadEdgeCentre(road) + Vector3.up * .76f;
+            bool northSouth = direction == CityForgeDirection.North || direction == CityForgeDirection.South;
+            EditorPrimitive("RoadDirectionCue", PrimitiveType.Cube, root, edge,
+                northSouth ? new Vector3(cell - .18f, .08f, 1.2f) : new Vector3(1.2f, .08f, cell - .18f), status);
+        }
+
+        private static GameObject EditorPrimitive(string name, PrimitiveType type, Transform parent, Vector3 position, Vector3 scale, Color color)
+        {
+            GameObject value = Primitive(name, type, parent, position, scale);
+            Collider collider = value.GetComponent<Collider>();
+            if (collider) collider.enabled = false;
+            DisableShadow(value);
+            SetRendererColor(value.GetComponent<Renderer>(), color);
+            return value;
+        }
+
+        private static Color EditorZoneColor(CityForgeZone zone)
+        {
+            switch (zone)
+            {
+                case CityForgeZone.Home: return new Color(.37f, .66f, .54f);
+                case CityForgeZone.WorkService: return new Color(.36f, .58f, .77f);
+                case CityForgeZone.Trade: return new Color(.82f, .57f, .28f);
+                case CityForgeZone.Civic: return new Color(.45f, .48f, .82f);
+                case CityForgeZone.Culture: return new Color(.69f, .43f, .75f);
+                default: return new Color(.36f, .71f, .42f);
+            }
         }
 
         /// <summary>
@@ -286,7 +494,7 @@ namespace SlopCity
         }
 
         private void OnDisable() { RevokeAllMedia(); }
-        private void OnDestroy() { ClearCityForgeStrategicMap(); ClearCityForgeDraftPreview(); ReleaseAllCityForgeChunks(); }
+        private void OnDestroy() { ClearCityForgeBuildOverlay(); ClearCityForgeStrategicMap(); ClearCityForgeDraftPreview(); ReleaseAllCityForgeChunks(); }
 
         private void BuildGround(ChunkInstance instance)
         {

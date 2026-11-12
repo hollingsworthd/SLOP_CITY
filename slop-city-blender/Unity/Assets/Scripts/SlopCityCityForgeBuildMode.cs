@@ -22,18 +22,20 @@ namespace SlopCity
         private const int CityForgeCanvasSortingOrder = 300;
         private Canvas canvas;
         private Canvas launcherCanvas;
-        private Text heading, message;
+        private Text heading, message, contextHint;
         private Text launcherStatus;
         private Button undoButton, redoButton;
         private Button launcherButton;
-        private Button roadButton, removeRoadButton, zoneButton, kitButton, facadeButton, roofButton, storefrontButton, entranceButton, floorsButton, interiorButton, serviceButton, landmarkButton, situationButton, situationStateButton, mountButton, hostButton, targetButton, deviceButton;
+        private Button roadButton, removeRoadButton, roadDirectionButton, zoneButton, kitButton, facadeButton, roofButton, storefrontButton, entranceButton, floorsButton, interiorButton, serviceButton, landmarkButton, situationButton, situationStateButton, mountButton, hostButton, targetButton, deviceButton;
         private readonly Dictionary<View, Button> viewButtons = new Dictionary<View, Button>();
+        private readonly Dictionary<View, List<GameObject>> viewControls = new Dictionary<View, List<GameObject>>();
         private CityForgeCoord selected;
         private CityForgeChunkPlan draft;
         private SlopCityCityForgeDraftHistory history;
         private View view;
         private bool opened;
         private CityForgeRoadClass roadClass = CityForgeRoadClass.LocalStreet;
+        private CityForgeDirection roadDirection = CityForgeDirection.North;
         private CityForgeZone lotZone = CityForgeZone.Home;
         private bool removeRoad;
         private string buildingBlueprint = "walk-up", facade = "wet-masonry", roof = "service-roof", storefront = "none", interior = "";
@@ -52,12 +54,15 @@ namespace SlopCity
         private readonly Stack<Dictionary<CityForgeCoord, CityForgeChunkPlan>> atomicRedo = new Stack<Dictionary<CityForgeCoord, CityForgeChunkPlan>>();
         private CameraState originalCamera;
         private ISlopCityCityForgeDraftPreviewSink previewSink;
+        private ISlopCityCityForgeBuildOverlaySink buildOverlaySink;
         private ISlopCityCityForgeStrategicMapSink strategicMap;
         private ISlopCityCityForgeStrategicSummarySink strategicSummaryMap;
         private CityForgeCoord pendingNavigation;
         private bool hasPendingNavigation;
         private SlopCityFirstPerson firstPerson;
+        private SlopCityHud hud;
         private bool firstPersonWasEnabled;
+        private bool hudSuppressed;
         private Vector2 lastTouchPosition;
         private float lastPinchDistance;
         private bool touchPanned;
@@ -103,6 +108,13 @@ namespace SlopCity
         // gesture after the toolbar finger is released.
         private bool suppressBuildUiTouchUntilNoTouches;
         private const float LauncherTapSlopPixels = 18f;
+        private const float MapDragThresholdPixels = 8f;
+        private bool mapMousePressed;
+        private bool mapMouseDragged;
+        private Vector2 mapMouseStart;
+        private Vector2 mapMousePrevious;
+        private bool hasHoveredCell;
+        private CityForgeCoord hoveredCell;
 
         public bool IsOpen { get { return opened; } }
         public bool EditingEnabled { get { return editingEnabled; } }
@@ -134,6 +146,7 @@ namespace SlopCity
             if (!controller) controller = GetComponent<SlopCityCityForgeController>();
             if (!buildCamera) buildCamera = Camera.main;
             previewSink = previewSinkComponent as ISlopCityCityForgeDraftPreviewSink ?? FindPreviewSink();
+            buildOverlaySink = previewSinkComponent as ISlopCityCityForgeBuildOverlaySink ?? FindBuildOverlaySink();
             strategicMap = FindStrategicMap();
             strategicSummaryMap = strategicMap as ISlopCityCityForgeStrategicSummarySink;
             if (controller) controller.StrategicMapChanged += HandleStrategicMapChanged;
@@ -155,7 +168,9 @@ namespace SlopCity
             if (!opened) return;
             bool mouseStartedOverBuildUi = UpdateBuildUiPointerActivation();
             if (!opened) return;
+            UpdateMapMousePointer(mouseStartedOverBuildUi);
             MoveCamera();
+            UpdateHoveredCell();
             if (Input.GetKeyDown(KeyCode.Alpha1) || Input.GetKeyDown(KeyCode.Keypad1)) SelectView(View.Streets);
             if (Input.GetKeyDown(KeyCode.Alpha2) || Input.GetKeyDown(KeyCode.Keypad2)) SelectView(View.Lots);
             if (Input.GetKeyDown(KeyCode.Alpha3) || Input.GetKeyDown(KeyCode.Keypad3)) SelectView(View.Buildings);
@@ -163,7 +178,6 @@ namespace SlopCity
             if (Input.GetKeyDown(KeyCode.Alpha5) || Input.GetKeyDown(KeyCode.Keypad5)) SelectView(View.Life);
             if (Input.GetKeyDown(KeyCode.Z) && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))) Undo();
             if (Input.GetKeyDown(KeyCode.Y) && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))) Redo();
-            if (Input.GetMouseButtonDown(0) && Input.touchCount == 0 && !mouseStartedOverBuildUi && !(EventSystem.current && EventSystem.current.IsPointerOverGameObject())) ClickMap(Input.mousePosition);
             if (Input.touchCount == 1 && !suppressBuildUiTouchUntilNoTouches && buildUiTouchFingerId < 0)
             {
                 Touch touch = Input.GetTouch(0);
@@ -243,13 +257,13 @@ namespace SlopCity
             catch (Exception error) { SetMessage(error.Message); return false; }
             pendingOpenWhenReady = false;
             ResetAtomicDrafts(draft); history = new SlopCityCityForgeDraftHistory(draft); opened = true; view = View.Streets;
-            ResumeFirstPersonForBuildMode(); GateFirstPerson(true); CaptureCamera(); controller.SetBuildMode(true); controller.StreamAt(selected); ShowStrategicMap(); SetUi(true); SetLauncher(false); RefreshUi(); BuildModeChanged?.Invoke(true); return true;
+            ResumeFirstPersonForBuildMode(); SetHudSuppressed(true); GateFirstPerson(true); CaptureCamera(); controller.SetBuildMode(true); controller.StreamAt(selected); ShowStrategicMap(); SetUi(true); SetLauncher(false); RefreshUi(); RefreshBuildOverlay(); SetMessage("Plan an unbuilt block. A green border means the draft is ready to commit."); BuildModeChanged?.Invoke(true); return true;
         }
 
         public void Close()
         {
             if (!opened) return;
-            opened = false; ResetBuildUiPointerActivation(); previewSink?.ClearCityForgeDraftPreview(); strategicMap?.ClearCityForgeStrategicMap(); if (controller && controller.IsInitialized) controller.SetBuildMode(false); RestoreCamera(); GateFirstPerson(false); SetUi(false); SetLauncher(editingEnabled);
+            opened = false; ResetBuildUiPointerActivation(); mapMousePressed = false; mapMouseDragged = false; hasHoveredCell = false; previewSink?.ClearCityForgeDraftPreview(); buildOverlaySink?.ClearCityForgeBuildOverlay(); strategicMap?.ClearCityForgeStrategicMap(); if (controller && controller.IsInitialized) controller.SetBuildMode(false); RestoreCamera(); GateFirstPerson(false); SetHudSuppressed(false); SetUi(false); SetLauncher(editingEnabled);
             SlopCityFirstPerson player = FindFirstObjectByType<SlopCityFirstPerson>();
             if (player) PlayerNeighbourhoodRequested?.Invoke(new CityForgeCoord(Mathf.FloorToInt(player.transform.position.x / SlopCityCityForge.ChunkSizeMeters), Mathf.FloorToInt(player.transform.position.z / SlopCityCityForge.ChunkSizeMeters)));
             BuildModeChanged?.Invoke(false);
@@ -263,10 +277,10 @@ namespace SlopCity
             if (!EnsureDraft(coordinate)) return false;
             try { draft = controller.BeginDraft(coordinate); }
             catch (Exception error) { SetMessage(error.Message); return false; }
-            selected = coordinate; ResetAtomicDrafts(draft); history = new SlopCityCityForgeDraftHistory(draft); controller.StreamAt(selected); ShowStrategicMap(); FocusCamera(); RefreshUi(); return true;
+            selected = coordinate; hasHoveredCell = false; ResetAtomicDrafts(draft); history = new SlopCityCityForgeDraftHistory(draft); controller.StreamAt(selected); ShowStrategicMap(); FocusCamera(); RefreshUi(); RefreshBuildOverlay(); return true;
         }
 
-        public void SelectView(View next) { view = next; RefreshUi(); }
+        public void SelectView(View next) { view = next; RefreshUi(); RefreshBuildOverlay(); }
         public bool TrySetRoad(int cellX, int cellZ, CityForgeDirection direction, CityForgeRoadClass roadClass, bool remove)
         {
             if (draft == null || cellX < 0 || cellX > 8 || cellZ < 0 || cellZ > 8) return false;
@@ -335,7 +349,7 @@ namespace SlopCity
             if (atomicUndo.Count == 0) return;
             Dictionary<CityForgeCoord, CityForgeChunkPlan> restore = atomicUndo.Pop();
             atomicRedo.Push(CloneDraftMap(atomicDrafts));
-            RestoreAtomicDrafts(restore); SetMessage("Draft edit undone."); RefreshUi(); NotifyDraftsChanged();
+            RestoreAtomicDrafts(restore); SetMessage("Draft edit undone."); RefreshUi(); RefreshBuildOverlay(); NotifyDraftsChanged();
         }
 
         public void Redo()
@@ -343,7 +357,7 @@ namespace SlopCity
             if (atomicRedo.Count == 0) return;
             Dictionary<CityForgeCoord, CityForgeChunkPlan> restore = atomicRedo.Pop();
             atomicUndo.Push(CloneDraftMap(atomicDrafts));
-            RestoreAtomicDrafts(restore); SetMessage("Draft edit restored."); RefreshUi(); NotifyDraftsChanged();
+            RestoreAtomicDrafts(restore); SetMessage("Draft edit restored."); RefreshUi(); RefreshBuildOverlay(); NotifyDraftsChanged();
         }
 
         public void Preview()
@@ -351,7 +365,15 @@ namespace SlopCity
             if (draft == null) return;
             List<CityForgeChunkPlan> plans = PlansForCommit();
             if (!controller.TryResolveDraftPreview(plans, selected, out CityForgeResolvedChunk preview, out CityForgeValidation validation)) { SetMessage(validation.Messages.FirstOrDefault() ?? "Check this plan first."); return; }
-            previewSink?.ShowCityForgeDraftPreview(preview); PreviewRequested?.Invoke(draft.Clone()); DraftPreviewCompiled?.Invoke(preview); SetMessage("Preview is valid and shown separately from accepted streets.");
+            // The planning surface already renders the exact draft in its
+            // intended block. Rendering a second opaque physical chunk above
+            // the accepted one made Review look like a failed duplicate world,
+            // rather than an honest preflight. Keep the compiled result for
+            // integrators, but make Review a clear validation checkpoint.
+            previewSink?.ClearCityForgeDraftPreview();
+            PreviewRequested?.Invoke(draft.Clone()); DraftPreviewCompiled?.Invoke(preview);
+            RefreshBuildOverlay();
+            SetMessage("Draft checks pass. The highlighted plan is ready to commit.");
         }
 
         public void Commit()
@@ -361,7 +383,7 @@ namespace SlopCity
             if (!controller.ValidateDraftOnly(plans, out CityForgeValidation validation)) { SetMessage(validation.Messages.FirstOrDefault() ?? "Check this plan first."); return; }
             if (CommitRequested != null) { CommitRequested(plans.Select(item => item.Clone()).ToList()); SetMessage("Submitting plan…"); return; }
             if (!controller.TryCommit(plans, out validation)) { SetMessage(validation.Messages.FirstOrDefault() ?? "Commit failed."); return; }
-            draft = controller.BeginDraft(selected); ResetAtomicDrafts(draft); history = new SlopCityCityForgeDraftHistory(draft); SetMessage("Accepted locally."); RefreshUi();
+            draft = controller.BeginDraft(selected); ResetAtomicDrafts(draft); history = new SlopCityCityForgeDraftHistory(draft); ShowStrategicMap(); SetMessage("Accepted locally. Leave Build Mode to walk the updated block."); RefreshUi(); RefreshBuildOverlay();
         }
 
         /// <summary>Called by a hosted bridge only after its authoritative D1 response is verified.</summary>
@@ -369,7 +391,7 @@ namespace SlopCity
         {
             if (!controller.ApplyAuthoritativeCommit(head, plans, out validation)) { SetMessage(validation.Messages.FirstOrDefault() ?? "The hosted commit was refused."); return false; }
             if (opened && controller.TryGetAccepted(selected, out CityForgeChunkPlan accepted)) { draft = accepted; ResetAtomicDrafts(draft); history = new SlopCityCityForgeDraftHistory(draft); }
-            SetMessage("Accepted by the City Forge world."); RefreshUi(); return true;
+            ShowStrategicMap(); SetMessage("Accepted by the City Forge world."); RefreshUi(); RefreshBuildOverlay(); return true;
         }
 
         public void SetStatusMessage(string value) { SetMessage(value); }
@@ -504,7 +526,7 @@ namespace SlopCity
                 if (!atomicBaselines.ContainsKey(pair.Key)) atomicBaselines[pair.Key] = BaselineFor(pair.Value);
             }
             if (atomicDrafts.TryGetValue(selected, out CityForgeChunkPlan current)) draft = current.Clone();
-            history = new SlopCityCityForgeDraftHistory(draft); SetMessage(success); RefreshUi(); NotifyDraftsChanged(updates.Values); return true;
+            history = new SlopCityCityForgeDraftHistory(draft); SetMessage(success); RefreshUi(); RefreshBuildOverlay(); NotifyDraftsChanged(updates.Values); return true;
         }
 
         private void NotifyDraftsChanged(IEnumerable<CityForgeChunkPlan> values = null)
@@ -549,6 +571,24 @@ namespace SlopCity
             return null;
         }
 
+        private ISlopCityCityForgeBuildOverlaySink FindBuildOverlaySink()
+        {
+            foreach (MonoBehaviour component in GetComponents<MonoBehaviour>())
+            {
+                ISlopCityCityForgeBuildOverlaySink candidate = component as ISlopCityCityForgeBuildOverlaySink;
+                if (candidate != null) return candidate;
+            }
+            return null;
+        }
+
+        private void RefreshBuildOverlay()
+        {
+            if (!opened || buildOverlaySink == null || controller == null || draft == null) return;
+            bool valid = controller.ValidateDraftOnly(atomicDrafts.Values, out CityForgeValidation ignored);
+            CityForgeCoord? hover = hasHoveredCell ? hoveredCell : (CityForgeCoord?)null;
+            buildOverlaySink.ShowCityForgeBuildOverlay(controller.WorldHead, selected, draft, hover, roadDirection, view, valid);
+        }
+
         private ISlopCityCityForgeStrategicMapSink FindStrategicMap()
         {
             foreach (MonoBehaviour component in GetComponents<MonoBehaviour>())
@@ -572,16 +612,72 @@ namespace SlopCity
             if (opened) ShowStrategicMap();
         }
 
+        private void UpdateMapMousePointer(bool mouseStartedOverBuildUi)
+        {
+            if (Input.touchCount > 0)
+            {
+                mapMousePressed = false;
+                mapMouseDragged = false;
+                return;
+            }
+            if (Input.GetMouseButtonDown(0))
+            {
+                mapMousePressed = !mouseStartedOverBuildUi && !(EventSystem.current && EventSystem.current.IsPointerOverGameObject());
+                mapMouseDragged = false;
+                mapMouseStart = Input.mousePosition;
+                mapMousePrevious = mapMouseStart;
+            }
+            if (mapMousePressed && Input.GetMouseButton(0))
+            {
+                Vector2 current = Input.mousePosition;
+                if (!mapMouseDragged && Vector2.Distance(current, mapMouseStart) >= MapDragThresholdPixels) mapMouseDragged = true;
+                if (mapMouseDragged && buildCamera)
+                {
+                    Vector2 movement = current - mapMousePrevious;
+                    float metresPerPixel = topDownHeight / Mathf.Max(240f, Screen.height);
+                    buildCamera.transform.position -= new Vector3(movement.x * metresPerPixel, 0f, movement.y * metresPerPixel);
+                }
+                mapMousePrevious = current;
+            }
+            if (!Input.GetMouseButtonUp(0)) return;
+            bool activate = mapMousePressed && !mapMouseDragged;
+            mapMousePressed = false;
+            mapMouseDragged = false;
+            if (activate) ClickMap(Input.mousePosition);
+        }
+
+        private void UpdateHoveredCell()
+        {
+            bool nextHasHover = false;
+            CityForgeCoord nextHover = default(CityForgeCoord);
+            if (!BuildUiSurfaceContains(Input.mousePosition) && !mapMouseDragged && TryGetMapCell(Input.mousePosition, out CityForgeCoord coordinate, out int x, out int z) && coordinate.Equals(selected))
+            {
+                nextHasHover = true;
+                nextHover = new CityForgeCoord(x, z);
+            }
+            if (nextHasHover == hasHoveredCell && (!nextHasHover || nextHover.Equals(hoveredCell))) return;
+            hasHoveredCell = nextHasHover;
+            hoveredCell = nextHover;
+            RefreshBuildOverlay();
+        }
+
+        private bool TryGetMapCell(Vector3 screenPosition, out CityForgeCoord coordinate, out int x, out int z)
+        {
+            coordinate = default(CityForgeCoord); x = z = 0;
+            if (!buildCamera) return false;
+            Ray ray = buildCamera.ScreenPointToRay(screenPosition);
+            if (!new Plane(Vector3.up, Vector3.zero).Raycast(ray, out float distance)) return false;
+            Vector3 point = ray.GetPoint(distance);
+            coordinate = new CityForgeCoord(Mathf.FloorToInt(point.x / SlopCityCityForge.ChunkSizeMeters), Mathf.FloorToInt(point.z / SlopCityCityForge.ChunkSizeMeters));
+            x = Mathf.Clamp(Mathf.FloorToInt((point.x - coordinate.x * SlopCityCityForge.ChunkSizeMeters) / SlopCityCityForge.CellSizeMeters), 0, 8);
+            z = Mathf.Clamp(Mathf.FloorToInt((point.z - coordinate.z * SlopCityCityForge.ChunkSizeMeters) / SlopCityCityForge.CellSizeMeters), 0, 8);
+            return true;
+        }
+
         private void ClickMap(Vector3 screenPosition)
         {
-            if (!buildCamera) return;
-            Ray ray = buildCamera.ScreenPointToRay(screenPosition);
-            if (!new Plane(Vector3.up, Vector3.zero).Raycast(ray, out float distance)) return;
-            Vector3 point = ray.GetPoint(distance);
-            CityForgeCoord coord = new CityForgeCoord(Mathf.FloorToInt(point.x / SlopCityCityForge.ChunkSizeMeters), Mathf.FloorToInt(point.z / SlopCityCityForge.ChunkSizeMeters));
+            if (!TryGetMapCell(screenPosition, out CityForgeCoord coord, out int x, out int z)) return;
             if (!coord.Equals(selected)) { SelectChunk(coord); return; }
-            int x = Mathf.Clamp(Mathf.FloorToInt((point.x - coord.x * SlopCityCityForge.ChunkSizeMeters) / SlopCityCityForge.CellSizeMeters), 0, 8);
-            int z = Mathf.Clamp(Mathf.FloorToInt((point.z - coord.z * SlopCityCityForge.ChunkSizeMeters) / SlopCityCityForge.CellSizeMeters), 0, 8);
             if (view == View.Streets) ToggleStreet(x, z);
             else if (view == View.Lots) AddLot(x, z);
             else if (view == View.Buildings) AddBuilding(x, z);
@@ -591,7 +687,7 @@ namespace SlopCity
 
         private void ToggleStreet(int x, int z)
         {
-            TrySetRoad(x, z, entrance, roadClass, removeRoad);
+            TrySetRoad(x, z, roadDirection, roadClass, removeRoad);
         }
 
         private void AddLot(int x, int z)
@@ -688,7 +784,13 @@ namespace SlopCity
             return x + "," + z + ":" + side;
         }
 
-        private void CycleRoadClass() { roadClass = (CityForgeRoadClass)(((int)roadClass + 1) % 5); RefreshUi(); }
+        private void CycleRoadClass() { roadClass = (CityForgeRoadClass)(((int)roadClass + 1) % 5); RefreshUi(); RefreshBuildOverlay(); }
+        private void CycleRoadDirection()
+        {
+            roadDirection = (CityForgeDirection)(((int)roadDirection + 1) % 4);
+            RefreshUi();
+            RefreshBuildOverlay();
+        }
         private void ToggleRoadRemoval() { removeRoad = !removeRoad; RefreshUi(); }
         private void CycleLotZone()
         {
@@ -901,47 +1003,92 @@ namespace SlopCity
             GameObject root = new GameObject("CityForgeBuildMode", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
             root.transform.SetParent(transform, false); canvas = root.GetComponent<Canvas>(); canvas.renderMode = RenderMode.ScreenSpaceOverlay; canvas.overrideSorting = true; canvas.sortingOrder = CityForgeCanvasSortingOrder;
             CanvasScaler scaler = root.GetComponent<CanvasScaler>(); scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize; scaler.referenceResolution = new Vector2(1280, 720);
-            Image panel = root.AddComponent<Image>(); panel.color = new Color(.03f, .05f, .06f, .92f);
-            buildUiSurface = root.GetComponent<RectTransform>(); buildUiSurface.anchorMin = new Vector2(0f, 1f); buildUiSurface.anchorMax = new Vector2(1f, 1f); buildUiSurface.pivot = new Vector2(.5f, 1f); buildUiSurface.sizeDelta = new Vector2(0f, 248f);
-            heading = Label(root.transform, "City Forge", 20, new Vector2(12, -12), new Vector2(620, 28));
-            message = Label(root.transform, "Tap a grid cell to edit. Drag to pan; pinch to zoom. 1–5 switch views; B returns; Ctrl+Z/Y undo/redo.", 14, new Vector2(12, -218), new Vector2(1230, 22));
+            Image panel = root.AddComponent<Image>(); panel.color = new Color(.025f, .045f, .06f, .96f);
+            buildUiSurface = root.GetComponent<RectTransform>(); buildUiSurface.anchorMin = new Vector2(0f, 1f); buildUiSurface.anchorMax = new Vector2(1f, 1f); buildUiSurface.pivot = new Vector2(.5f, 1f); buildUiSurface.sizeDelta = new Vector2(0f, 164f);
+            heading = Label(root.transform, "City Forge", 20, new Vector2(12, -10), new Vector2(420, 26));
+            contextHint = Label(root.transform, "", 13, new Vector2(436, -10), new Vector2(830, 24)); contextHint.alignment = TextAnchor.MiddleRight;
+            message = Label(root.transform, "", 13, new Vector2(12, -142), new Vector2(1240, 18));
             float x = 12f;
             foreach (View choice in new[] { View.Streets, View.Lots, View.Buildings, View.Services, View.Life })
             {
-                View local = choice; Button button = Button(root.transform, choice.ToString(), new Vector2(x, -44), new Vector2(88, 32)); button.onClick.AddListener(() => SelectView(local)); viewButtons.Add(choice, button); x += 94f;
+                View local = choice; Button button = Button(root.transform, choice.ToString(), new Vector2(x, -42), new Vector2(84, 30)); button.onClick.AddListener(() => SelectView(local)); viewButtons.Add(choice, button); x += 90f;
             }
-            undoButton = Button(root.transform, "Undo", new Vector2(486, -44), new Vector2(64, 32)); undoButton.onClick.AddListener(Undo);
-            redoButton = Button(root.transform, "Redo", new Vector2(556, -44), new Vector2(64, 32)); redoButton.onClick.AddListener(Redo);
-            Button preview = Button(root.transform, "Preview", new Vector2(626, -44), new Vector2(82, 32)); preview.onClick.AddListener(Preview);
-            Button commit = Button(root.transform, "Commit", new Vector2(714, -44), new Vector2(82, 32)); commit.onClick.AddListener(Commit);
-            Button exit = Button(root.transform, "Return", new Vector2(802, -44), new Vector2(82, 32)); exit.onClick.AddListener(Close);
+            undoButton = Button(root.transform, "Undo", new Vector2(472, -42), new Vector2(64, 30)); undoButton.onClick.AddListener(Undo);
+            redoButton = Button(root.transform, "Redo", new Vector2(542, -42), new Vector2(64, 30)); redoButton.onClick.AddListener(Redo);
+            Button preview = Button(root.transform, "Review", new Vector2(612, -42), new Vector2(82, 30)); preview.onClick.AddListener(Preview);
+            Button commit = Button(root.transform, "Commit", new Vector2(700, -42), new Vector2(82, 30)); commit.onClick.AddListener(Commit);
+            Button exit = Button(root.transform, "Return", new Vector2(788, -42), new Vector2(82, 30)); exit.onClick.AddListener(Close);
 
-            roadButton = Button(root.transform, "Road", new Vector2(12, -82), new Vector2(112, 32)); roadButton.onClick.AddListener(CycleRoadClass);
-            removeRoadButton = Button(root.transform, "Add road", new Vector2(130, -82), new Vector2(94, 32)); removeRoadButton.onClick.AddListener(ToggleRoadRemoval);
-            zoneButton = Button(root.transform, "Zone", new Vector2(230, -82), new Vector2(104, 32)); zoneButton.onClick.AddListener(CycleLotZone);
-            Button merge = Button(root.transform, "Merge lots", new Vector2(340, -82), new Vector2(88, 32)); merge.onClick.AddListener(MergeSelectedLots);
-            Button split = Button(root.transform, "Split lot", new Vector2(434, -82), new Vector2(82, 32)); split.onClick.AddListener(SplitSelectedLot);
-            kitButton = Button(root.transform, "Kit", new Vector2(522, -82), new Vector2(118, 32)); kitButton.onClick.AddListener(CycleBuildingKit);
-            facadeButton = Button(root.transform, "Facade", new Vector2(646, -82), new Vector2(118, 32)); facadeButton.onClick.AddListener(CycleFacade);
-            roofButton = Button(root.transform, "Roof", new Vector2(770, -82), new Vector2(112, 32)); roofButton.onClick.AddListener(CycleRoof);
-            storefrontButton = Button(root.transform, "Store", new Vector2(888, -82), new Vector2(116, 32)); storefrontButton.onClick.AddListener(CycleStorefront);
-            entranceButton = Button(root.transform, "Entry", new Vector2(1010, -82), new Vector2(106, 32)); entranceButton.onClick.AddListener(CycleEntrance);
-            Button floorDown = Button(root.transform, "Floor −", new Vector2(1122, -82), new Vector2(70, 32)); floorDown.onClick.AddListener(() => ChangeFloors(-1));
-            floorsButton = Button(root.transform, "Floor +", new Vector2(1198, -82), new Vector2(70, 32)); floorsButton.onClick.AddListener(() => ChangeFloors(1));
+            roadButton = Button(root.transform, "Road", new Vector2(12, -96), new Vector2(160, 32)); roadButton.onClick.AddListener(CycleRoadClass); RegisterViewControl(View.Streets, roadButton);
+            removeRoadButton = Button(root.transform, "Add road", new Vector2(178, -96), new Vector2(112, 32)); removeRoadButton.onClick.AddListener(ToggleRoadRemoval); RegisterViewControl(View.Streets, removeRoadButton);
+            roadDirectionButton = Button(root.transform, "Direction", new Vector2(296, -96), new Vector2(144, 32)); roadDirectionButton.onClick.AddListener(CycleRoadDirection); RegisterViewControl(View.Streets, roadDirectionButton);
 
-            interiorButton = Button(root.transform, "Interior", new Vector2(12, -122), new Vector2(170, 32)); interiorButton.onClick.AddListener(CycleInterior);
-            Button screen = Button(root.transform, "Add screen", new Vector2(188, -122), new Vector2(104, 32)); screen.onClick.AddListener(PlaceScreenOnLastBuilding);
-            Button demolish = Button(root.transform, "Demolish", new Vector2(298, -122), new Vector2(104, 32)); demolish.onClick.AddListener(DemolishLast);
-            Button renovate = Button(root.transform, "Renovate", new Vector2(408, -122), new Vector2(104, 32)); renovate.onClick.AddListener(RenovateLast);
-            serviceButton = Button(root.transform, "Service", new Vector2(520, -122), new Vector2(142, 32)); serviceButton.onClick.AddListener(CycleService);
-            landmarkButton = Button(root.transform, "Cityworks", new Vector2(668, -122), new Vector2(156, 32)); landmarkButton.onClick.AddListener(CycleLandmarkOutcome);
-            mountButton = Button(root.transform, "Mount", new Vector2(830, -122), new Vector2(144, 32)); mountButton.onClick.AddListener(CycleScreenMount);
-            hostButton = Button(root.transform, "Host", new Vector2(980, -122), new Vector2(118, 32)); hostButton.onClick.AddListener(CycleScreenHost);
-            deviceButton = Button(root.transform, "Device", new Vector2(1104, -122), new Vector2(164, 32)); deviceButton.onClick.AddListener(CycleScreenDevice);
-            targetButton = Button(root.transform, "Screen target", new Vector2(12, -162), new Vector2(300, 32)); targetButton.onClick.AddListener(CycleScreenTarget);
-            situationButton = Button(root.transform, "Situation", new Vector2(318, -162), new Vector2(360, 32)); situationButton.onClick.AddListener(CycleSituationTemplate);
-            situationStateButton = Button(root.transform, "Situation state", new Vector2(684, -162), new Vector2(220, 32)); situationStateButton.onClick.AddListener(CycleSituationState);
+            zoneButton = Button(root.transform, "Zone", new Vector2(12, -96), new Vector2(160, 32)); zoneButton.onClick.AddListener(CycleLotZone); RegisterViewControl(View.Lots, zoneButton);
+            Button merge = Button(root.transform, "Merge lots", new Vector2(178, -96), new Vector2(112, 32)); merge.onClick.AddListener(MergeSelectedLots); RegisterViewControl(View.Lots, merge);
+            Button split = Button(root.transform, "Split lot", new Vector2(296, -96), new Vector2(108, 32)); split.onClick.AddListener(SplitSelectedLot); RegisterViewControl(View.Lots, split);
+
+            kitButton = Button(root.transform, "Kit", new Vector2(12, -96), new Vector2(120, 32)); kitButton.onClick.AddListener(CycleBuildingKit); RegisterViewControl(View.Buildings, kitButton);
+            facadeButton = Button(root.transform, "Facade", new Vector2(138, -96), new Vector2(130, 32)); facadeButton.onClick.AddListener(CycleFacade); RegisterViewControl(View.Buildings, facadeButton);
+            roofButton = Button(root.transform, "Roof", new Vector2(274, -96), new Vector2(126, 32)); roofButton.onClick.AddListener(CycleRoof); RegisterViewControl(View.Buildings, roofButton);
+            storefrontButton = Button(root.transform, "Store", new Vector2(406, -96), new Vector2(118, 32)); storefrontButton.onClick.AddListener(CycleStorefront); RegisterViewControl(View.Buildings, storefrontButton);
+            entranceButton = Button(root.transform, "Entrance", new Vector2(530, -96), new Vector2(116, 32)); entranceButton.onClick.AddListener(CycleEntrance); RegisterViewControl(View.Buildings, entranceButton);
+            Button floorDown = Button(root.transform, "Floor −", new Vector2(652, -96), new Vector2(84, 32)); floorDown.onClick.AddListener(() => ChangeFloors(-1)); RegisterViewControl(View.Buildings, floorDown);
+            floorsButton = Button(root.transform, "Floor +", new Vector2(742, -96), new Vector2(100, 32)); floorsButton.onClick.AddListener(() => ChangeFloors(1)); RegisterViewControl(View.Buildings, floorsButton);
+            interiorButton = Button(root.transform, "Interior", new Vector2(848, -96), new Vector2(180, 32)); interiorButton.onClick.AddListener(CycleInterior); RegisterViewControl(View.Buildings, interiorButton);
+            Button demolish = Button(root.transform, "Demolish", new Vector2(1034, -96), new Vector2(120, 32)); demolish.onClick.AddListener(DemolishLast); RegisterViewControl(View.Buildings, demolish);
+
+            serviceButton = Button(root.transform, "Service", new Vector2(12, -96), new Vector2(180, 32)); serviceButton.onClick.AddListener(CycleService); RegisterViewControl(View.Services, serviceButton);
+            landmarkButton = Button(root.transform, "Cityworks", new Vector2(198, -96), new Vector2(160, 32)); landmarkButton.onClick.AddListener(CycleLandmarkOutcome); RegisterViewControl(View.Services, landmarkButton);
+            mountButton = Button(root.transform, "Mount", new Vector2(364, -96), new Vector2(170, 32)); mountButton.onClick.AddListener(CycleScreenMount); RegisterViewControl(View.Services, mountButton);
+            hostButton = Button(root.transform, "Host", new Vector2(540, -96), new Vector2(120, 32)); hostButton.onClick.AddListener(CycleScreenHost); RegisterViewControl(View.Services, hostButton);
+            targetButton = Button(root.transform, "Screen target", new Vector2(666, -96), new Vector2(220, 32)); targetButton.onClick.AddListener(CycleScreenTarget); RegisterViewControl(View.Services, targetButton);
+            deviceButton = Button(root.transform, "Device", new Vector2(892, -96), new Vector2(170, 32)); deviceButton.onClick.AddListener(CycleScreenDevice); RegisterViewControl(View.Services, deviceButton);
+            Button screen = Button(root.transform, "Place screen", new Vector2(1068, -96), new Vector2(150, 32)); screen.onClick.AddListener(PlaceScreenOnLastBuilding); RegisterViewControl(View.Services, screen);
+
+            situationButton = Button(root.transform, "Situation", new Vector2(12, -96), new Vector2(250, 32)); situationButton.onClick.AddListener(CycleSituationTemplate); RegisterViewControl(View.Life, situationButton);
+            situationStateButton = Button(root.transform, "Situation state", new Vector2(268, -96), new Vector2(150, 32)); situationStateButton.onClick.AddListener(CycleSituationState); RegisterViewControl(View.Life, situationStateButton);
+            Button renovate = Button(root.transform, "Renovate", new Vector2(424, -96), new Vector2(140, 32)); renovate.onClick.AddListener(RenovateLast); RegisterViewControl(View.Life, renovate);
             buildUiButtons.AddRange(root.GetComponentsInChildren<Button>(true));
+        }
+
+        private void RegisterViewControl(View scope, Button button)
+        {
+            if (!button) return;
+            if (!viewControls.TryGetValue(scope, out List<GameObject> controls))
+            {
+                controls = new List<GameObject>();
+                viewControls.Add(scope, controls);
+            }
+            controls.Add(button.gameObject);
+        }
+
+        private static string ViewHint(View value)
+        {
+            switch (value)
+            {
+                case View.Streets: return "Click an edge to draw · drag to pan · scroll to zoom";
+                case View.Lots: return "Click a cell to make a lot · Shift-click builds a footprint";
+                case View.Buildings: return "Click an empty lot to place the selected building kit";
+                case View.Services: return "Click a lot to add service · choose a valid host before placing a screen";
+                default: return "Click a Cityworks lot to add or advance its authored situation";
+            }
+        }
+
+        private static string RoadClassLabel(CityForgeRoadClass value)
+        {
+            switch (value)
+            {
+                case CityForgeRoadClass.LocalStreet: return "Local street";
+                case CityForgeRoadClass.Boulevard: return "Boulevard";
+                case CityForgeRoadClass.ServiceAlley: return "Service alley";
+                case CityForgeRoadClass.PedestrianRoute: return "Pedestrian route";
+                default: return "Transit/service";
+            }
+        }
+
+        private static string DirectionLabel(CityForgeDirection value)
+        {
+            return value == CityForgeDirection.North ? "North" : value == CityForgeDirection.East ? "East" : value == CityForgeDirection.South ? "South" : "West";
         }
 
         private void CreateLauncher()
@@ -1277,6 +1424,14 @@ namespace SlopCity
             if (firstPerson && firstPerson.IsPaused) firstPerson.PlayOrResume();
         }
 
+        private void SetHudSuppressed(bool value)
+        {
+            if (!hud) hud = FindFirstObjectByType<SlopCityHud>();
+            if (!hud) { hudSuppressed = false; return; }
+            hud.SetExternalOverlaySuppressed(value);
+            hudSuppressed = value;
+        }
+
         private void GateFirstPerson(bool gate)
         {
             if (gate)
@@ -1313,17 +1468,21 @@ namespace SlopCity
         private void SetUi(bool visible) { if (canvas) canvas.gameObject.SetActive(visible); }
         private void RefreshUi()
         {
-            if (heading) heading.text = "City Forge — " + view + " — block " + selected;
+            if (heading) heading.text = "City Forge · " + view + " · block " + selected;
+            if (contextHint) contextHint.text = ViewHint(view);
             if (undoButton) undoButton.interactable = atomicUndo.Count > 0;
             if (redoButton) redoButton.interactable = atomicRedo.Count > 0;
             foreach (KeyValuePair<View, Button> pair in viewButtons) if (pair.Value) pair.Value.GetComponent<Image>().color = pair.Key == view ? new Color(.63f, .82f, .35f, 1f) : new Color(.23f, .34f, .25f, 1f);
-            SetButtonLabel(roadButton, "Road: " + roadClass); SetButtonLabel(removeRoadButton, removeRoad ? "Remove road" : "Add road"); SetButtonLabel(zoneButton, "Zone: " + lotZone);
+            foreach (KeyValuePair<View, List<GameObject>> pair in viewControls)
+                foreach (GameObject control in pair.Value)
+                    if (control) control.SetActive(pair.Key == view);
+            SetButtonLabel(roadButton, "Road: " + RoadClassLabel(roadClass)); SetButtonLabel(removeRoadButton, removeRoad ? "Erase road" : "Draw road"); SetButtonLabel(roadDirectionButton, "Edge: " + DirectionLabel(roadDirection)); SetButtonLabel(zoneButton, "Zone: " + lotZone);
             SetButtonLabel(kitButton, "Kit: " + buildingBlueprint); SetButtonLabel(facadeButton, "Facade: " + facade); SetButtonLabel(roofButton, "Roof: " + roof); SetButtonLabel(storefrontButton, "Store: " + storefront); SetButtonLabel(entranceButton, "Entry: " + entrance); SetButtonLabel(floorsButton, "Floor + (" + buildingFloors + ")"); SetButtonLabel(interiorButton, "Interior: " + (string.IsNullOrEmpty(interior) ? "none" : interior));
             string host = screenHostMode == 0 ? "building" : screenHostMode == 1 ? "site" : "road";
             string target = string.IsNullOrEmpty(screenHostId) ? "choose target" : screenHostId;
             SetButtonLabel(serviceButton, "Service: " + serviceType); SetButtonLabel(landmarkButton, "Cityworks: " + (string.IsNullOrEmpty(landmarkOutcome) ? "choose" : landmarkOutcome)); SetButtonLabel(mountButton, "Mount: " + screenMount); SetButtonLabel(hostButton, "Host: " + host); SetButtonLabel(targetButton, "Screen target: " + target); SetButtonLabel(deviceButton, "Device: " + screenDevice); SetButtonLabel(situationButton, "Situation: " + (string.IsNullOrEmpty(situationTemplate) ? "choose" : situationTemplate)); SetButtonLabel(situationStateButton, "State: " + situationState);
         }
-        private static void SetButtonLabel(Button button, string value) { Text text = button ? button.GetComponentInChildren<Text>() : null; if (text) text.text = value; }
+        private static void SetButtonLabel(Button button, string value) { Text text = button ? button.GetComponentInChildren<Text>(true) : null; if (text) text.text = value; }
         private void SetMessage(string value)
         {
             if (message) message.text = value ?? string.Empty;
@@ -1333,8 +1492,11 @@ namespace SlopCity
         private void OnDestroy()
         {
             if (controller) controller.StrategicMapChanged -= HandleStrategicMapChanged;
+            previewSink?.ClearCityForgeDraftPreview();
+            buildOverlaySink?.ClearCityForgeBuildOverlay();
             RestoreCamera();
             GateFirstPerson(false);
+            if (hudSuppressed) SetHudSuppressed(false);
         }
 
         private void CaptureCamera()

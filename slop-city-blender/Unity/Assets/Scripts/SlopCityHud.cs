@@ -52,6 +52,11 @@ namespace SlopCity
         private bool initialized;
         private bool initializing;
         private bool immersiveView;
+        // A full-screen authored mode (such as City Forge) owns its own
+        // input surface and presentation.  Keep this state in the HUD rather
+        // than having a caller disable the Canvas: Update otherwise restores
+        // the Canvas on the next frame and leaves stale gameplay copy behind.
+        private bool externalOverlaySuppressed;
         private bool menuStarted;
         private Vector2 lastViewport;
         private Vector2 lastCanvasSize;
@@ -72,6 +77,19 @@ namespace SlopCity
         public void Configure(Text state, Text prompt, Text controls, Text reticle)
         {
             stateLabel = state; promptLabel = prompt; controlsLabel = controls; crosshair = reticle;
+        }
+
+        /// <summary>
+        /// Temporarily yields the gameplay HUD to an explicit full-screen game
+        /// mode without destroying its state or changing the player's pause
+        /// state.  The caller must release the suppression when that mode
+        /// closes.
+        /// </summary>
+        public void SetExternalOverlaySuppressed(bool value)
+        {
+            if (externalOverlaySuppressed == value) return;
+            externalOverlaySuppressed = value;
+            if (initialized) ApplyModalVisibility();
         }
 
         private void LateUpdate()
@@ -100,12 +118,15 @@ namespace SlopCity
             bool inventoryVisible = owner && owner.InventoryOpen;
             bool menuVisible = (menu && menu.activeSelf) || (sourceCard && sourceCard.activeSelf);
             bool modalVisible = inventoryVisible || menuVisible;
-            if (gameplayLayer && gameplayLayer.activeSelf == modalVisible) gameplayLayer.SetActive(!modalVisible);
-            if (touchControls && touchControls.activeSelf == modalVisible) touchControls.SetActive(!modalVisible);
+            bool hideGameplay = modalVisible || externalOverlaySuppressed;
+            if (gameplayLayer && gameplayLayer.activeSelf == hideGameplay) gameplayLayer.SetActive(!hideGameplay);
+            if (touchControls && touchControls.activeSelf == hideGameplay) touchControls.SetActive(!hideGameplay);
             // Inventory owns a separate Canvas. Suppress this entire HUD while it
             // is open, including when SetMenu(false) dismisses the pause card.
-            GetComponent<Canvas>().enabled = !inventoryVisible && (menuVisible || !immersiveView);
-            return modalVisible;
+            // City Forge has the same exclusive-presentation requirement, but
+            // it must not mutate the HUD's menu or player state to get it.
+            GetComponent<Canvas>().enabled = !externalOverlaySuppressed && !inventoryVisible && (menuVisible || !immersiveView);
+            return hideGameplay;
         }
 
         // Retain authored labels if a runtime UI allocation fails halfway through.
