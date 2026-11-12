@@ -330,8 +330,8 @@ namespace SlopCity
             // make block boundaries legible.
             EditorPrimitive("PlanSurface", PrimitiveType.Cube, root,
                 new Vector3(chunk * .5f, .252f, chunk * .5f),
-                new Vector3(chunk - .16f, .025f, chunk - .16f), new Color(.025f, .13f, .19f));
-            Color grid = new Color(.20f, .73f, .95f);
+                new Vector3(chunk - .16f, .025f, chunk - .16f), new Color(.04f, .24f, .32f));
+            Color grid = new Color(.20f, .78f, 1f);
             for (int index = 0; index <= SlopCityCityForge.GridSize; index++)
             {
                 float offset = index * cell;
@@ -445,7 +445,10 @@ namespace SlopCity
         private Material BuildOverlayMaterial()
         {
             if (buildOverlayMaterial) return buildOverlayMaterial;
-            Shader shader = Shader.Find("Standard") ?? Shader.Find("Unlit/Color");
+            // The build overlay is information design, not world geometry:
+            // use an unlit shader whenever it is available so the plan stays
+            // readable under night, interior, and weather lighting alike.
+            Shader shader = Shader.Find("Unlit/Color") ?? Shader.Find("Standard");
             if (!shader) return null;
             buildOverlayMaterial = new Material(shader) { name = "City Forge planning overlay", hideFlags = HideFlags.DontSave };
             if (buildOverlayMaterial.HasProperty("_Metallic")) buildOverlayMaterial.SetFloat("_Metallic", 0f);
