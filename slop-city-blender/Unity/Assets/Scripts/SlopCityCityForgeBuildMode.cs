@@ -203,7 +203,7 @@ namespace SlopCity
 
             if (!opened)
             {
-                if (type == EventType.MouseDown && launcherCanvas && launcherCanvas.gameObject.activeInHierarchy && launcherButton && launcherButton.interactable && LauncherContains(screenPosition))
+                if (type == EventType.MouseDown && launcherCanvas && launcherCanvas.gameObject.activeInHierarchy && launcherButton && launcherButton.isActiveAndEnabled && launcherButton.interactable && LauncherContains(screenPosition))
                 {
                     current.Use();
                     RequestLauncherOpen();
@@ -1160,14 +1160,16 @@ namespace SlopCity
             ConfigureLauncherLayout(launcherCursorLocked);
             if (launcherButton)
             {
-                // A locked pointer reports at the center of the display. Put
-                // the visible control at that real target rather than leaving
-                // a lower-corner button that cannot receive the click.
+                // A locked first-person pointer is not a useful way to target
+                // a corner control. Keep that visual space quiet and make B
+                // the explicit entry route; reveal the clickable launcher
+                // only when the pointer is free.
+                launcherButton.gameObject.SetActive(!launcherCursorLocked);
                 launcherButton.interactable = editingEnabled && !launcherUnavailable;
-                SetButtonLabel(launcherButton, launcherUnavailable ? "CITY FORGE\nUNAVAILABLE" : !launcherReady ? "PREPARING CITY" : launcherCursorLocked ? "BUILD CITY\nB" : "BUILD CITY");
+                SetButtonLabel(launcherButton, launcherUnavailable ? "CITY FORGE\nUNAVAILABLE" : !launcherReady ? "PREPARING CITY" : "BUILD CITY");
             }
             if (launcherStatus)
-                launcherStatus.text = launcherUnavailable ? launcherUnavailableMessage : !launcherReady ? "City Forge is preparing your starter ring…" : launcherCursorLocked ? "Click or press B to open City Forge" : "Open City Forge · B";
+                launcherStatus.text = launcherUnavailable ? launcherUnavailableMessage : !launcherReady ? "City Forge is preparing your starter ring…" : launcherCursorLocked ? "Press B to build your city" : "Open City Forge · B";
         }
 
         private void ConfigureLauncherLayout(bool cursorLocked)
@@ -1177,11 +1179,11 @@ namespace SlopCity
                 RectTransform buttonRect = launcherButton.GetComponent<RectTransform>();
                 if (buttonRect)
                 {
-                    buttonRect.anchorMin = cursorLocked ? new Vector2(.5f, .5f) : Vector2.zero;
-                    buttonRect.anchorMax = buttonRect.anchorMin;
-                    buttonRect.pivot = cursorLocked ? new Vector2(.5f, .5f) : Vector2.zero;
-                    buttonRect.anchoredPosition = cursorLocked ? Vector2.zero : new Vector2(22f, 22f);
-                    buttonRect.sizeDelta = cursorLocked ? new Vector2(224f, 58f) : new Vector2(188f, 52f);
+                    buttonRect.anchorMin = Vector2.zero;
+                    buttonRect.anchorMax = Vector2.zero;
+                    buttonRect.pivot = Vector2.zero;
+                    buttonRect.anchoredPosition = new Vector2(22f, 22f);
+                    buttonRect.sizeDelta = new Vector2(188f, 52f);
                 }
             }
             if (launcherStatus)
@@ -1189,13 +1191,13 @@ namespace SlopCity
                 RectTransform statusRect = launcherStatus.GetComponent<RectTransform>();
                 if (statusRect)
                 {
-                    statusRect.anchorMin = cursorLocked ? new Vector2(.5f, .5f) : Vector2.zero;
-                    statusRect.anchorMax = statusRect.anchorMin;
-                    statusRect.pivot = cursorLocked ? new Vector2(.5f, .5f) : Vector2.zero;
-                    statusRect.anchoredPosition = cursorLocked ? new Vector2(0f, 44f) : new Vector2(22f, 80f);
-                    statusRect.sizeDelta = cursorLocked ? new Vector2(360f, 24f) : new Vector2(420f, 24f);
+                    statusRect.anchorMin = Vector2.zero;
+                    statusRect.anchorMax = Vector2.zero;
+                    statusRect.pivot = Vector2.zero;
+                    statusRect.anchoredPosition = cursorLocked ? new Vector2(22f, 22f) : new Vector2(22f, 80f);
+                    statusRect.sizeDelta = new Vector2(420f, 24f);
                 }
-                launcherStatus.alignment = cursorLocked ? TextAnchor.MiddleCenter : TextAnchor.MiddleLeft;
+                launcherStatus.alignment = TextAnchor.MiddleLeft;
             }
         }
 
@@ -1210,7 +1212,7 @@ namespace SlopCity
 
         private void UpdateLauncherPointerActivation()
         {
-            if (!launcherCanvas || !launcherCanvas.gameObject.activeInHierarchy || !launcherButton || !launcherButton.interactable)
+            if (!launcherCanvas || !launcherCanvas.gameObject.activeInHierarchy || !launcherButton || !launcherButton.isActiveAndEnabled || !launcherButton.interactable)
             {
                 ResetLauncherPointerActivation();
                 return;
@@ -1271,7 +1273,7 @@ namespace SlopCity
 
         private bool LauncherContains(Vector2 screenPosition)
         {
-            RectTransform rect = launcherButton ? launcherButton.GetComponent<RectTransform>() : null;
+            RectTransform rect = launcherButton && launcherButton.isActiveAndEnabled ? launcherButton.GetComponent<RectTransform>() : null;
             return rect && RectTransformUtility.RectangleContainsScreenPoint(rect, screenPosition, null);
         }
 

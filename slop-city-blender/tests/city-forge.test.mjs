@@ -44,6 +44,7 @@ test('City Forge catalog delivers its bounded one-shot content inventory', () =>
 test('City Forge keeps map clicks separate from the bounded toolbar', () => {
   const source = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeBuildMode.cs', import.meta.url), 'utf8');
   const mapPointer = source.slice(source.indexOf('private void UpdateMapMousePointer'), source.indexOf('private void UpdateHoveredCell'));
+  const launcher = source.slice(source.indexOf('private void RefreshLauncher()'), source.indexOf('private void RequestLauncherOpen()'));
   assert.match(source, /new GameObject\("CityForgeToolbar", typeof\(RectTransform\), typeof\(Image\)\)/);
   assert.match(source, /buildUiSurface = toolbar\.GetComponent<RectTransform>\(\)/);
   assert.match(source, /buildUiButtons\.AddRange\(toolbar\.GetComponentsInChildren<Button>\(true\)\)/);
@@ -51,6 +52,9 @@ test('City Forge keeps map clicks separate from the bounded toolbar', () => {
   assert.match(mapPointer, /mapMousePressed = !mouseStartedOverBuildUi;/);
   assert.doesNotMatch(mapPointer, /IsPointerOverGameObject/, 'unrelated HUD raycasters must not swallow map presses');
   assert.match(mapPointer, /!BuildUiSurfaceContains\(Input\.mousePosition\)/, 'releasing over the toolbar must not edit through it');
+  assert.match(launcher, /launcherButton\.gameObject\.SetActive\(!launcherCursorLocked\)/, 'a locked first-person cursor must not receive an intrusive center button');
+  assert.doesNotMatch(launcher, /new Vector2\(\.5f, \.5f\)/, 'the launcher must not return to the center of the viewport');
+  assert.match(launcher, /Press B to build your city/, 'the locked-pointer entry route must remain explicit');
 });
 
 test('protected core and all-sides starter ring have exact coordinate semantics', () => {
