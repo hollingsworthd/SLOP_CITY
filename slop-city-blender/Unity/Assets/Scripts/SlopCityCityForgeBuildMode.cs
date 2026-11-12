@@ -258,7 +258,7 @@ namespace SlopCity
             catch (Exception error) { SetMessage(error.Message); return false; }
             pendingOpenWhenReady = false;
             ResetAtomicDrafts(draft); history = new SlopCityCityForgeDraftHistory(draft); opened = true; view = View.Streets;
-            ResumeFirstPersonForBuildMode(); SetHudSuppressed(true); GateFirstPerson(true); CaptureCamera(); controller.SetBuildMode(true); controller.StreamAt(selected); ShowStrategicMap(); SetUi(true); SetLauncher(false); RefreshUi(); RefreshBuildOverlay(); SetMessage("Plan an unbuilt block. A green border means the draft is ready to commit."); BuildModeChanged?.Invoke(true); return true;
+            ResumeFirstPersonForBuildMode(); SetHudSuppressed(true); GateFirstPerson(true); CaptureCamera(); controller.SetBuildMode(true); controller.StreamAt(selected); ShowStrategicMap(); SetUi(true); SetLauncher(false); RefreshUi(); RefreshBuildOverlay(); SetMessage("Choose a road side, then click any grid cell. The lit bar previews the road you will place."); BuildModeChanged?.Invoke(true); return true;
         }
 
         public void Close()
@@ -1063,11 +1063,14 @@ namespace SlopCity
             controls.Add(button.gameObject);
         }
 
-        private static string ViewHint(View value)
+        private string ViewHint(View value)
         {
             switch (value)
             {
-                case View.Streets: return "Click an edge to draw · drag to pan · scroll to zoom";
+                case View.Streets:
+                    return removeRoad
+                        ? "Choose a road side, then click any grid cell to erase it · the lit bar previews the road · drag to pan · scroll to zoom"
+                        : "Choose a road side, then click any grid cell to place it · the lit bar previews the road · drag to pan · scroll to zoom";
                 case View.Lots: return "Click a cell to make a lot · Shift-click builds a footprint";
                 case View.Buildings: return "Click an empty lot to place the selected building kit";
                 case View.Services: return "Click a lot to add service · choose a valid host before placing a screen";
@@ -1481,7 +1484,7 @@ namespace SlopCity
             foreach (KeyValuePair<View, List<GameObject>> pair in viewControls)
                 foreach (GameObject control in pair.Value)
                     if (control) control.SetActive(pair.Key == view);
-            SetButtonLabel(roadButton, "Road: " + RoadClassLabel(roadClass)); SetButtonLabel(removeRoadButton, removeRoad ? "Erase road" : "Draw road"); SetButtonLabel(roadDirectionButton, "Edge: " + DirectionLabel(roadDirection)); SetButtonLabel(zoneButton, "Zone: " + lotZone);
+            SetButtonLabel(roadButton, "Road: " + RoadClassLabel(roadClass)); SetButtonLabel(removeRoadButton, removeRoad ? "Erase roads" : "Place roads"); SetButtonLabel(roadDirectionButton, "Road side: " + DirectionLabel(roadDirection)); SetButtonLabel(zoneButton, "Zone: " + lotZone);
             SetButtonLabel(kitButton, "Kit: " + buildingBlueprint); SetButtonLabel(facadeButton, "Facade: " + facade); SetButtonLabel(roofButton, "Roof: " + roof); SetButtonLabel(storefrontButton, "Store: " + storefront); SetButtonLabel(entranceButton, "Entry: " + entrance); SetButtonLabel(floorsButton, "Floor + (" + buildingFloors + ")"); SetButtonLabel(interiorButton, "Interior: " + (string.IsNullOrEmpty(interior) ? "none" : interior));
             string host = screenHostMode == 0 ? "building" : screenHostMode == 1 ? "site" : "road";
             string target = string.IsNullOrEmpty(screenHostId) ? "choose target" : screenHostId;
