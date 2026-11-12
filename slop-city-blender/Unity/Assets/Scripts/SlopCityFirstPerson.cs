@@ -190,6 +190,8 @@ namespace SlopCity
 
         private bool inventoryOpen;
         public bool InventoryOpen => inventoryOpen;
+        /// <summary>The exact gameplay HUD configured for this walker.</summary>
+        public SlopCityHud Hud { get { return hud; } }
         public void SetInventoryOpen(bool value)
         {
             if (value && !initializationComplete) return;

@@ -1426,6 +1426,9 @@ namespace SlopCity
 
         private void SetHudSuppressed(bool value)
         {
+            if (!firstPerson) firstPerson = FindFirstObjectByType<SlopCityFirstPerson>();
+            SlopCityHud playerHud = firstPerson ? firstPerson.Hud : null;
+            if (playerHud) hud = playerHud;
             if (!hud) hud = FindFirstObjectByType<SlopCityHud>();
             if (!hud) { hudSuppressed = false; return; }
             hud.SetExternalOverlaySuppressed(value);

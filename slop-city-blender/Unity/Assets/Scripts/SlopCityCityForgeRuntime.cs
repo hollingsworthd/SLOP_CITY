@@ -71,6 +71,7 @@ namespace SlopCity
         private ChunkInstance preview;
         private GameObject strategicMap;
         private GameObject buildOverlay;
+        private Material buildOverlayMaterial;
         private bool buildOverlayPresentationActive;
 
         public int ActiveChunkCount { get { return chunks.Count; } }
@@ -317,13 +318,13 @@ namespace SlopCity
                 if (instance != null && instance.root) instance.root.SetActive(!visible);
         }
 
-        private static void BuildEditorGrid(Transform root, Color status)
+        private void BuildEditorGrid(Transform root, Color status)
         {
             const float lineHeight = .035f;
             const float mapHeight = .29f;
             float chunk = SlopCityCityForge.ChunkSizeMeters;
             float cell = SlopCityCityForge.CellSizeMeters;
-            Color grid = new Color(.12f, .23f, .30f);
+            Color grid = new Color(.15f, .42f, .58f);
             for (int index = 0; index <= SlopCityCityForge.GridSize; index++)
             {
                 float offset = index * cell;
@@ -337,7 +338,7 @@ namespace SlopCity
             EditorPrimitive("PlanBorderWest", PrimitiveType.Cube, root, new Vector3(0f, mapHeight + .015f, chunk * .5f), new Vector3(border, .05f, chunk + border), status);
         }
 
-        private static void BuildEditorLots(Transform root, CityForgeChunkPlan draft)
+        private void BuildEditorLots(Transform root, CityForgeChunkPlan draft)
         {
             foreach (CityForgeParcel parcel in (draft.parcels ?? new List<CityForgeParcel>()).Where(item => item != null && item.cells != null).OrderBy(item => item.id, StringComparer.Ordinal))
             {
@@ -352,7 +353,7 @@ namespace SlopCity
             }
         }
 
-        private static void BuildEditorRoads(Transform root, CityForgeChunkPlan draft, Color status)
+        private void BuildEditorRoads(Transform root, CityForgeChunkPlan draft, Color status)
         {
             foreach (CityForgeRoad road in (draft.roads ?? new List<CityForgeRoad>()).Where(item => item != null).OrderBy(item => item.LocalKey, StringComparer.Ordinal))
             {
@@ -365,7 +366,7 @@ namespace SlopCity
             }
         }
 
-        private static void BuildEditorBuildings(Transform root, CityForgeChunkPlan draft)
+        private void BuildEditorBuildings(Transform root, CityForgeChunkPlan draft)
         {
             foreach (CityForgeBuilding building in (draft.buildings ?? new List<CityForgeBuilding>()).Where(item => item != null).OrderBy(item => item.id, StringComparer.Ordinal))
             {
@@ -380,7 +381,7 @@ namespace SlopCity
             }
         }
 
-        private static void BuildEditorServicesAndLife(Transform root, CityForgeChunkPlan draft)
+        private void BuildEditorServicesAndLife(Transform root, CityForgeChunkPlan draft)
         {
             foreach (CityForgeService service in (draft.services ?? new List<CityForgeService>()).Where(item => item != null).OrderBy(item => item.id, StringComparer.Ordinal))
             {
@@ -396,7 +397,7 @@ namespace SlopCity
             }
         }
 
-        private static void BuildEditorScreens(Transform root, CityForgeChunkPlan draft)
+        private void BuildEditorScreens(Transform root, CityForgeChunkPlan draft)
         {
             foreach (CityForgeScreen screen in (draft.screens ?? new List<CityForgeScreen>()).Where(item => item != null).OrderBy(item => item.screenId, StringComparer.Ordinal))
             {
@@ -407,7 +408,7 @@ namespace SlopCity
             }
         }
 
-        private static void BuildEditorHover(Transform root, CityForgeCoord hovered, CityForgeDirection direction, Color status, SlopCityCityForgeBuildMode.View view)
+        private void BuildEditorHover(Transform root, CityForgeCoord hovered, CityForgeDirection direction, Color status, SlopCityCityForgeBuildMode.View view)
         {
             int x = Mathf.Clamp(hovered.x, 0, SlopCityCityForge.GridSize - 1), z = Mathf.Clamp(hovered.z, 0, SlopCityCityForge.GridSize - 1);
             float cell = SlopCityCityForge.CellSizeMeters;
@@ -421,14 +422,33 @@ namespace SlopCity
                 northSouth ? new Vector3(cell - .18f, .08f, 1.2f) : new Vector3(1.2f, .08f, cell - .18f), status);
         }
 
-        private static GameObject EditorPrimitive(string name, PrimitiveType type, Transform parent, Vector3 position, Vector3 scale, Color color)
+        private GameObject EditorPrimitive(string name, PrimitiveType type, Transform parent, Vector3 position, Vector3 scale, Color color)
         {
             GameObject value = Primitive(name, type, parent, position, scale);
             Collider collider = value.GetComponent<Collider>();
             if (collider) collider.enabled = false;
             DisableShadow(value);
-            SetRendererColor(value.GetComponent<Renderer>(), color);
+            Renderer renderer = value.GetComponent<Renderer>();
+            Material material = BuildOverlayMaterial();
+            if (renderer && material) renderer.sharedMaterial = material;
+            SetEditorRendererColor(renderer, color);
             return value;
+        }
+
+        private Material BuildOverlayMaterial()
+        {
+            if (buildOverlayMaterial) return buildOverlayMaterial;
+            Shader shader = Shader.Find("Standard") ?? Shader.Find("Unlit/Color");
+            if (!shader) return null;
+            buildOverlayMaterial = new Material(shader) { name = "City Forge planning overlay", hideFlags = HideFlags.DontSave };
+            if (buildOverlayMaterial.HasProperty("_Metallic")) buildOverlayMaterial.SetFloat("_Metallic", 0f);
+            if (buildOverlayMaterial.HasProperty("_Glossiness")) buildOverlayMaterial.SetFloat("_Glossiness", 0f);
+            if (buildOverlayMaterial.HasProperty("_EmissionColor"))
+            {
+                buildOverlayMaterial.SetColor("_EmissionColor", Color.white);
+                buildOverlayMaterial.EnableKeyword("_EMISSION");
+            }
+            return buildOverlayMaterial;
         }
 
         private static Color EditorZoneColor(CityForgeZone zone)
@@ -494,7 +514,11 @@ namespace SlopCity
         }
 
         private void OnDisable() { RevokeAllMedia(); }
-        private void OnDestroy() { ClearCityForgeBuildOverlay(); ClearCityForgeStrategicMap(); ClearCityForgeDraftPreview(); ReleaseAllCityForgeChunks(); }
+        private void OnDestroy()
+        {
+            ClearCityForgeBuildOverlay(); ClearCityForgeStrategicMap(); ClearCityForgeDraftPreview(); ReleaseAllCityForgeChunks();
+            if (buildOverlayMaterial) Destroy(buildOverlayMaterial);
+        }
 
         private void BuildGround(ChunkInstance instance)
         {
@@ -1042,6 +1066,20 @@ namespace SlopCity
             renderer.GetPropertyBlock(colorProperties);
             if (shared.HasProperty("_Color")) colorProperties.SetColor("_Color", color);
             if (shared.HasProperty("_BaseColor")) colorProperties.SetColor("_BaseColor", color);
+            renderer.SetPropertyBlock(colorProperties);
+        }
+
+        private static void SetEditorRendererColor(Renderer renderer, Color color)
+        {
+            if (!renderer) return;
+            Material shared = renderer.sharedMaterial;
+            if (shared == null) return;
+            colorProperties.Clear();
+            renderer.GetPropertyBlock(colorProperties);
+            if (shared.HasProperty("_Color")) colorProperties.SetColor("_Color", color);
+            if (shared.HasProperty("_BaseColor")) colorProperties.SetColor("_BaseColor", color);
+            if (shared.HasProperty("_EmissionColor"))
+                colorProperties.SetColor("_EmissionColor", new Color(color.r * 1.45f, color.g * 1.45f, color.b * 1.45f, 1f));
             renderer.SetPropertyBlock(colorProperties);
         }
         private static Vector3 ChunkOrigin(CityForgeCoord coord) { return new Vector3(coord.x * SlopCityCityForge.ChunkSizeMeters, 0f, coord.z * SlopCityCityForge.ChunkSizeMeters); }
