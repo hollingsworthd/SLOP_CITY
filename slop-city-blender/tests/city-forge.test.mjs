@@ -1,4 +1,5 @@
 import {createHash} from 'node:crypto';
+import {readFileSync} from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
@@ -38,6 +39,18 @@ test('City Forge catalog delivers its bounded one-shot content inventory', () =>
   assert.deepEqual(Object.keys(CITY_FORGE_BUILDING_SCREEN_SLOTS).sort(), [...CITY_FORGE_BUILDINGS].sort(), 'every shipped building declares its physical screen capacity');
   assert.equal(Object.values(CITY_FORGE_BUILDING_SCREEN_SLOTS).every(value => Number.isInteger(value) && value >= 1 && value <= 5), true);
   assert.equal(createHash('sha256').update(canonicalJson(cityForgeCatalogFingerprintInput())).digest('hex'), CITY_FORGE_CATALOG_HASH);
+});
+
+test('City Forge keeps map clicks separate from the bounded toolbar', () => {
+  const source = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeBuildMode.cs', import.meta.url), 'utf8');
+  const mapPointer = source.slice(source.indexOf('private void UpdateMapMousePointer'), source.indexOf('private void UpdateHoveredCell'));
+  assert.match(source, /new GameObject\("CityForgeToolbar", typeof\(RectTransform\), typeof\(Image\)\)/);
+  assert.match(source, /buildUiSurface = toolbar\.GetComponent<RectTransform>\(\)/);
+  assert.match(source, /buildUiButtons\.AddRange\(toolbar\.GetComponentsInChildren<Button>\(true\)\)/);
+  assert.doesNotMatch(source, /root\.AddComponent<Image>\(\)/, 'the screen-sized Canvas root must never become a map-blocking graphic');
+  assert.match(mapPointer, /mapMousePressed = !mouseStartedOverBuildUi;/);
+  assert.doesNotMatch(mapPointer, /IsPointerOverGameObject/, 'unrelated HUD raycasters must not swallow map presses');
+  assert.match(mapPointer, /!BuildUiSurfaceContains\(Input\.mousePosition\)/, 'releasing over the toolbar must not edit through it');
 });
 
 test('protected core and all-sides starter ring have exact coordinate semantics', () => {

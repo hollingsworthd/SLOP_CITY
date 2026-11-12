@@ -182,9 +182,12 @@ namespace SlopCity
             if (Input.touchCount == 1 && !suppressBuildUiTouchUntilNoTouches && buildUiTouchFingerId < 0)
             {
                 Touch touch = Input.GetTouch(0);
-                if (touch.phase == TouchPhase.Ended || touch.phase == TouchPhase.Canceled)
+                if (touch.phase == TouchPhase.Ended)
                 {
-                    if (!buildUiTouchReleasedThisFrame && !touchPanned && !(EventSystem.current && EventSystem.current.IsPointerOverGameObject(touch.fingerId))) ClickMap(touch.position);
+                    // As with mouse input, only the editor's visible toolbar
+                    // blocks a map gesture. A hidden or unrelated UI
+                    // raycaster must not turn a valid cell tap into a no-op.
+                    if (!buildUiTouchReleasedThisFrame && !touchPanned && !BuildUiSurfaceContains(touch.position)) ClickMap(touch.position);
                     touchPanned = false;
                 }
             }
@@ -623,7 +626,14 @@ namespace SlopCity
             }
             if (Input.GetMouseButtonDown(0))
             {
-                mapMousePressed = !mouseStartedOverBuildUi && !(EventSystem.current && EventSystem.current.IsPointerOverGameObject());
+                // The build canvas deliberately owns a full-screen Canvas so
+                // the map can be drawn beneath the toolbar. Do not ask the
+                // global EventSystem whether the pointer is over *any* UI:
+                // another HUD (or the canvas root itself) may report true
+                // even when the player pressed a clear map cell. The editor
+                // has an explicit toolbar hit surface, which is the only
+                // thing allowed to claim this gesture.
+                mapMousePressed = !mouseStartedOverBuildUi;
                 mapMouseDragged = false;
                 mapMouseStart = Input.mousePosition;
                 mapMousePrevious = mapMouseStart;
@@ -641,7 +651,7 @@ namespace SlopCity
                 mapMousePrevious = current;
             }
             if (!Input.GetMouseButtonUp(0)) return;
-            bool activate = mapMousePressed && !mapMouseDragged;
+            bool activate = mapMousePressed && !mapMouseDragged && !BuildUiSurfaceContains(Input.mousePosition);
             mapMousePressed = false;
             mapMouseDragged = false;
             if (activate) ClickMap(Input.mousePosition);
@@ -1004,52 +1014,58 @@ namespace SlopCity
             GameObject root = new GameObject("CityForgeBuildMode", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
             root.transform.SetParent(transform, false); canvas = root.GetComponent<Canvas>(); canvas.renderMode = RenderMode.ScreenSpaceOverlay; canvas.overrideSorting = true; canvas.sortingOrder = CityForgeCanvasSortingOrder;
             CanvasScaler scaler = root.GetComponent<CanvasScaler>(); scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize; scaler.referenceResolution = new Vector2(1280, 720);
-            Image panel = root.AddComponent<Image>(); panel.color = new Color(.025f, .045f, .06f, .96f);
-            buildUiSurface = root.GetComponent<RectTransform>(); buildUiSurface.anchorMin = new Vector2(0f, 1f); buildUiSurface.anchorMax = new Vector2(1f, 1f); buildUiSurface.pivot = new Vector2(.5f, 1f); buildUiSurface.sizeDelta = new Vector2(0f, 164f);
-            heading = Label(root.transform, "City Forge", 20, new Vector2(12, -10), new Vector2(420, 26));
-            contextHint = Label(root.transform, "", 13, new Vector2(436, -10), new Vector2(830, 24)); contextHint.alignment = TextAnchor.MiddleRight;
-            message = Label(root.transform, "", 13, new Vector2(12, -142), new Vector2(1240, 18));
+            // A root overlay Canvas is screen-sized even when its RectTransform
+            // appears to be resized. Giving that root an Image made an
+            // invisible full-screen raycast target on standalone builds, so
+            // every map click was classified as UI. Keep the root transparent
+            // to input and put the actual, bounded toolbar in a child.
+            GameObject toolbar = new GameObject("CityForgeToolbar", typeof(RectTransform), typeof(Image)); toolbar.transform.SetParent(root.transform, false);
+            buildUiSurface = toolbar.GetComponent<RectTransform>(); buildUiSurface.anchorMin = new Vector2(0f, 1f); buildUiSurface.anchorMax = new Vector2(1f, 1f); buildUiSurface.pivot = new Vector2(.5f, 1f); buildUiSurface.sizeDelta = new Vector2(0f, 164f);
+            Image panel = toolbar.GetComponent<Image>(); panel.color = new Color(.025f, .045f, .06f, .96f);
+            heading = Label(toolbar.transform, "City Forge", 20, new Vector2(12, -10), new Vector2(420, 26));
+            contextHint = Label(toolbar.transform, "", 13, new Vector2(436, -10), new Vector2(830, 24)); contextHint.alignment = TextAnchor.MiddleRight;
+            message = Label(toolbar.transform, "", 13, new Vector2(12, -142), new Vector2(1240, 18));
             float x = 12f;
             foreach (View choice in new[] { View.Streets, View.Lots, View.Buildings, View.Services, View.Life })
             {
-                View local = choice; Button button = Button(root.transform, choice.ToString(), new Vector2(x, -42), new Vector2(84, 30)); button.onClick.AddListener(() => SelectView(local)); viewButtons.Add(choice, button); x += 90f;
+                View local = choice; Button button = Button(toolbar.transform, choice.ToString(), new Vector2(x, -42), new Vector2(84, 30)); button.onClick.AddListener(() => SelectView(local)); viewButtons.Add(choice, button); x += 90f;
             }
-            undoButton = Button(root.transform, "Undo", new Vector2(472, -42), new Vector2(64, 30)); undoButton.onClick.AddListener(Undo);
-            redoButton = Button(root.transform, "Redo", new Vector2(542, -42), new Vector2(64, 30)); redoButton.onClick.AddListener(Redo);
-            Button preview = Button(root.transform, "Review", new Vector2(612, -42), new Vector2(82, 30)); preview.onClick.AddListener(Preview);
-            Button commit = Button(root.transform, "Commit", new Vector2(700, -42), new Vector2(82, 30)); commit.onClick.AddListener(Commit);
-            Button exit = Button(root.transform, "Return", new Vector2(788, -42), new Vector2(82, 30)); exit.onClick.AddListener(Close);
+            undoButton = Button(toolbar.transform, "Undo", new Vector2(472, -42), new Vector2(64, 30)); undoButton.onClick.AddListener(Undo);
+            redoButton = Button(toolbar.transform, "Redo", new Vector2(542, -42), new Vector2(64, 30)); redoButton.onClick.AddListener(Redo);
+            Button preview = Button(toolbar.transform, "Review", new Vector2(612, -42), new Vector2(82, 30)); preview.onClick.AddListener(Preview);
+            Button commit = Button(toolbar.transform, "Commit", new Vector2(700, -42), new Vector2(82, 30)); commit.onClick.AddListener(Commit);
+            Button exit = Button(toolbar.transform, "Return", new Vector2(788, -42), new Vector2(82, 30)); exit.onClick.AddListener(Close);
 
-            roadButton = Button(root.transform, "Road", new Vector2(12, -96), new Vector2(160, 32)); roadButton.onClick.AddListener(CycleRoadClass); RegisterViewControl(View.Streets, roadButton);
-            removeRoadButton = Button(root.transform, "Add road", new Vector2(178, -96), new Vector2(112, 32)); removeRoadButton.onClick.AddListener(ToggleRoadRemoval); RegisterViewControl(View.Streets, removeRoadButton);
-            roadDirectionButton = Button(root.transform, "Direction", new Vector2(296, -96), new Vector2(144, 32)); roadDirectionButton.onClick.AddListener(CycleRoadDirection); RegisterViewControl(View.Streets, roadDirectionButton);
+            roadButton = Button(toolbar.transform, "Road", new Vector2(12, -96), new Vector2(160, 32)); roadButton.onClick.AddListener(CycleRoadClass); RegisterViewControl(View.Streets, roadButton);
+            removeRoadButton = Button(toolbar.transform, "Add road", new Vector2(178, -96), new Vector2(112, 32)); removeRoadButton.onClick.AddListener(ToggleRoadRemoval); RegisterViewControl(View.Streets, removeRoadButton);
+            roadDirectionButton = Button(toolbar.transform, "Direction", new Vector2(296, -96), new Vector2(144, 32)); roadDirectionButton.onClick.AddListener(CycleRoadDirection); RegisterViewControl(View.Streets, roadDirectionButton);
 
-            zoneButton = Button(root.transform, "Zone", new Vector2(12, -96), new Vector2(160, 32)); zoneButton.onClick.AddListener(CycleLotZone); RegisterViewControl(View.Lots, zoneButton);
-            Button merge = Button(root.transform, "Merge lots", new Vector2(178, -96), new Vector2(112, 32)); merge.onClick.AddListener(MergeSelectedLots); RegisterViewControl(View.Lots, merge);
-            Button split = Button(root.transform, "Split lot", new Vector2(296, -96), new Vector2(108, 32)); split.onClick.AddListener(SplitSelectedLot); RegisterViewControl(View.Lots, split);
+            zoneButton = Button(toolbar.transform, "Zone", new Vector2(12, -96), new Vector2(160, 32)); zoneButton.onClick.AddListener(CycleLotZone); RegisterViewControl(View.Lots, zoneButton);
+            Button merge = Button(toolbar.transform, "Merge lots", new Vector2(178, -96), new Vector2(112, 32)); merge.onClick.AddListener(MergeSelectedLots); RegisterViewControl(View.Lots, merge);
+            Button split = Button(toolbar.transform, "Split lot", new Vector2(296, -96), new Vector2(108, 32)); split.onClick.AddListener(SplitSelectedLot); RegisterViewControl(View.Lots, split);
 
-            kitButton = Button(root.transform, "Kit", new Vector2(12, -96), new Vector2(120, 32)); kitButton.onClick.AddListener(CycleBuildingKit); RegisterViewControl(View.Buildings, kitButton);
-            facadeButton = Button(root.transform, "Facade", new Vector2(138, -96), new Vector2(130, 32)); facadeButton.onClick.AddListener(CycleFacade); RegisterViewControl(View.Buildings, facadeButton);
-            roofButton = Button(root.transform, "Roof", new Vector2(274, -96), new Vector2(126, 32)); roofButton.onClick.AddListener(CycleRoof); RegisterViewControl(View.Buildings, roofButton);
-            storefrontButton = Button(root.transform, "Store", new Vector2(406, -96), new Vector2(118, 32)); storefrontButton.onClick.AddListener(CycleStorefront); RegisterViewControl(View.Buildings, storefrontButton);
-            entranceButton = Button(root.transform, "Entrance", new Vector2(530, -96), new Vector2(116, 32)); entranceButton.onClick.AddListener(CycleEntrance); RegisterViewControl(View.Buildings, entranceButton);
-            Button floorDown = Button(root.transform, "Floor −", new Vector2(652, -96), new Vector2(84, 32)); floorDown.onClick.AddListener(() => ChangeFloors(-1)); RegisterViewControl(View.Buildings, floorDown);
-            floorsButton = Button(root.transform, "Floor +", new Vector2(742, -96), new Vector2(100, 32)); floorsButton.onClick.AddListener(() => ChangeFloors(1)); RegisterViewControl(View.Buildings, floorsButton);
-            interiorButton = Button(root.transform, "Interior", new Vector2(848, -96), new Vector2(180, 32)); interiorButton.onClick.AddListener(CycleInterior); RegisterViewControl(View.Buildings, interiorButton);
-            Button demolish = Button(root.transform, "Demolish", new Vector2(1034, -96), new Vector2(120, 32)); demolish.onClick.AddListener(DemolishLast); RegisterViewControl(View.Buildings, demolish);
+            kitButton = Button(toolbar.transform, "Kit", new Vector2(12, -96), new Vector2(120, 32)); kitButton.onClick.AddListener(CycleBuildingKit); RegisterViewControl(View.Buildings, kitButton);
+            facadeButton = Button(toolbar.transform, "Facade", new Vector2(138, -96), new Vector2(130, 32)); facadeButton.onClick.AddListener(CycleFacade); RegisterViewControl(View.Buildings, facadeButton);
+            roofButton = Button(toolbar.transform, "Roof", new Vector2(274, -96), new Vector2(126, 32)); roofButton.onClick.AddListener(CycleRoof); RegisterViewControl(View.Buildings, roofButton);
+            storefrontButton = Button(toolbar.transform, "Store", new Vector2(406, -96), new Vector2(118, 32)); storefrontButton.onClick.AddListener(CycleStorefront); RegisterViewControl(View.Buildings, storefrontButton);
+            entranceButton = Button(toolbar.transform, "Entrance", new Vector2(530, -96), new Vector2(116, 32)); entranceButton.onClick.AddListener(CycleEntrance); RegisterViewControl(View.Buildings, entranceButton);
+            Button floorDown = Button(toolbar.transform, "Floor −", new Vector2(652, -96), new Vector2(84, 32)); floorDown.onClick.AddListener(() => ChangeFloors(-1)); RegisterViewControl(View.Buildings, floorDown);
+            floorsButton = Button(toolbar.transform, "Floor +", new Vector2(742, -96), new Vector2(100, 32)); floorsButton.onClick.AddListener(() => ChangeFloors(1)); RegisterViewControl(View.Buildings, floorsButton);
+            interiorButton = Button(toolbar.transform, "Interior", new Vector2(848, -96), new Vector2(180, 32)); interiorButton.onClick.AddListener(CycleInterior); RegisterViewControl(View.Buildings, interiorButton);
+            Button demolish = Button(toolbar.transform, "Demolish", new Vector2(1034, -96), new Vector2(120, 32)); demolish.onClick.AddListener(DemolishLast); RegisterViewControl(View.Buildings, demolish);
 
-            serviceButton = Button(root.transform, "Service", new Vector2(12, -96), new Vector2(180, 32)); serviceButton.onClick.AddListener(CycleService); RegisterViewControl(View.Services, serviceButton);
-            landmarkButton = Button(root.transform, "Cityworks", new Vector2(198, -96), new Vector2(160, 32)); landmarkButton.onClick.AddListener(CycleLandmarkOutcome); RegisterViewControl(View.Services, landmarkButton);
-            mountButton = Button(root.transform, "Mount", new Vector2(364, -96), new Vector2(170, 32)); mountButton.onClick.AddListener(CycleScreenMount); RegisterViewControl(View.Services, mountButton);
-            hostButton = Button(root.transform, "Host", new Vector2(540, -96), new Vector2(120, 32)); hostButton.onClick.AddListener(CycleScreenHost); RegisterViewControl(View.Services, hostButton);
-            targetButton = Button(root.transform, "Screen target", new Vector2(666, -96), new Vector2(220, 32)); targetButton.onClick.AddListener(CycleScreenTarget); RegisterViewControl(View.Services, targetButton);
-            deviceButton = Button(root.transform, "Device", new Vector2(892, -96), new Vector2(170, 32)); deviceButton.onClick.AddListener(CycleScreenDevice); RegisterViewControl(View.Services, deviceButton);
-            Button screen = Button(root.transform, "Place screen", new Vector2(1068, -96), new Vector2(150, 32)); screen.onClick.AddListener(PlaceScreenOnLastBuilding); RegisterViewControl(View.Services, screen);
+            serviceButton = Button(toolbar.transform, "Service", new Vector2(12, -96), new Vector2(180, 32)); serviceButton.onClick.AddListener(CycleService); RegisterViewControl(View.Services, serviceButton);
+            landmarkButton = Button(toolbar.transform, "Cityworks", new Vector2(198, -96), new Vector2(160, 32)); landmarkButton.onClick.AddListener(CycleLandmarkOutcome); RegisterViewControl(View.Services, landmarkButton);
+            mountButton = Button(toolbar.transform, "Mount", new Vector2(364, -96), new Vector2(170, 32)); mountButton.onClick.AddListener(CycleScreenMount); RegisterViewControl(View.Services, mountButton);
+            hostButton = Button(toolbar.transform, "Host", new Vector2(540, -96), new Vector2(120, 32)); hostButton.onClick.AddListener(CycleScreenHost); RegisterViewControl(View.Services, hostButton);
+            targetButton = Button(toolbar.transform, "Screen target", new Vector2(666, -96), new Vector2(220, 32)); targetButton.onClick.AddListener(CycleScreenTarget); RegisterViewControl(View.Services, targetButton);
+            deviceButton = Button(toolbar.transform, "Device", new Vector2(892, -96), new Vector2(170, 32)); deviceButton.onClick.AddListener(CycleScreenDevice); RegisterViewControl(View.Services, deviceButton);
+            Button screen = Button(toolbar.transform, "Place screen", new Vector2(1068, -96), new Vector2(150, 32)); screen.onClick.AddListener(PlaceScreenOnLastBuilding); RegisterViewControl(View.Services, screen);
 
-            situationButton = Button(root.transform, "Situation", new Vector2(12, -96), new Vector2(250, 32)); situationButton.onClick.AddListener(CycleSituationTemplate); RegisterViewControl(View.Life, situationButton);
-            situationStateButton = Button(root.transform, "Situation state", new Vector2(268, -96), new Vector2(150, 32)); situationStateButton.onClick.AddListener(CycleSituationState); RegisterViewControl(View.Life, situationStateButton);
-            Button renovate = Button(root.transform, "Renovate", new Vector2(424, -96), new Vector2(140, 32)); renovate.onClick.AddListener(RenovateLast); RegisterViewControl(View.Life, renovate);
-            buildUiButtons.AddRange(root.GetComponentsInChildren<Button>(true));
+            situationButton = Button(toolbar.transform, "Situation", new Vector2(12, -96), new Vector2(250, 32)); situationButton.onClick.AddListener(CycleSituationTemplate); RegisterViewControl(View.Life, situationButton);
+            situationStateButton = Button(toolbar.transform, "Situation state", new Vector2(268, -96), new Vector2(150, 32)); situationStateButton.onClick.AddListener(CycleSituationState); RegisterViewControl(View.Life, situationStateButton);
+            Button renovate = Button(toolbar.transform, "Renovate", new Vector2(424, -96), new Vector2(140, 32)); renovate.onClick.AddListener(RenovateLast); RegisterViewControl(View.Life, renovate);
+            buildUiButtons.AddRange(toolbar.GetComponentsInChildren<Button>(true));
         }
 
         private void RegisterViewControl(View scope, Button button)
