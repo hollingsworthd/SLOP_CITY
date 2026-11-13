@@ -426,7 +426,7 @@ namespace SlopCity
             if (cityProgress.text != progress) cityProgress.text = progress;
             string blockName = player.CurrentDistrictName;
             if (districtName.text != blockName) districtName.text = blockName;
-            string distance = player.IsOutside ? Mathf.RoundToInt(player.HomeDistance) + "m FROM HOME  /  R TO RETURN\nE  OPEN DOORS   /   SHIFT  RUN" : "E  OPEN THE CITY DOOR\nUSE THE TV TO CHOOSE MEDIA";
+            string distance = player.IsOutside ? Mathf.RoundToInt(player.HomeDistance) + "m FROM HOME  /  R TO RETURN\nE  OPEN DOORS   /   SHIFT  RUN" : "E  OPEN THE CITY DOOR\nTV  SEALED AUTHORED PROGRAMME";
             if (homeDistance.text != distance) homeDistance.text = distance;
         }
 
@@ -554,11 +554,11 @@ namespace SlopCity
             RectTransform panel = Panel(sourceCard.transform, "SourceContent", new Vector2(1040,600), Ink);
             Label(panel, "Tag", "CITY SIGNALS  /  LOCAL RECEIVER", 10, TextAnchor.UpperLeft,
                 new Vector2(0,1), new Vector2(0,1), new Vector2(30,-24), new Vector2(760,22), Lime);
-            sourceHeading = Label(panel, "Title", "LOUNGE MEDIA", 21, TextAnchor.UpperLeft,
+            sourceHeading = Label(panel, "Title", "SEALED LOUNGE PROGRAMME", 21, TextAnchor.UpperLeft,
                 new Vector2(0,1), new Vector2(0,1), new Vector2(30,-54), new Vector2(960,38), Cream);
-            Label(panel, "PlaybackLocation", "LIVING-ROOM TV\n\nChoose the living-room television media here.\nReturn to the city to watch on their screens.", 17, TextAnchor.UpperLeft,
+            Label(panel, "PlaybackLocation", "LIVING-ROOM TV\n\nThe authored programme is fixed in this world.\nPersonal videos play only on City Forge screens.", 17, TextAnchor.UpperLeft,
                 new Vector2(0,1), new Vector2(0,1), new Vector2(30,-130), new Vector2(550,170), Cream);
-            sourceDescription = Label(panel, "PlaybackStatus", "Choose a channel to play in the lounge.", 11, TextAnchor.UpperLeft,
+            sourceDescription = Label(panel, "PlaybackStatus", "Built-in playback controls never customize the Old City.", 11, TextAnchor.UpperLeft,
                 new Vector2(0,1), new Vector2(0,1), new Vector2(30,-360), new Vector2(550,70), Muted);
             Button(panel, "Broadcast", "MP BROADCAST", new Vector2(-402,-183), new Vector2(174,38), () => player.PlayMedia(SlopCityMediaChannel.Broadcast));
             Button(panel, "Original", "IN-Q-TEL", new Vector2(-214,-183), new Vector2(174,38), () => player.PlayMedia(SlopCityMediaChannel.Record));
@@ -571,28 +571,16 @@ namespace SlopCity
             Button(panel, "VolumeUp", "+", new Vector2(-30,-236), new Vector2(36,38), () => player.ChangeMediaVolume(0.1f));
             RectTransform network = Panel(panel, "CityNetwork", new Vector2(352,357), new Color(.037f,.062f,.078f,.8f));
             network.anchoredPosition = new Vector2(317,17);
-            Label(network,"NetworkTitle","PUBLIC BROADCAST NETWORK",10,TextAnchor.UpperLeft,new Vector2(0,1),new Vector2(0,1),new Vector2(20,-20),new Vector2(310,20),Lime);
-#if UNITY_WEBGL && !UNITY_EDITOR
-            const string initialNetworkStatus = "Loading bundled city broadcasts…";
-#else
-            const string initialNetworkStatus = "Synchronizing public TikTok posts…";
-#endif
+            Label(network,"NetworkTitle","AUTHORED CITY BROADCASTS",10,TextAnchor.UpperLeft,new Vector2(0,1),new Vector2(0,1),new Vector2(20,-20),new Vector2(310,20),Lime);
+            const string initialNetworkStatus = "Loading the sealed built-in programme…";
             cityMediaStatus = Label(network, "NetworkStatus", initialNetworkStatus, 11, TextAnchor.UpperLeft,
                 new Vector2(0,1), new Vector2(0,1), new Vector2(20,-54), new Vector2(312,82), Cream);
             Button(network, "DRHFeed", "@1984drh  ↗", new Vector2(0,6), new Vector2(312,36), () => player.OpenCreatorFeed(0));
             Button(network, "MPFeed", "@machine_publishers  ↗", new Vector2(0,-40), new Vector2(312,36), () => player.OpenCreatorFeed(1));
             float networkActionWidth = input.UseTouchControls ? 148 : 160;
-#if UNITY_WEBGL && !UNITY_EDITOR
             Button(network, "CreatorFeeds", "CREATOR FEEDS ↗", new Vector2(-82,-88), new Vector2(networkActionWidth,36), () => { if (SlopCityCityMedia.Instance) SlopCityCityMedia.Instance.OpenCreatorPortal(); });
-#else
-            Button(network, "RefreshTikTok", "SYNC POSTS", new Vector2(-82,-88), new Vector2(networkActionWidth,36), () => { if (SlopCityTikTokSync.Instance) SlopCityTikTokSync.Instance.RequestRefresh(); });
-#endif
             Button(network, "NetworkPause", "PAUSE / RESUME", new Vector2(82,-88), new Vector2(networkActionWidth,36), player.ToggleCityMedia);
-#if UNITY_WEBGL && !UNITY_EDITOR
-            const string feedHint = "Bundled broadcasts play across the city.\nOpen creator feeds for their latest posts.";
-#else
-            const string feedHint = "Both accounts refresh every five minutes.\nVideos and photo posts rotate across the city.";
-#endif
+            const string feedHint = "Built-in broadcasts stay fixed across Old City.\nOpen creator feeds to see their latest posts.";
             Label(network, "FeedHint", feedHint, 9, TextAnchor.LowerLeft,
                 Vector2.zero,Vector2.zero,new Vector2(20,22),new Vector2(312,36),Muted);
             returnToLoungeButton = Button(panel, "ReturnToLounge", "BACK TO THE CITY", new Vector2(317,-236), new Vector2(352,38), player.PlayOrResume, true, true);

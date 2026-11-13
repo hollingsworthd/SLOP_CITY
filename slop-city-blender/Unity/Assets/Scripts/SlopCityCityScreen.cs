@@ -3,6 +3,14 @@ using UnityEngine;
 
 namespace SlopCity
 {
+    /// <summary>
+    /// The protected authored city and the player-built Sprawl share screen
+    /// hardware, but never share media authority.  New fixtures default to the
+    /// authored scope so an omitted assignment cannot make Old City content
+    /// player-configurable.
+    /// </summary>
+    public enum SlopCityScreenMediaScope { AuthoredWorld, PlayerSprawl }
+
     /// <summary>A physical display with its own assigned post and retained picture.</summary>
     [DisallowMultipleComponent]
     public sealed class SlopCityCityScreen : MonoBehaviour
@@ -14,6 +22,7 @@ namespace SlopCity
         // hardware opts out until the shared view-zone admission controller
         // explicitly grants it a bounded media slot.
         [SerializeField] private bool mediaAdmitted = true;
+        [SerializeField] private SlopCityScreenMediaScope mediaScope = SlopCityScreenMediaScope.AuthoredWorld;
         private static readonly HashSet<SlopCityCityScreen> ActiveScreens = new HashSet<SlopCityCityScreen>();
         [SerializeField] private float audibleRange = 14f;
         [SerializeField] private string featuredCreator = "", featuredPostId = "";
@@ -30,6 +39,9 @@ namespace SlopCity
         public int Channel => channel;
         public bool AudioOnly => audioOnly;
         public bool MediaAdmitted => mediaAdmitted;
+        public SlopCityScreenMediaScope MediaScope => mediaScope;
+        public bool UsesAuthoredProgram => mediaScope == SlopCityScreenMediaScope.AuthoredWorld;
+        public bool UsesPlayerSprawlProgram => mediaScope == SlopCityScreenMediaScope.PlayerSprawl;
         public string ScreenGroup => screenGroup;
         public float AudibleRange => audibleRange;
         public float FocusedAudibleRange => Mathf.Max(audibleRange, 30f);
@@ -46,6 +58,17 @@ namespace SlopCity
             string selected = group == "street" || group == "interior" || group == "home" || group == "billboard" ? group : "";
             if (screenGroup == selected) return;
             screenGroup = selected;
+            if (SlopCityCityMedia.Instance) SlopCityCityMedia.Instance.RefreshScreenAssignment(this);
+        }
+
+        /// <summary>
+        /// Only streamed City Forge fixtures opt into the player-owned Sprawl.
+        /// Authored scene screens intentionally retain the safe default.
+        /// </summary>
+        public void SetMediaScope(SlopCityScreenMediaScope selected)
+        {
+            if (mediaScope == selected) return;
+            mediaScope = selected;
             if (SlopCityCityMedia.Instance) SlopCityCityMedia.Instance.RefreshScreenAssignment(this);
         }
 

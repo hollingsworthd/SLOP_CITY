@@ -7,12 +7,10 @@
     "https://www.tiktok.com/@machine_publishers"
   ],
   "instructions": [
-    "Automatic native TikTok synchronization is enabled by SlopCityTikTokSync in v0.6. It discovers public posts from @1984drh and @machine_publishers at startup and every five minutes; this legacy file does not need a feedUrl for that feature.",
-    "City channels rotate through Machine Publishers, 1984DRH, and both accounts combined. Video and photo-post media download on demand into the persistent TikTok cache; the archive clips below remain offline fallbacks.",
-    "This remains the optional version-1 direct-media feed format. To use it, set feedUrl to an HTTPS endpoint returning channels with id, title and directly playable HTTPS mediaUrl. Supported legacy ids are broadcast, record and duet. Refresh uses refreshSeconds with a minimum of 60 seconds.",
-    "TikTok page/embed URLs are not native decoder media URLs. The automatic sync component resolves validated public post sources to cached files. Browser creator links and official embeds remain available through creator-feeds.html.",
-    "Automatic synchronization uses an undocumented public endpoint that can change or become unavailable. Partial/offline refreshes retain the previous catalogue. No login, cookies, private-post access or deleted-post retrieval is provided.",
-    "The native city network shares at most three VideoPlayers. Photo posts use existing channel textures and audio sources. Cache metadata is separate from these bundled archives; do not put credentials in StreamingAssets.",
+    "This is a provenance record for the sealed authored Old City programme. Runtime playback does not read feedUrl, refreshSeconds or mediaUrl from this file.",
+    "Every default-world screen resolves only the packaged TikTok catalogue and the bundled archive clips below. Native cache files, account refreshes, direct HTTPS media and player manifests are never accepted as substitutes.",
+    "Creator profile links and official embeds remain available through creator-feeds.html, but they do not alter any in-game display.",
+    "The native city network shares at most three VideoPlayers. Photo posts use existing channel textures and audio sources. Do not put credentials in StreamingAssets.",
     "The In-Q-Tel archive features 1984DRH and Hood Rich Records but was posted by @machine_publishers. Current TikTok metadata attributes the duet to @1984drh; its original @beef_talko sourceUrl is preserved as historical retrieval provenance."
   ],
   "channels": [

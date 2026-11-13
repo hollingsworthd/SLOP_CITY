@@ -170,9 +170,7 @@ Each city display has its own assigned post, material and retained picture. At m
 
 Audio follows one nearby, front-facing, unobstructed display at a time, coordinating with the lounge player. Distance, screen direction and geometry determine the candidate; hysteresis and fade-out-before-fade-in prevent an overlapping chorus when switching. User volume, pause and app focus still apply.
 
-All current posts ship in `Unity/Assets/StreamingAssets/TikTok`, including 98 H.264/AAC videos, nine JPEG slideshow images, six PCM WAV music tracks and 104 thumbnails. The 217 media assets total 530,394,233 native bytes. `catalog.json` records the dated snapshot; `bundle-receipt.json` records public source links, per-account completeness and every file hash. Browser media is fetched only as needed. Desktop refreshes both accounts on startup and every five minutes; **M → SYNC POSTS** refreshes manually. Existing bundled posts resolve locally even after their live metadata is refreshed. Future posts download into the normal cache.
-
-Synchronization uses TikTok’s undocumented public web endpoint, which can change or become unavailable. It does not log in or retrieve private/deleted posts. Partial or failed refreshes retain the last known catalogue, and previously cached playable files remain usable offline. The game reports incomplete synchronization instead of treating missing pages as a complete account. Official creator embeds and profile links remain available in the browser. The optional version-1 `city-feed.json` direct-media feed is retained for compatibility; automatic TikTok synchronization does not require configuring it.
+All current posts ship in `Unity/Assets/StreamingAssets/TikTok`, including 98 H.264/AAC videos, nine JPEG slideshow images, six PCM WAV music tracks and 104 thumbnails. The 217 media assets total 530,394,233 native bytes. `catalog.json` records the dated snapshot; `bundle-receipt.json` records public source links, per-account completeness and every file hash. The authored Old City loads only this packaged collection: it never reads cached/live catalogues, a direct-media feed, or player configuration. Creator embeds and profile links remain available in the browser, but cannot change an in-game screen.
 
 Media provenance is recorded in `Unity/Assets/StreamingAssets/Media/sources.json`. The bundled In-Q-Tel post belongs to @machine_publishers. TikTok currently attributes the archived duet to **@1984drh**; its original @beef_talko retrieval URL is preserved as historical provenance. Archives are not presented as newly published posts.
 
@@ -219,8 +217,8 @@ The room includes car keys, sauce packets, a Roblox-inspired coding laptop, fict
 | `Unity/Assets/Shaders/SlopCityCameraFinish.shader` | Bilateral ambient occlusion, road reflections, haze, bloom, grading and FXAA |
 | `Unity/Assets/Editor/SlopCityRealismValidation.cs` | Rendering asset checks and 13 saved-scene review captures |
 | `Unity/Assets/Scripts/SlopCityDoor.cs` | Physical door interaction and safe animated swing |
-| `Unity/Assets/StreamingAssets/Media` | Three offline archives, legacy feed configuration, browser links and `sources.json` provenance |
-| `Unity/Assets/Scripts/SlopCityTikTokSync.cs` | Automatic public-post pagination, source refresh and persistent media cache |
+| `Unity/Assets/StreamingAssets/Media` | Offline archives, provenance, and browser-only creator links; feed configuration cannot alter gameplay |
+| `Unity/Assets/Scripts/SlopCityTikTokSync.cs` | Sealed packaged-catalog loader and bundled-media resolver |
 | `scripts/build_scene.py` | Reproducible scene, render, and export generator |
 | `scripts/couch.py` | Upholstery, seams, cushions, blanket geometry |
 | `scripts/vr_headset.py` | Daniel’s modeled VR headset and visor rim |
@@ -238,7 +236,7 @@ The repository preserves Unity `.meta` files, package locks, Blender source, exp
 
 ## Unity game project
 
-`Unity` is a Unity 6.3 LTS project with a repeatable Apple Silicon Mac build command, first-person controller, menus, city map and discovery tracking, automatic TikTok playlists with offline fallback, and two-thumb mobile controls. `SlopCitySceneBuilder.cs` integrates the authored lounge and home exit with `SlopCityCityBuilder.cs`. Open `Unity/README.md` for controls and rebuild instructions, and `Unity/PLATFORM_ROADMAP.md` for Mac → iOS/Android → Windows/Linux → console sequencing.
+`Unity` is a Unity 6.3 LTS project with a repeatable Apple Silicon Mac build command, first-person controller, menus, city map and discovery tracking, a sealed bundled Old City programme, and two-thumb mobile controls. `SlopCitySceneBuilder.cs` integrates the authored lounge and home exit with `SlopCityCityBuilder.cs`. Open `Unity/README.md` for controls and rebuild instructions, and `Unity/PLATFORM_ROADMAP.md` for Mac → iOS/Android → Windows/Linux → console sequencing.
 
 The curved black visor lines have been removed from the default first-person render. The headset equipment remains editable/exportable, while its local-player renderers are disabled in Unity. Full tracked VR and the networked MMO are not implemented.
 

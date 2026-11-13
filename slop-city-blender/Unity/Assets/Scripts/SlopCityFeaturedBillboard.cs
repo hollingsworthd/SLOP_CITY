@@ -26,7 +26,18 @@ namespace SlopCity
         {
             if (!city || city.name != "SlopCity_NineBlocks") return null;
             Transform existing = city.Find(RootName);
-            if (existing) return existing.GetComponent<SlopCityFeaturedBillboard>();
+            if (existing)
+            {
+                SlopCityFeaturedBillboard installed = existing.GetComponent<SlopCityFeaturedBillboard>();
+                SlopCityCityScreen existingScreen = existing.GetComponentInChildren<SlopCityCityScreen>(true);
+                if (existingScreen)
+                {
+                    existingScreen.SetMediaScope(SlopCityScreenMediaScope.AuthoredWorld);
+                    existingScreen.ConfigureScreenGroup("billboard");
+                    existingScreen.ConfigureFeaturedPost(Creator, PostId, HoldAtSeconds, HoldSeconds);
+                }
+                return installed;
+            }
             Transform marker = city.Find("CityPath_HomeSidewalk");
             if (!marker) return null;
             Shader shader = Shader.Find("Standard") ?? Shader.Find("Unlit/Color");
@@ -55,6 +66,7 @@ namespace SlopCity
             Renderer display = picture.GetComponent<Renderer>(); display.sharedMaterial = billboard.frameMaterial;
             display.shadowCastingMode = ShadowCastingMode.Off; display.receiveShadows = false;
             billboard.Screen = picture.AddComponent<SlopCityCityScreen>();
+            billboard.Screen.SetMediaScope(SlopCityScreenMediaScope.AuthoredWorld);
             billboard.Screen.Configure(display, 0, 14f);
             billboard.Screen.ConfigureFeaturedPost(Creator, PostId, HoldAtSeconds, HoldSeconds);
             var interaction = picture.AddComponent<SlopCityInteractable>();

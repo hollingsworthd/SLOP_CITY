@@ -82,7 +82,7 @@ namespace SlopCity
         private float nextRefresh;
         private bool progressSavePending;
         private float progressSaveDue;
-        private string feedMessage = "Bundled clips. Open creator feeds for current TikTok posts.";
+        private string feedMessage = "Authored city broadcasts are sealed to this build.";
         private int assignedClipCount;
         private readonly Dictionary<string, int> assignedClipRefs = new Dictionary<string, int>(StringComparer.Ordinal);
         private static readonly AnimationCurve SpatialAudioRolloff = AnimationCurve.Linear(0f, 1f, 1f, 1f);
@@ -109,7 +109,7 @@ namespace SlopCity
                 if (displayUnavailable) return feedMessage;
                 if (!initialized) return "City screens starting...";
                 if (manuallyPaused) return "City screens paused.";
-                if (refreshing) return "Checking configured media feed...";
+                if (refreshing) return "Preparing authored city broadcasts...";
                 int streaming = 0, failed = 0;
                 foreach (Channel channel in channels)
                 {
@@ -193,40 +193,19 @@ namespace SlopCity
             DiscoverScreens();
             initialized = true;
             if (pendingCatalog != null) { ApplyTikTokCatalog(pendingCatalog); pendingCatalog = null; }
-            nextRefresh = Time.unscaledTime + refreshSeconds;
-            if (!string.IsNullOrEmpty(feedUrl)) RefreshFeed();
         }
 
         private void ReadConfiguration()
         {
-            Feed settings = null;
-#if UNITY_WEBGL && !UNITY_EDITOR
-            // StreamingAssets is an HTTP URL in WebGL. Browser builds deliberately
-            // use the bundled archive rather than the native TikTok cache/feed.
-            feedMessage = "Bundled clips. Open creator feeds for current TikTok posts.";
-#else
-            try
-            {
-                string path = Path.Combine(Application.streamingAssetsPath, "Media", "city-feed.json");
-                if (File.Exists(path) && new FileInfo(path).Length <= 131072)
-                    settings = JsonUtility.FromJson<Feed>(File.ReadAllText(path));
-            }
-            catch (Exception exception) { Debug.LogWarning("City media configuration: " + exception.Message, this); }
-            if (settings != null)
-            {
-                if (IsHttps(settings.feedUrl)) feedUrl = settings.feedUrl;
-                refreshSeconds = Mathf.Clamp(settings.refreshSeconds, 60f, 3600f);
-            }
-#endif
+            // The authored world deliberately ignores city-feed.json, cached
+            // metadata and direct URLs. Its programme comes only from the
+            // validated packaged catalogue and the local fallback signals.
+            feedUrl = "";
+            feedMessage = "Authored city broadcasts are sealed to this build.";
             for (int i = 0; i < ChannelCount; i++)
             {
                 Media fallback = BundledMedia(i);
-                Media configured = FindMedia(settings, fallback.id);
                 channels[i] = new Channel { index = i, fallback = fallback, media = fallback, advance = true };
-                if (configured != null && IsDirectMedia(configured.mediaUrl))
-                {
-                    channels[i].legacy = configured;
-                }
             }
         }
 
@@ -648,7 +627,10 @@ namespace SlopCity
         public bool CanTuneScreen(Transform target)
         {
             SlopCityCityScreen screen = FindTuningScreen(target);
-            return screen && !screen.IsFeatured;
+            // The authored Old City is a sealed programme, including each
+            // fixture's assigned channel. City Forge opts in explicitly when
+            // it creates a player-owned Sprawl display.
+            return screen && screen.UsesPlayerSprawlProgram && !screen.IsFeatured;
         }
 
         public string TuneScreen(Transform target)
@@ -661,6 +643,7 @@ namespace SlopCity
         {
             SlopCityCityScreen nearest = FindTuningScreen(target);
             if (!nearest) { message = "No city display is in reach."; return false; }
+            if (nearest.UsesAuthoredProgram) { message = "This authored city broadcast is sealed."; return false; }
             if (nearest.IsFeatured) { message = "Dedicated creator broadcast / this display keeps its featured post."; return false; }
             ScreenState display = displayLookup[nearest];
             if (nearest.AudioOnly)
@@ -699,6 +682,7 @@ namespace SlopCity
             SlopCityCityScreen screen = FindTuningScreen(target);
             if (!screen || screen.IsFeatured || screen.AudioOnly || requestedChannel < 0 || requestedChannel >= ChannelCount)
             { message = "Choose an ordinary city display and a valid channel."; return false; }
+            if (screen.UsesAuthoredProgram) { message = "This authored city broadcast is sealed."; return false; }
             if (screen.Channel == requestedChannel) { message = "The requested channel is already selected."; return true; }
             ScreenState display = displayLookup[screen];
             screen.Tune(requestedChannel, display.material);
@@ -778,7 +762,7 @@ namespace SlopCity
                         FailChannel(signal, "Clip download timed out.");
                 }
                 ApplyPlayback();
-                if (!refreshing && !string.IsNullOrEmpty(feedUrl) && Time.unscaledTime >= nextRefresh) RefreshFeed();
+                // The authored programme never polls a direct-media feed.
             }
             foreach (Channel signal in channels)
             {
@@ -1215,6 +1199,12 @@ namespace SlopCity
         public void ApplyTikTokCatalog(SlopCityTikTokCatalog catalog)
         {
             if (catalog == null || catalog.version != 2 || catalog.videos == null) return;
+            SlopCityTikTokSync sync = SlopCityTikTokSync.Instance;
+            if (!sync || !sync.IsSealedBundledCatalog(catalog))
+            {
+                Debug.LogWarning("Ignored an unsealed city media catalogue.", this);
+                return;
+            }
             if (!initialized) { pendingCatalog = catalog; return; }
             var unique = new Dictionary<string, SlopCityTikTokVideo>(StringComparer.Ordinal);
             foreach (SlopCityTikTokVideo video in catalog.videos)
@@ -1263,14 +1253,6 @@ namespace SlopCity
                 if (!signal.ready && !signal.loading && !signal.resolving) signal.advance = true;
             }
             PruneRetries(catalog, unique);
-            if (catalog.TryGetFeaturedVideo(out SlopCityTikTokVideo featured))
-            {
-                foreach (ScreenState display in displays)
-                    if (display.screen && display.screen.IsFeatured
-                        && display.screen.GetComponentInParent<SlopCityFeaturedBillboard>(true))
-                        display.screen.ConfigureFeaturedPost(featured.creator, featured.id,
-                            SlopCityFeaturedBillboard.HoldAtSeconds, SlopCityFeaturedBillboard.HoldSeconds);
-            }
             // Preserve an active clip through metadata refresh. Its next boundary
             // rebuilds the bounded program from the newly reconciled catalogue.
             foreach (ScreenState display in displays) display.program = null;
@@ -1576,7 +1558,7 @@ namespace SlopCity
                 }
                 signal.lastSelectedKey = key;
                 signal.pendingMedia = new Media { id = video.id, title = PostTitle(video), creator = video.creator, sourceUrl = video.sourceUrl };
-                signal.pendingRemote = string.IsNullOrEmpty(video.bundledVideoFile) && string.IsNullOrEmpty(video.bundledThumbnailFile);
+                signal.pendingRemote = false;
                 if (video.kind == "slideshow") { StartSlideshow(signal); return; }
                 if (SlopCityTikTokSync.Instance)
                 {
@@ -1593,17 +1575,13 @@ namespace SlopCity
                 }
                 else
                 {
-                    string local = CachedUrl(video, video.localFile);
-                    if (!string.IsNullOrEmpty(local)) PrepareChannel(signal, local);
-                    else if (SlopCityTikTokParser.IsMediaUrl(video.mediaUrl)) PrepareChannel(signal, video.mediaUrl);
-                    else FailChannel(signal, "Clip resolver is unavailable.");
+                    FailChannel(signal, "Bundled clip resolver is unavailable.");
                 }
                 return;
             }
             Media fallback = signal.owner.fallback;
-            Media legacy = channels[Mathf.Clamp(signal.owner.screen.Channel, 0, ChannelCount - 1)].legacy;
-            signal.pendingRemote = legacy != null;
-            signal.pendingMedia = legacy ?? fallback;
+            signal.pendingRemote = false;
+            signal.pendingMedia = fallback;
             string source = signal.pendingMedia.mediaUrl;
             if (!signal.pendingRemote)
             {
@@ -2160,13 +2138,9 @@ namespace SlopCity
 
         public void RefreshFeed()
         {
-            if (!initialized || refreshing || !isActiveAndEnabled) return;
-            if (string.IsNullOrEmpty(feedUrl))
-            {
-                feedMessage = "Bundled clips. Current TikTok posts are in the browser creator feeds.";
-                return;
-            }
-            mediaCoroutines.Start(this, FetchFeed());
+            // Retained as a harmless compatibility entry point for older menus.
+            // An authored city never fetches or accepts a replacement feed.
+            feedMessage = "Authored city broadcasts are sealed to this build.";
         }
 
         private IEnumerator FetchFeed()
@@ -2297,50 +2271,15 @@ namespace SlopCity
 
         private static string VideoKey(SlopCityTikTokVideo video) => video.creator + "/" + video.id;
 
-        private static string CachedUrl(SlopCityTikTokVideo video, string localFile)
-        {
-#if UNITY_WEBGL && !UNITY_EDITOR
-            return null;
-#else
-            if (string.IsNullOrEmpty(Application.persistentDataPath) || !SlopCityTikTokParser.IsSafeLocalFile(localFile, video.id)) return null;
-            string path = Path.GetFullPath(Path.Combine(Application.persistentDataPath, "TikTok", "media", localFile));
-            if (!File.Exists(path)) return null;
-            // The sync cache prunes by last access; directly reused clips must count as active reads too.
-            try { File.SetLastAccessTimeUtc(path, DateTime.UtcNow); }
-            catch (IOException) { }
-            catch (UnauthorizedAccessException) { }
-            return new Uri(path).AbsoluteUri;
-#endif
-        }
-
         private static bool SafeResolvedUrl(SlopCityTikTokVideo video, string value)
-        {
-            if (SlopCityTikTokSync.IsBundledMediaUri(video.bundledVideoFile, value)) return true;
-            if (SlopCityTikTokParser.IsMediaUrl(value)) return true;
-            if (!Uri.TryCreate(value, UriKind.Absolute, out Uri uri) || !uri.IsFile || !string.IsNullOrEmpty(uri.Host)) return false;
-            string expected = CachedUrl(video, video.id + ".mp4");
-            return !string.IsNullOrEmpty(expected) && string.Equals(expected, uri.AbsoluteUri, StringComparison.Ordinal);
-        }
+            => SlopCityTikTokSync.IsBundledMediaUri(video.bundledVideoFile, value);
 
         private static bool SafePhotoUrl(SlopCityTikTokVideo video, int index, string value)
             => (video.bundledImageFiles != null && index >= 0 && index < video.bundledImageFiles.Length
-                && SlopCityTikTokSync.IsBundledMediaUri(video.bundledImageFiles[index], value))
-                || SafeCachedUri(video.id + "_" + index + ".jpg", value);
+                && SlopCityTikTokSync.IsBundledMediaUri(video.bundledImageFiles[index], value));
 
         private static bool SafeAudioUrl(SlopCityTikTokVideo video, string value)
-            => SlopCityTikTokSync.IsBundledMediaUri(video.bundledAudioFile, value) || SafeCachedUri(video.id + ".wav", value);
-
-        private static bool SafeCachedUri(string basename, string value)
-        {
-#if UNITY_WEBGL && !UNITY_EDITOR
-            return false;
-#else
-            if (!Uri.TryCreate(value, UriKind.Absolute, out Uri uri) || !uri.IsFile || !string.IsNullOrEmpty(uri.Host)) return false;
-            if (string.IsNullOrEmpty(Application.persistentDataPath)) return false;
-            string path = Path.GetFullPath(Path.Combine(Application.persistentDataPath, "TikTok", "media", basename));
-            return File.Exists(path) && string.Equals(new Uri(path).AbsoluteUri, uri.AbsoluteUri, StringComparison.Ordinal);
-#endif
-        }
+            => SlopCityTikTokSync.IsBundledMediaUri(video.bundledAudioFile, value);
 
         private void ReadProgress()
         {

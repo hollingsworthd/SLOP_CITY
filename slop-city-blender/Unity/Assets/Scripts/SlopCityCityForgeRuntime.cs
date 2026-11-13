@@ -881,6 +881,7 @@ namespace SlopCity
                 // before first OnEnable so future screen types can never default
                 // into the media registry during a streamed construction frame.
                 SlopCityCityScreen screen = surface.AddComponent<SlopCityCityScreen>();
+                screen.SetMediaScope(SlopCityScreenMediaScope.PlayerSprawl);
                 screen.ConfigureScreenGroup(resolved.screenGroup);
                 screen.Configure(surface.GetComponent<Renderer>(), StableChannel(resolved.screenId), resolved.screenGroup == "interior" ? 10f : 16f);
                 screen.SetMediaAdmission(false);

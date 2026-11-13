@@ -31,6 +31,9 @@ namespace SlopCity
             "MS4wLjABAAAAGvvrkD-_D5H7MxpzKhFGnof7MvexPitzLGaPzlgzmOlE3wRKRTf68V_ayYD4bcmG"
         };
         private SlopCityTikTokCatalog catalog = new SlopCityTikTokCatalog();
+        // The authored city accepts exactly this packaged catalogue instance.
+        // Cached or live metadata must never become a replacement programme.
+        private SlopCityTikTokCatalog sealedBundledCatalog;
         private readonly Dictionary<string, SlopCityTikTokVideo> bundledPosts = new Dictionary<string, SlopCityTikTokVideo>(StringComparer.Ordinal);
         private sealed class Consumer { internal Action<string> callback; internal Func<bool> needed; }
         private sealed class DownloadWork
@@ -65,6 +68,8 @@ namespace SlopCity
 #endif
         public static SlopCityTikTokSync Instance { get; private set; }
         public SlopCityTikTokCatalog Catalog => catalog;
+        public bool IsSealedBundledCatalog(SlopCityTikTokCatalog candidate)
+            => candidate != null && ReferenceEquals(candidate, sealedBundledCatalog);
         public bool IsRefreshing => syncing;
         public string Status => status + (cacheUnavailable ? " Media cache unavailable; bundled posts remain playable." : "");
         public string CacheDirectory => string.IsNullOrEmpty(Application.persistentDataPath) ? ""
@@ -90,36 +95,14 @@ namespace SlopCity
             // UnityWebRequest handles those and normal desktop file URLs alike.
             yield return LoadBundledCatalog();
             yield return LoadBundledVideoDimensions();
-#if !UNITY_WEBGL || UNITY_EDITOR
-            LoadCatalog();
-            started = true;
-            if (Time.unscaledTime >= nextRefresh) requested = true;
-#endif
             initializationComplete = true;
         }
 
         public void RequestRefresh()
         {
-#if !UNITY_WEBGL || UNITY_EDITOR
-            if (!initializationComplete || destroying) return;
-            requested = true;
-#else
-            status = bundledPosts.Count > 0 ? bundledPosts.Count + " bundled offline creator posts."
+            status = bundledPosts.Count > 0 ? "Authored city broadcasts are sealed to this build."
                 : "Bundled catalogue unavailable; archive clips remain available.";
-#endif
         }
-
-#if !UNITY_WEBGL || UNITY_EDITOR
-        private void Update()
-        {
-            if (!initializationComplete || destroying || syncing || !started) return;
-            if (requested || Time.unscaledTime >= nextRefresh)
-            {
-                requested = false;
-                mediaCoroutines.Start(this, SyncAccounts());
-            }
-        }
-#endif
 
         private IEnumerator LoadBundledCatalog()
         {
@@ -155,7 +138,8 @@ namespace SlopCity
                             throw new InvalidDataException("Bundled account is incomplete: " + creator);
                     }
                     foreach (SlopCityTikTokVideo post in bundled.videos) bundledPosts.Add(post.creator + "/" + post.id, post);
-                    catalog = bundled;
+                    sealedBundledCatalog = bundled;
+                    catalog = sealedBundledCatalog;
                     status = bundled.videos.Length + " bundled creator posts / "
                         + bundled.videos.Count(post => post.kind == "slideshow") + " slideshows.";
                     Publish();
@@ -555,13 +539,9 @@ namespace SlopCity
             if (destroying) { Complete(completed, null); return; }
             string bundled = BundledUri(post, kind, imageIndex);
             if (!string.IsNullOrEmpty(bundled)) { Complete(completed, bundled); return; }
-#if !UNITY_WEBGL || UNITY_EDITOR
-            ResolveCached(post, kind, filename, imageIndex, completed, CacheDirectory, stillNeeded);
-#else
             // A sealed bundle is the only canonical runtime media source.
             // Missing content stays unavailable; no live lookup or download.
             Complete(completed, null);
-#endif
         }
 
         private bool PrepareCacheDirectory(string directory)

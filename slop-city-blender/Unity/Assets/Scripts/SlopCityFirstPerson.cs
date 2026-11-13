@@ -427,8 +427,8 @@ namespace SlopCity
             controller.enabled = true;
             verticalSpeed = -2f; seated = false; stoodUp = true;
             ShowFeedback(playerInput.UseTouchControls
-                ? "Tap USE at the home door. Use a woman in red for a brief signal. Use the living-room TV to choose media, or the record player for In-Q-Tel."
-                : "E opens the home door. Use a woman in red for a brief signal. Use the living-room TV to choose media, or the record player for In-Q-Tel.");
+                ? "Tap USE at the home door. Use a woman in red for a brief signal. The living-room TV carries the sealed programme; the record player plays In-Q-Tel."
+                : "E opens the home door. Use a woman in red for a brief signal. The living-room TV carries the sealed programme; the record player plays In-Q-Tel.");
         }
 
         public void SetExternalMovement(bool value)
@@ -618,7 +618,7 @@ namespace SlopCity
                     break;
                 case NearbyAction.Records:
                     PlayMedia(SlopCityMediaChannel.Record);
-                    ShowFeedback("RECORD PLAYER / IN-Q-TEL. Use the living-room TV to choose media.");
+                    ShowFeedback("RECORD PLAYER / IN-Q-TEL. The living-room TV carries the sealed programme.");
                     break;
             }
         }
@@ -739,7 +739,7 @@ namespace SlopCity
             {
                 switch (NearbyActionForHud())
                 {
-                    case NearbyAction.Television: prompt = key + " CHOOSE LIVING-ROOM MEDIA"; break;
+                    case NearbyAction.Television: prompt = key + " OPEN SEALED LOUNGE PROGRAMME"; break;
                     case NearbyAction.Records: prompt = key + " PLAY IN-Q-TEL RAP"; break;
                     case NearbyAction.Door: prompt = nearbyDoor.IsMoving ? nearbyDoor.DisplayName + " / MOVING"
                         : key + (nearbyDoor.IsOpen ? " CLOSE " : " OPEN ") + nearbyDoor.DisplayName; break;
