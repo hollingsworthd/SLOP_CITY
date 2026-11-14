@@ -20,6 +20,11 @@ namespace SlopCity
         [SerializeField, Range(40f, 280f)] private float topDownHeight = 130f;
         [SerializeField] private bool editingEnabled = true;
         private const int CityForgeCanvasSortingOrder = 300;
+        // The build canvas scales from its width. Retain these values beside
+        // the pointer fallback so a high-density desktop display can resolve
+        // the same visible toolbar controls as Unity's regular raycaster.
+        private const float BuildUiReferenceWidth = 1280f;
+        private const float BuildUiToolbarHeight = 164f;
         private Canvas canvas;
         private Canvas launcherCanvas;
         private Text heading, message, contextHint;
@@ -116,6 +121,12 @@ namespace SlopCity
         private Vector2 mapMousePrevious;
         private bool hasHoveredCell;
         private CityForgeCoord hoveredCell;
+        private static readonly string[] BuildingBlueprintOptions =
+        {
+            "walk-up", "courtyard-home", "tower-residence", "live-work-block", "workshop", "repair-bay", "clinic", "laundry", "depot", "small-office",
+            "corner-shop", "market-hall", "cafe", "exchange", "kiosk", "care-station", "library-room", "utility-office", "community-hall", "screening-room",
+            "studio", "venue", "archive", "performance-space", "garden", "plaza", "water-node", "power-relay", "shelter", "service-yard"
+        };
 
         public bool IsOpen { get { return opened; } }
         public bool EditingEnabled { get { return editingEnabled; } }
@@ -212,6 +223,11 @@ namespace SlopCity
                 return;
             }
             if (!canvas || !canvas.gameObject.activeInHierarchy) return;
+
+            // IMGUI reports its own pointer space. Keep both origins available
+            // to the build-toolbar resolver instead of assuming its values
+            // match the legacy input coordinates used by Update().
+            screenPosition = current.mousePosition;
 
             if (type == EventType.MouseDown)
             {
@@ -789,6 +805,13 @@ namespace SlopCity
             CityForgeParcel parcel = ParcelAt(x, z);
             if (parcel == null) { SetMessage("Add a lot first."); return; }
             if ((draft.buildings ?? new List<CityForgeBuilding>()).Any(item => item != null && item.parcelId == parcel.id)) { SetMessage("That lot already has a building."); return; }
+            if (!SlopCityCityForgeCatalog.Default.IsBuildingAllowedInZone(buildingBlueprint, parcel.zone))
+            {
+                buildingBlueprint = BuildingBlueprintsForZone(parcel.zone).FirstOrDefault() ?? buildingBlueprint;
+                RefreshUi();
+                SetMessage("That kit does not fit this " + parcel.zone + " lot. Pick one of this zone's kits.");
+                return;
+            }
             TryPlaceBuilding(parcel.id, buildingBlueprint, facade, roof, buildingFloors, entrance, storefront == "none" ? null : storefront, interior);
         }
 
@@ -807,8 +830,12 @@ namespace SlopCity
             if (parcel == null) { SetMessage("Add a lot first."); return; }
             CityForgeChunkPlan next = draft.Clone();
             LandmarkChoice choice = SelectedLandmarkChoice(parcel.zone);
+            if (string.IsNullOrEmpty(choice.classId) || string.IsNullOrEmpty(choice.outcomeId)) { SetMessage("No Cityworks outcome fits this lot."); return; }
+            landmarkClass = choice.classId;
+            landmarkOutcome = choice.outcomeId;
+            RefreshUi();
             next.landmarks.Add(new CityForgeLandmark { id = NextId("landmark"), classId = choice.classId, outcomeId = choice.outcomeId, parcelId = parcel.id, state = "unavailable", stableSeed = Seed("landmark") });
-            Apply(next, "Cityworks site added.");
+            Apply(next, "Cityworks site added: " + choice.outcomeId + ".");
         }
 
         private void AddLife(int x, int z)
@@ -883,8 +910,14 @@ namespace SlopCity
         }
         private void CycleBuildingKit()
         {
-            string[] options = { "walk-up", "courtyard-home", "tower-residence", "live-work-block", "workshop", "repair-bay", "clinic", "laundry", "depot", "small-office", "corner-shop", "market-hall", "cafe", "exchange", "kiosk", "care-station", "library-room", "utility-office", "community-hall", "screening-room", "studio", "venue", "archive", "performance-space", "garden", "plaza", "water-node", "power-relay", "shelter", "service-yard" };
-            int index = Array.IndexOf(options, buildingBlueprint); buildingBlueprint = options[(index + 1 + options.Length) % options.Length]; RefreshUi();
+            List<string> options = BuildingBlueprintsForZone(lotZone);
+            if (options.Count == 0) return;
+            int index = options.IndexOf(buildingBlueprint); buildingBlueprint = options[(index + 1 + options.Count) % options.Count]; RefreshUi();
+        }
+
+        private static List<string> BuildingBlueprintsForZone(CityForgeZone zone)
+        {
+            return BuildingBlueprintOptions.Where(value => SlopCityCityForgeCatalog.Default.IsBuildingAllowedInZone(value, zone)).ToList();
         }
         private void CycleFacade() { string[] values = { "wet-masonry", "poured-concrete", "glazed-ceramic", "oxidized-metal", "painted-render", "brick-utility", "night-glass", "garden-lattice" }; facade = values[(Array.IndexOf(values, facade) + 1 + values.Length) % values.Length]; RefreshUi(); }
         private void CycleRoof() { string[] values = { "service-roof", "rain-garden", "solar-rack", "water-tank", "relay-array", "lantern-roof", "terrace", "greenhouse", "vent-stack", "civic-canopy", "screen-crown", "utility-bridge" }; roof = values[(Array.IndexOf(values, roof) + 1 + values.Length) % values.Length]; RefreshUi(); }
@@ -1000,6 +1033,7 @@ namespace SlopCity
         }
         private void PlaceScreenOnLastBuilding()
         {
+            if (string.IsNullOrEmpty(screenHostId)) { SetMessage("Choose a screen target before placing a screen."); return; }
             if (!TryResolveScreenHost(out string host)) { SetMessage("Choose a compatible building, public site, or street screen host."); return; }
             int capacity = ScreenHostCapacity(host);
             int occupied = (draft.screens ?? new List<CityForgeScreen>()).Count(item => item != null && item.hostId == host);
@@ -1126,16 +1160,16 @@ namespace SlopCity
             Button demolish = Button(toolbar.transform, "Demolish", new Vector2(1034, -96), new Vector2(120, 32)); demolish.onClick.AddListener(DemolishLast); RegisterViewControl(View.Buildings, demolish);
 
             serviceButton = Button(toolbar.transform, "Service", new Vector2(12, -96), new Vector2(180, 32)); serviceButton.onClick.AddListener(CycleService); RegisterViewControl(View.Services, serviceButton);
-            landmarkButton = Button(toolbar.transform, "Cityworks", new Vector2(198, -96), new Vector2(160, 32)); landmarkButton.onClick.AddListener(CycleLandmarkOutcome); RegisterViewControl(View.Services, landmarkButton);
             mountButton = Button(toolbar.transform, "Mount", new Vector2(364, -96), new Vector2(170, 32)); mountButton.onClick.AddListener(CycleScreenMount); RegisterViewControl(View.Services, mountButton);
             hostButton = Button(toolbar.transform, "Host", new Vector2(540, -96), new Vector2(120, 32)); hostButton.onClick.AddListener(CycleScreenHost); RegisterViewControl(View.Services, hostButton);
             targetButton = Button(toolbar.transform, "Screen target", new Vector2(666, -96), new Vector2(220, 32)); targetButton.onClick.AddListener(CycleScreenTarget); RegisterViewControl(View.Services, targetButton);
             deviceButton = Button(toolbar.transform, "Device", new Vector2(892, -96), new Vector2(170, 32)); deviceButton.onClick.AddListener(CycleScreenDevice); RegisterViewControl(View.Services, deviceButton);
             Button screen = Button(toolbar.transform, "Place screen", new Vector2(1068, -96), new Vector2(150, 32)); screen.onClick.AddListener(PlaceScreenOnLastBuilding); RegisterViewControl(View.Services, screen);
 
-            situationButton = Button(toolbar.transform, "Situation", new Vector2(12, -96), new Vector2(250, 32)); situationButton.onClick.AddListener(CycleSituationTemplate); RegisterViewControl(View.Life, situationButton);
-            situationStateButton = Button(toolbar.transform, "Situation state", new Vector2(268, -96), new Vector2(150, 32)); situationStateButton.onClick.AddListener(CycleSituationState); RegisterViewControl(View.Life, situationStateButton);
-            Button renovate = Button(toolbar.transform, "Renovate", new Vector2(424, -96), new Vector2(140, 32)); renovate.onClick.AddListener(RenovateLast); RegisterViewControl(View.Life, renovate);
+            landmarkButton = Button(toolbar.transform, "Cityworks outcome", new Vector2(12, -96), new Vector2(250, 32)); landmarkButton.onClick.AddListener(CycleLandmarkOutcome); RegisterViewControl(View.Life, landmarkButton);
+            situationButton = Button(toolbar.transform, "Situation", new Vector2(268, -96), new Vector2(250, 32)); situationButton.onClick.AddListener(CycleSituationTemplate); RegisterViewControl(View.Life, situationButton);
+            situationStateButton = Button(toolbar.transform, "Situation state", new Vector2(524, -96), new Vector2(150, 32)); situationStateButton.onClick.AddListener(CycleSituationState); RegisterViewControl(View.Life, situationStateButton);
+            Button renovate = Button(toolbar.transform, "Renovate", new Vector2(680, -96), new Vector2(140, 32)); renovate.onClick.AddListener(RenovateLast); RegisterViewControl(View.Life, renovate);
             buildUiButtons.AddRange(toolbar.GetComponentsInChildren<Button>(true));
         }
 
@@ -1161,8 +1195,8 @@ namespace SlopCity
                 case View.Ground: return "Click a cell to lay or clear island ground in the open sky · every change auto-saves";
                 case View.Lots: return "Click a cell to make a lot · Shift-click builds a footprint · changes auto-save";
                 case View.Buildings: return "Choose a kit and design options, then click an empty lot · changes auto-save";
-                case View.Services: return "Click a lot to add service · choose a valid host before placing a screen · changes auto-save";
-                default: return "Click a Cityworks lot to add or advance its authored situation · changes auto-save";
+                case View.Services: return "Click a lot to add service · choose a screen target before placing a screen · changes auto-save";
+                default: return "Choose a Cityworks outcome, then click a lot to make its site · click it again to add or advance its situation · changes auto-save";
             }
         }
 
@@ -1346,7 +1380,27 @@ namespace SlopCity
         private bool LauncherContains(Vector2 screenPosition)
         {
             RectTransform rect = launcherButton && launcherButton.isActiveAndEnabled ? launcherButton.GetComponent<RectTransform>() : null;
-            return rect && RectTransformUtility.RectangleContainsScreenPoint(rect, screenPosition, null);
+            if (!rect) return false;
+            if (RectTransformUtility.RectangleContainsScreenPoint(rect, screenPosition, null)) return true;
+            foreach (Vector2 sourceSize in BuildUiPointerSourceSizes())
+            {
+                float width = sourceSize.x;
+                float height = sourceSize.y;
+                if (width <= 0f || height <= 0f) continue;
+                float referenceX = screenPosition.x / width * BuildUiReferenceWidth;
+                foreach (float referenceBottom in new[]
+                {
+                    screenPosition.y / width * BuildUiReferenceWidth,
+                    (height - screenPosition.y) / width * BuildUiReferenceWidth
+                })
+                {
+                    // The launcher is anchored/pivoted at bottom-left in
+                    // CreateLauncher; use its actual configured bounds.
+                    if (referenceX >= rect.anchoredPosition.x && referenceX <= rect.anchoredPosition.x + rect.rect.width
+                        && referenceBottom >= rect.anchoredPosition.y && referenceBottom <= rect.anchoredPosition.y + rect.rect.height) return true;
+                }
+            }
+            return false;
         }
 
         private void ResetLauncherPointerActivation()
@@ -1441,7 +1495,10 @@ namespace SlopCity
 
         private bool BuildUiSurfaceContains(Vector2 screenPosition)
         {
-            return buildUiSurface && buildUiSurface.gameObject.activeInHierarchy && RectTransformUtility.RectangleContainsScreenPoint(buildUiSurface, screenPosition, null);
+            if (!buildUiSurface || !buildUiSurface.gameObject.activeInHierarchy) return false;
+            if (RectTransformUtility.RectangleContainsScreenPoint(buildUiSurface, screenPosition, null)) return true;
+            TryManualBuildUiHit(screenPosition, out bool withinToolbar, out Button unused);
+            return withinToolbar;
         }
 
         private Button BuildUiActivatableButtonAt(Vector2 screenPosition)
@@ -1451,6 +1508,75 @@ namespace SlopCity
                 Button button = buildUiButtons[index];
                 RectTransform rect = button ? button.GetComponent<RectTransform>() : null;
                 if (button && button.IsActive() && button.IsInteractable() && rect && RectTransformUtility.RectangleContainsScreenPoint(rect, screenPosition, null)) return button;
+            }
+            TryManualBuildUiHit(screenPosition, out bool unused, out Button fallback);
+            return fallback;
+        }
+
+        /// <summary>
+        /// Unity's normal ScreenSpaceOverlay hit test is authoritative. This
+        /// only supplies the equivalent answer when a macOS high-density
+        /// backing surface reports legacy/IMGUI pointer values in a different
+        /// pixel space. It deliberately checks the toolbar's bounded visual
+        /// geometry, never the full-screen canvas, so map clicks remain map
+        /// clicks.
+        /// </summary>
+        private void TryManualBuildUiHit(Vector2 rawPointer, out bool withinToolbar, out Button hit)
+        {
+            withinToolbar = false;
+            hit = null;
+            foreach (Vector2 sourceSize in BuildUiPointerSourceSizes())
+            {
+                float width = sourceSize.x;
+                float height = sourceSize.y;
+                if (width <= 0f || height <= 0f) continue;
+                float referenceX = rawPointer.x / width * BuildUiReferenceWidth;
+
+                // Native Input and IMGUI disagree about vertical origin on
+                // some macOS configurations. Either form is unambiguous once
+                // constrained to this short top toolbar.
+                foreach (float referenceTop in new[]
+                {
+                    rawPointer.y / width * BuildUiReferenceWidth,
+                    (height - rawPointer.y) / width * BuildUiReferenceWidth
+                })
+                {
+                    if (referenceX < 0f || referenceX > BuildUiReferenceWidth || referenceTop < 0f || referenceTop > BuildUiToolbarHeight) continue;
+                    withinToolbar = true;
+                    Button candidate = ManualBuildUiButtonAt(referenceX, referenceTop);
+                    if (candidate != null)
+                    {
+                        hit = candidate;
+                        return;
+                    }
+                }
+            }
+        }
+
+        private IEnumerable<Vector2> BuildUiPointerSourceSizes()
+        {
+            yield return new Vector2(Screen.width, Screen.height);
+            if (Display.main == null) yield break;
+            if (Display.main.renderingWidth > 0 && Display.main.renderingHeight > 0)
+                yield return new Vector2(Display.main.renderingWidth, Display.main.renderingHeight);
+            if (Display.main.systemWidth > 0 && Display.main.systemHeight > 0)
+                yield return new Vector2(Display.main.systemWidth, Display.main.systemHeight);
+        }
+
+        private Button ManualBuildUiButtonAt(float referenceX, float referenceTop)
+        {
+            for (int index = buildUiButtons.Count - 1; index >= 0; index--)
+            {
+                Button button = buildUiButtons[index];
+                RectTransform rect = button ? button.GetComponent<RectTransform>() : null;
+                if (!button || !button.IsActive() || !button.IsInteractable() || !rect) continue;
+                // Every Build City control is anchored and pivoted at the
+                // toolbar's top-left corner in CreateUi().
+                float left = rect.anchoredPosition.x;
+                float top = -rect.anchoredPosition.y;
+                float right = left + rect.rect.width;
+                float bottom = top + rect.rect.height;
+                if (referenceX >= left && referenceX <= right && referenceTop >= top && referenceTop <= bottom) return button;
             }
             return null;
         }
@@ -1577,8 +1703,17 @@ namespace SlopCity
             SetButtonLabel(roadButton, "Road: " + RoadClassLabel(roadClass)); SetButtonLabel(removeRoadButton, removeRoad ? "Erase roads" : "Place roads"); SetButtonLabel(roadDirectionButton, "Road side: " + DirectionLabel(roadDirection)); SetButtonLabel(zoneButton, "Zone: " + lotZone);
             SetButtonLabel(kitButton, "Kit: " + buildingBlueprint); SetButtonLabel(facadeButton, "Facade: " + facade); SetButtonLabel(roofButton, "Roof: " + roof); SetButtonLabel(storefrontButton, "Store: " + storefront); SetButtonLabel(entranceButton, "Entry: " + entrance); SetButtonLabel(floorsButton, "Floor + (" + buildingFloors + ")"); SetButtonLabel(interiorButton, "Interior: " + (string.IsNullOrEmpty(interior) ? "none" : interior));
             string host = screenHostMode == 0 ? "building" : screenHostMode == 1 ? "site" : "road";
-            string target = string.IsNullOrEmpty(screenHostId) ? "choose target" : screenHostId;
+            string target = ScreenTargetLabel(screenHostId);
             SetButtonLabel(serviceButton, "Service: " + serviceType); SetButtonLabel(landmarkButton, "Cityworks: " + (string.IsNullOrEmpty(landmarkOutcome) ? "choose" : landmarkOutcome)); SetButtonLabel(mountButton, "Mount: " + screenMount); SetButtonLabel(hostButton, "Host: " + host); SetButtonLabel(targetButton, "Screen target: " + target); SetButtonLabel(deviceButton, "Device: " + screenDevice); SetButtonLabel(situationButton, "Situation: " + (string.IsNullOrEmpty(situationTemplate) ? "choose" : situationTemplate)); SetButtonLabel(situationStateButton, "State: " + situationState);
+        }
+
+        private static string ScreenTargetLabel(string host)
+        {
+            if (string.IsNullOrEmpty(host)) return "choose target";
+            if (host.StartsWith("building-", StringComparison.Ordinal)) return "building " + host.Substring("building-".Length);
+            if (host.StartsWith("site-", StringComparison.Ordinal)) return "Cityworks site " + host.Substring("site-".Length);
+            if (host.StartsWith("road-", StringComparison.Ordinal)) return "road fixture";
+            return host;
         }
         private static void SetButtonLabel(Button button, string value) { Text text = button ? button.GetComponentInChildren<Text>(true) : null; if (text) text.text = value; }
         private void SetMessage(string value)
