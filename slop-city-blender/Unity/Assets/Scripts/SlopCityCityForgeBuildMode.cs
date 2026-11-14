@@ -383,11 +383,22 @@ namespace SlopCity
         public bool TryPlaceBuilding(string parcelId, string blueprintId, string facadeId, string roofId, int floors, CityForgeDirection entrance, string storefrontId = null, string interiorRole = null)
         {
             if (draft == null || (draft.buildings ?? new List<CityForgeBuilding>()).Any(item => item != null && item.parcelId == parcelId)) return false;
+            CityForgeParcel parcel = (draft.parcels ?? new List<CityForgeParcel>()).FirstOrDefault(item => item != null && item.id == parcelId);
+            if (parcel == null) { SetMessage("Add a lot first."); return false; }
+            if (!HasStreetFrontage(parcel, entrance))
+            {
+                SetMessage("Lay a street along this lot's " + DirectionLabel(entrance).ToLowerInvariant() + " edge before placing a building.");
+                return false;
+            }
             CityForgeChunkPlan next = draft.Clone(); next.buildings.Add(new CityForgeBuilding { id = NextId("building"), parcelId = parcelId, blueprintId = blueprintId, facadeId = facadeId, roofId = roofId, floors = floors, entranceEdge = entrance, storefrontId = storefrontId ?? string.Empty, interiorRole = interiorRole ?? string.Empty }); return Apply(next, "Building kit placed.");
         }
         public bool TryPlaceService(string parcelId, string type)
         {
-            if (draft == null) return false; CityForgeChunkPlan next = draft.Clone(); next.services.Add(new CityForgeService { id = NextId("service"), parcelId = parcelId, type = type }); return Apply(next, "Service planned.");
+            if (draft == null) return false;
+            CityForgeParcel parcel = (draft.parcels ?? new List<CityForgeParcel>()).FirstOrDefault(item => item != null && item.id == parcelId);
+            if (parcel == null) { SetMessage("Add a lot first."); return false; }
+            if (!HasStreetFrontage(parcel, null)) { SetMessage("Lay a street beside this lot before adding a service."); return false; }
+            CityForgeChunkPlan next = draft.Clone(); next.services.Add(new CityForgeService { id = NextId("service"), parcelId = parcelId, type = type }); return Apply(next, "Service planned.");
         }
         public bool TryPlaceScreen(string hostId, string mountId, string deviceId)
         {
@@ -886,6 +897,27 @@ namespace SlopCity
             return (draft.parcels ?? new List<CityForgeParcel>()).FirstOrDefault(item => item != null && item.cells != null && item.cells.Contains(cell));
         }
 
+        /// <summary>Matches the validator's frontage requirement before an edit is saved.</summary>
+        private bool HasStreetFrontage(CityForgeParcel parcel, CityForgeDirection? requiredEdge)
+        {
+            if (parcel == null || parcel.cells == null) return false;
+            foreach (int cell in parcel.cells)
+            {
+                int x = cell % SlopCityCityForge.GridSize;
+                int z = cell / SlopCityCityForge.GridSize;
+                foreach (CityForgeDirection edge in requiredEdge.HasValue
+                    ? new[] { requiredEdge.Value }
+                    : new[] { CityForgeDirection.North, CityForgeDirection.East, CityForgeDirection.South, CityForgeDirection.West })
+                {
+                    string frontage = CanonicalEdge(x, z, edge);
+                    if ((draft.roads ?? new List<CityForgeRoad>()).Any(road => road != null
+                        && SlopCityCityForge.RoadHasIslandGround(draft, road)
+                        && CanonicalEdge(road.cellX, road.cellZ, road.direction) == frontage)) return true;
+                }
+            }
+            return false;
+        }
+
         private string NextId(string prefix) { return NextId(draft, prefix); }
 
         private static string NextId(CityForgeChunkPlan source, string prefix)
@@ -1207,9 +1239,9 @@ namespace SlopCity
                         ? "Choose a road side, then click any grid cell to erase it · the lit bar previews the road · drag to pan · scroll to zoom"
                         : "Lay island ground under both cells first · choose a road side, then click to place it · the lit bar previews the road · drag to pan · scroll to zoom";
                 case View.Ground: return "Click a cell to lay or clear island ground in the open sky · every change auto-saves";
-                case View.Lots: return "Click a cell to make a lot · Shift-click builds a footprint · changes auto-save";
-                case View.Buildings: return "Choose a kit and design options, then click an empty lot · changes auto-save";
-                case View.Services: return "Click a lot to add service · choose a screen target before placing a screen · changes auto-save";
+                case View.Lots: return "Click a cell to make a lot · Shift-click builds a footprint · lay a street beside it before building · changes auto-save";
+                case View.Buildings: return "Lay a street along the chosen entrance edge, then choose a kit and design options · changes auto-save";
+                case View.Services: return "Lay a street beside the lot, then click it to add service · choose a screen target before placing a screen · changes auto-save";
                 default: return "Choose a Cityworks outcome, then click a lot to make its site · click it again to add or advance its situation · changes auto-save";
             }
         }
