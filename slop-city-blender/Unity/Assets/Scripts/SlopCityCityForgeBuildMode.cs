@@ -1555,6 +1555,21 @@ namespace SlopCity
 
         private IEnumerable<Vector2> BuildUiPointerSourceSizes()
         {
+            // macOS can give Unity a point-sized Screen/Display surface while
+            // native pointer events arrive in backing pixels (Retina). Keep
+            // the reported size and its 2x backing counterpart so both the
+            // launcher and the bounded toolbar resolve the visible control.
+            // This is deliberately constrained by the actual button bounds
+            // in the callers; it never turns the full canvas into UI.
+            foreach (Vector2 size in BuildUiPointerSourceSizesAtReportedScale())
+            {
+                yield return size;
+                yield return new Vector2(size.x * 2f, size.y * 2f);
+            }
+        }
+
+        private IEnumerable<Vector2> BuildUiPointerSourceSizesAtReportedScale()
+        {
             yield return new Vector2(Screen.width, Screen.height);
             if (Display.main == null) yield break;
             if (Display.main.renderingWidth > 0 && Display.main.renderingHeight > 0)
