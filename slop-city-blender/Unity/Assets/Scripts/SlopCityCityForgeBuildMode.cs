@@ -1571,6 +1571,20 @@ namespace SlopCity
         private IEnumerable<Vector2> BuildUiPointerSourceSizesAtReportedScale()
         {
             yield return new Vector2(Screen.width, Screen.height);
+            // CanvasScaler may render into a pixel rect that is neither the
+            // logical Screen size nor exactly 2x it (for example a scaled
+            // macOS window). Use the UI's own resolved geometry as well as
+            // the platform reports. The caller still requires an actual
+            // control's RectTransform bounds before it accepts a hit.
+            foreach (Canvas uiCanvas in new[] { canvas, launcherCanvas })
+            {
+                if (!uiCanvas) continue;
+                Rect pixelRect = uiCanvas.pixelRect;
+                if (pixelRect.width > 0f && pixelRect.height > 0f)
+                    yield return new Vector2(pixelRect.width, pixelRect.height);
+                if (uiCanvas.scaleFactor > 0f)
+                    yield return new Vector2(BuildUiReferenceWidth * uiCanvas.scaleFactor, 720f * uiCanvas.scaleFactor);
+            }
             if (Display.main == null) yield break;
             if (Display.main.renderingWidth > 0 && Display.main.renderingHeight > 0)
                 yield return new Vector2(Display.main.renderingWidth, Display.main.renderingHeight);
