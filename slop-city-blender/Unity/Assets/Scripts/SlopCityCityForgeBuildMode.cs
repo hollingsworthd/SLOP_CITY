@@ -206,12 +206,11 @@ namespace SlopCity
             if (current == null || current.button != 0) return;
             EventType type = current.type == EventType.Used ? current.rawType : current.type;
             if (type != EventType.MouseDown && type != EventType.MouseUp) return;
-            // On macOS, IMGUI can report a Retina backing-pixel coordinate
-            // while the overlay Canvas and RectTransforms use Unity's logical
-            // input space. The raw IMGUI event still tells us that this is a
-            // press/release, but Input.mousePosition supplies the coordinate
-            // that matches the visible controls.
-            Vector2 screenPosition = Input.mousePosition;
+            // On macOS, native IMGUI events are the reliable source for a
+            // desktop click, but they use a top-left origin in the Canvas's
+            // backing-pixel space. Convert against the actual canvas pixel
+            // rect; Screen.height can be a smaller Retina point size.
+            Vector2 screenPosition = GuiPointerToCanvasScreenPoint(current, opened ? canvas : launcherCanvas);
 
             if (!opened)
             {
@@ -223,9 +222,6 @@ namespace SlopCity
                 return;
             }
             if (!canvas || !canvas.gameObject.activeInHierarchy) return;
-
-            // Keep the coordinate above: unlike current.mousePosition it has
-            // the same point scale and bottom-left origin as the Canvas.
 
             if (type == EventType.MouseDown)
             {
@@ -244,6 +240,13 @@ namespace SlopCity
             buildUiGuiMousePressFrame = -1;
             current.Use();
             if (activate) InvokeBuildUiFallback(capture, PointerInputModule.kMouseLeftId);
+        }
+
+        private static Vector2 GuiPointerToCanvasScreenPoint(Event current, Canvas targetCanvas)
+        {
+            Rect pixelRect = targetCanvas ? targetCanvas.pixelRect : new Rect(0f, 0f, Screen.width, Screen.height);
+            if (pixelRect.width <= 0f || pixelRect.height <= 0f) pixelRect = new Rect(0f, 0f, Screen.width, Screen.height);
+            return new Vector2(pixelRect.x + current.mousePosition.x, pixelRect.y + pixelRect.height - current.mousePosition.y);
         }
 
         public bool Open()
