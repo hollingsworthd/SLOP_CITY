@@ -81,6 +81,36 @@ namespace SlopCity
                 Mathf.FloorToInt(worldPosition.z / ChunkSizeMeters)));
         }
 
+        /// <summary>True only when a road edge has player-laid island support beneath it.</summary>
+        public static bool RoadHasIslandGround(CityForgeChunkPlan plan, CityForgeRoad road)
+        {
+            if (plan == null || road == null || plan.groundCells == null) return false;
+            int first = road.cellX + road.cellZ * GridSize;
+            if (!plan.groundCells.Contains(first)) return false;
+            int otherX = road.cellX;
+            int otherZ = road.cellZ;
+            if (road.direction == CityForgeDirection.North) otherZ++;
+            else if (road.direction == CityForgeDirection.East) otherX++;
+            else if (road.direction == CityForgeDirection.South) otherZ--;
+            else if (road.direction == CityForgeDirection.West) otherX--;
+            // A boundary edge gets reciprocal support checked with the
+            // neighboring chunk. Interior roads must bridge two laid cells.
+            if (otherX < 0 || otherX >= GridSize || otherZ < 0 || otherZ >= GridSize) return true;
+            return plan.groundCells.Contains(otherX + otherZ * GridSize);
+        }
+
+        public static bool RoadTouchesCell(CityForgeRoad road, int cell)
+        {
+            if (road == null || cell < 0 || cell >= GridSize * GridSize) return false;
+            int x = cell % GridSize;
+            int z = cell / GridSize;
+            if (road.cellX == x && road.cellZ == z) return true;
+            if (road.direction == CityForgeDirection.North) return road.cellX == x && road.cellZ + 1 == z;
+            if (road.direction == CityForgeDirection.East) return road.cellX + 1 == x && road.cellZ == z;
+            if (road.direction == CityForgeDirection.South) return road.cellX == x && road.cellZ - 1 == z;
+            return road.direction == CityForgeDirection.West && road.cellX - 1 == x && road.cellZ == z;
+        }
+
         /// <summary>
         /// The canonical representative edge of a starter block's immutable
         /// Old City connection, or null when it does not share a core side.

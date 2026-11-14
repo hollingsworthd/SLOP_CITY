@@ -679,6 +679,11 @@ namespace SlopCity
                 }
                 if (!string.Equals(RoadEdge(road), CanonicalRoadEdge(RoadEdge(road)), StringComparison.Ordinal)) validation.Refuse("A street must use a canonical local edge.");
                 if (removed.Contains(RoadEdge(road))) { validation.Refuse("A street cannot also be removed."); continue; }
+                if (!SlopCityCityForge.RoadHasIslandGround(plan, road))
+                {
+                    validation.Refuse("A street needs player-laid island ground beneath it.");
+                    continue;
+                }
                 if (!road.IsBoundary) continue;
                 CityForgeCoord neighbour = SlopCityCityForge.Neighbour(plan.coord, road.direction);
                 if (SlopCityCityForge.IsProtectedOldCity(neighbour))
@@ -694,6 +699,8 @@ namespace SlopCity
                 CityForgeRoad reciprocal = FindReciprocal(other, SlopCityCityForge.Opposite(road.direction), road.BoundaryOffset);
                 if (reciprocal == null || reciprocal.roadClass != road.roadClass)
                     validation.Refuse("The road, sidewalk, and utility connection must match on both sides of this block edge.");
+                else if (!SlopCityCityForge.RoadHasIslandGround(other, reciprocal))
+                    validation.Refuse("A street crossing a block edge needs island ground on both sides.");
             }
         }
 
@@ -980,7 +987,11 @@ namespace SlopCity
             CityForgeBaseChunk baseChunk = generator.Generate(head, coord);
             if (plan == null)
             {
-                CityForgeResolvedChunk untouched = new CityForgeResolvedChunk { baseChunk = baseChunk, roads = baseChunk.roads.Select(item => item.Clone()).ToList() };
+                // An untouched Sky Sprawl block is open air. Deterministic
+                // road grammar remains available to the planner, but no road
+                // surface or traffic materializes until the player lays an
+                // island and accepts supporting street work.
+                CityForgeResolvedChunk untouched = new CityForgeResolvedChunk { baseChunk = baseChunk, roads = new List<CityForgeRoad>() };
                 untouched.resolvedHash = SlopCityCityForge.Sha256(baseChunk.baseHash + "\nuntouched");
                 untouched.pulse = CityForgeCityPulse.Resolve(head, untouched, catalog, worldLandmarks, outcomeIndex);
                 return untouched;
@@ -1002,7 +1013,7 @@ namespace SlopCity
             {
                 baseChunk = baseChunk,
                 acceptedPlan = plan.Clone(),
-                roads = roads.Values.OrderBy(item => item.LocalKey, StringComparer.Ordinal).ToList()
+                roads = roads.Values.Where(item => SlopCityCityForge.RoadHasIslandGround(plan, item)).OrderBy(item => item.LocalKey, StringComparer.Ordinal).ToList()
             };
             resolved.screens = ResolveScreens(plan);
             resolved.pulse = CityForgeCityPulse.Resolve(head, resolved, catalog, worldLandmarks, outcomeIndex);

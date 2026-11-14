@@ -60,7 +60,9 @@ namespace SlopCity
         {
             if (!followTarget) return;
             Vector3 position = followTarget.position;
-            bool sprawl = SlopCityCityForge.IsBuildableWorldPosition(position);
+            // Keep the cloud field active over the public entry deck as well
+            // as editable chunks; the deck physically straddles the core seam.
+            bool sprawl = SlopCityCityForgeTravel.IsSkySprawlPosition(position);
             if (sprawl != sprawlActive)
             {
                 sprawlActive = sprawl;

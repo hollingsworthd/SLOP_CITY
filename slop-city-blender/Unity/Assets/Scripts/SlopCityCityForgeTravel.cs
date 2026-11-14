@@ -16,6 +16,24 @@ namespace SlopCity
         // on the same known-solid spot.
         public static readonly CityForgeCoord StarterEntryCoordinate = new CityForgeCoord(2, 0);
         public static readonly Vector3 StarterEntryPosition = new Vector3(148f, 2f, 36f);
+
+        /// <summary>
+        /// The crossing slightly overlaps the immutable Old City grid. Treat
+        /// that physical deck as Sky Sprawl for sky, fall, and recovery
+        /// purposes even though it is not an editable chunk.
+        /// </summary>
+        public static bool IsSkySprawlPosition(Vector3 position)
+        {
+            return SlopCityCityForge.IsBuildableWorldPosition(position) || IsStarterEntryDeck(position);
+        }
+
+        public static bool IsStarterEntryDeck(Vector3 position)
+        {
+            // Matches the physical deck made in EnsureBridge(), with a small
+            // edge allowance so a player stepping off it retains Sprawl fall
+            // recovery instead of being sent to the couch.
+            return position.x >= 137f && position.x <= 153f && position.z >= 31f && position.z <= 41f;
+        }
         [SerializeField] private SlopCityCityForgeController controller;
         [SerializeField] private Transform traveler;
         [SerializeField] private KeyCode travelKey = KeyCode.V;

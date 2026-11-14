@@ -57,6 +57,11 @@ namespace SlopCity
         private SlopCityCityMedia cityMedia;
         private SlopCityCrowd crowd;
         private bool externalMovement;
+        // A fall can begin from the small public entry deck, whose west edge
+        // overlaps the protected Old City coordinate range. Latch the origin
+        // until landing so the player still crosses the cloud layers and
+        // returns to the Sprawl instead of instantly respawning on the couch.
+        private bool skySprawlFallLatched;
 #if UNITY_WEBGL && !UNITY_EDITOR
         private bool browserCursorLocked;
         private float nextBrowserHudRefresh;
@@ -292,9 +297,12 @@ namespace SlopCity
                     Vector3 direction = Vector3.ClampMagnitude(transform.right * axis.x + transform.forward * axis.y, 1f);
                     if (jumpRequested && controller.isGrounded) verticalSpeed = 5.3f;
                     ApplyMovement(direction * (playerInput.ReadSprint() ? sprintingSpeed : walkingSpeed) * (sandbox ? sandbox.SpeedMultiplier : 1f));
+                    bool skySprawlPosition = SlopCityCityForgeTravel.IsSkySprawlPosition(transform.position);
+                    if (skySprawlPosition) skySprawlFallLatched = true;
+                    else if (controller.isGrounded) skySprawlFallLatched = false;
                     if (transform.position.y < -25f)
                     {
-                        if (SlopCityCityForge.IsBuildableWorldPosition(transform.position))
+                        if (skySprawlFallLatched)
                         {
                             // Sky Sprawl is deliberately all open air except
                             // for player-laid islands. Let the player pass the
@@ -308,6 +316,7 @@ namespace SlopCity
                                 transform.position = SlopCityCityForgeTravel.StarterEntryPosition;
                                 verticalSpeed = 0f;
                                 if (body) body.enabled = true;
+                                skySprawlFallLatched = false;
                                 ShowFeedback("The clouds carried you back to the Sky Sprawl.");
                             }
                         }
@@ -410,6 +419,7 @@ namespace SlopCity
             if (sandbox) sandbox.ReturnHome();
             if (stoodUp && inspectedBroadcast && !seated) returnedHome = true;
             externalMovement = false;
+            skySprawlFallLatched = false;
             controller.enabled = false;
             seated = true; verticalSpeed = 0f;
             transform.position = seatedEyeAnchor.position;

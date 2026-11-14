@@ -244,13 +244,14 @@ namespace SlopCity
                     CityForgeCoord coordinate = new CityForgeCoord(center.x + x, center.z + z);
                     if (!SlopCityCityForge.IsBuildable(coordinate)) continue;
                     CityForgeBaseChunk baseChunk = generator.Generate(head, coordinate);
-                    GameObject tile = Primitive("Skyline_" + baseChunk.skylineId, PrimitiveType.Cube, strategicMap.transform,
-                        // The accepted ground tops out at y=0. Keep the map
-                        // skin just above it so an empty selected block does
-                        // not become an indistinguishable grey field.
-                        ChunkOrigin(coordinate) + new Vector3(36f, .035f, 36f), new Vector3(70f, .06f, 70f));
-                    Collider collider = tile.GetComponent<Collider>(); if (collider) collider.enabled = false;
-                    Renderer renderer = tile.GetComponent<Renderer>(); if (renderer) SetRendererColor(renderer, SkylineColor(baseChunk.skylineId));
+                    // The strategic view is also sky-island based: an empty
+                    // block gets a faint address outline, never a filled
+                    // default-ground tile. Accepted ground and structures
+                    // are rendered exactly at their authored grid locations.
+                    GameObject tile = new GameObject("Skyline_" + baseChunk.skylineId);
+                    tile.transform.SetParent(strategicMap.transform, false);
+                    tile.transform.localPosition = ChunkOrigin(coordinate) + new Vector3(36f, 0f, 36f);
+                    BuildStrategicChunkOutline(tile.transform, SkylineColor(baseChunk.skylineId));
                     if (acceptedPlans != null && acceptedPlans.TryGetValue(coordinate, out CityForgeChunkPlan acceptedPlan) && acceptedPlan != null)
                         BuildStrategicAcceptedImpostor(tile.transform, acceptedPlan);
                     else if (strategicSummaries != null && strategicSummaries.TryGetValue(coordinate, out CityForgeStrategicChunkSummary summary) && summary != null)
@@ -489,10 +490,6 @@ namespace SlopCity
         /// </summary>
         private static void BuildStrategicAcceptedImpostor(Transform tile, CityForgeChunkPlan plan)
         {
-            int buildings = (plan.buildings ?? new List<CityForgeBuilding>()).Count(item => item != null);
-            int roads = (plan.roads ?? new List<CityForgeRoad>()).Count(item => item != null);
-            int services = (plan.services ?? new List<CityForgeService>()).Count(item => item != null);
-            int landmarks = (plan.landmarks ?? new List<CityForgeLandmark>()).Count(item => item != null);
             // Ground is deliberately sparse in the Sky Sprawl. Render each
             // accepted island cell directly on the strategic map so this view
             // agrees with both the build grid and the walkable world.
@@ -505,7 +502,80 @@ namespace SlopCity
                 Collider collider = ground.GetComponent<Collider>(); if (collider) collider.enabled = false;
                 SetRendererColor(ground.GetComponent<Renderer>(), new Color(.54f, .67f, .48f));
             }
-            BuildStrategicCounts(tile, roads, buildings, services, landmarks);
+            Vector3 centreOffset = new Vector3(SlopCityCityForge.ChunkSizeMeters * .5f, 0f, SlopCityCityForge.ChunkSizeMeters * .5f);
+            Dictionary<string, CityForgeParcel> parcels = (plan.parcels ?? new List<CityForgeParcel>())
+                .Where(item => item != null && !string.IsNullOrEmpty(item.id))
+                .ToDictionary(item => item.id, item => item, StringComparer.Ordinal);
+            Dictionary<string, Vector3> screenHosts = new Dictionary<string, Vector3>(StringComparer.Ordinal);
+
+            foreach (CityForgeRoad road in (plan.roads ?? new List<CityForgeRoad>()).Where(item => item != null && SlopCityCityForge.RoadHasIslandGround(plan, item)).OrderBy(item => item.LocalKey, StringComparer.Ordinal))
+            {
+                Vector3 edge = RoadEdgeCentre(road) - centreOffset;
+                bool northSouth = road.direction == CityForgeDirection.North || road.direction == CityForgeDirection.South;
+                GameObject street = Primitive("AcceptedRoadMap_" + road.LocalKey, PrimitiveType.Cube, tile, edge + Vector3.up * .13f,
+                    northSouth ? new Vector3(SlopCityCityForge.CellSizeMeters - .4f, .10f, 1.35f) : new Vector3(1.35f, .10f, SlopCityCityForge.CellSizeMeters - .4f));
+                Collider collider = street.GetComponent<Collider>(); if (collider) collider.enabled = false;
+                SetRendererColor(street.GetComponent<Renderer>(), RoadColor(road.roadClass));
+                screenHosts[RoadHost(road)] = edge + Vector3.up * .32f;
+            }
+
+            foreach (CityForgeBuilding building in (plan.buildings ?? new List<CityForgeBuilding>()).Where(item => item != null).OrderBy(item => item.id, StringComparer.Ordinal))
+            {
+                if (!parcels.TryGetValue(building.parcelId ?? string.Empty, out CityForgeParcel parcel) || parcel.cells == null || parcel.cells.Count == 0) continue;
+                Vector3 position = ParcelCentre(parcel.cells) - centreOffset;
+                float span = Mathf.Clamp(Mathf.Sqrt(parcel.cells.Count) * SlopCityCityForge.CellSizeMeters * .55f, 2.8f, 10f);
+                float height = Mathf.Clamp(building.floors * .30f, .55f, 7.2f);
+                GameObject mass = Primitive("AcceptedBuildingMap_" + building.id, PrimitiveType.Cube, tile, position + Vector3.up * (height * .5f + .16f), new Vector3(span, height, span));
+                Collider collider = mass.GetComponent<Collider>(); if (collider) collider.enabled = false;
+                SetRendererColor(mass.GetComponent<Renderer>(), KitColor(BuildingVariant(building.blueprintId), .40f, .62f));
+                screenHosts[building.id] = position + Vector3.up * (height + .30f);
+            }
+
+            foreach (CityForgeParcel parcel in parcels.Values.Where(item => item.zone == CityForgeZone.Civic || item.zone == CityForgeZone.Culture || item.zone == CityForgeZone.GreenInfrastructure))
+                screenHosts["site-" + parcel.id] = ParcelCentre(parcel.cells) - centreOffset + Vector3.up * .34f;
+
+            foreach (CityForgeService service in (plan.services ?? new List<CityForgeService>()).Where(item => item != null).OrderBy(item => item.id, StringComparer.Ordinal))
+            {
+                if (!parcels.TryGetValue(service.parcelId ?? string.Empty, out CityForgeParcel parcel)) continue;
+                GameObject marker = Primitive("AcceptedServiceMap_" + service.id, PrimitiveType.Cylinder, tile, ParcelCentre(parcel.cells) - centreOffset + Vector3.up * .42f, new Vector3(.72f, .28f, .72f));
+                Collider collider = marker.GetComponent<Collider>(); if (collider) collider.enabled = false;
+                SetRendererColor(marker.GetComponent<Renderer>(), KitColor(ServiceVariant(service.type), .54f, .72f));
+            }
+
+            foreach (CityForgeLandmark landmark in (plan.landmarks ?? new List<CityForgeLandmark>()).Where(item => item != null).OrderBy(item => item.id, StringComparer.Ordinal))
+            {
+                if (!parcels.TryGetValue(landmark.parcelId ?? string.Empty, out CityForgeParcel parcel)) continue;
+                int variant = OutcomeVariant(landmark.outcomeId);
+                GameObject marker = Primitive("AcceptedCityworksMap_" + landmark.id, PrimitiveType.Cylinder, tile, ParcelCentre(parcel.cells) - centreOffset + Vector3.up * .52f, new Vector3(1.02f, .38f, 1.02f));
+                Collider collider = marker.GetComponent<Collider>(); if (collider) collider.enabled = false;
+                SetRendererColor(marker.GetComponent<Renderer>(), LandmarkStateColor(variant, landmark.state));
+            }
+
+            foreach (CityForgeScreen screen in (plan.screens ?? new List<CityForgeScreen>()).Where(item => item != null).OrderBy(item => item.screenId, StringComparer.Ordinal))
+            {
+                if (!screenHosts.TryGetValue(screen.hostId ?? string.Empty, out Vector3 position)) continue;
+                GameObject marker = Primitive("AcceptedScreenMap_" + screen.screenId, PrimitiveType.Cube, tile, position, new Vector3(.62f, .16f, .62f));
+                Collider collider = marker.GetComponent<Collider>(); if (collider) collider.enabled = false;
+                SetRendererColor(marker.GetComponent<Renderer>(), new Color(.83f, .37f, .93f));
+            }
+        }
+
+        private static void BuildStrategicChunkOutline(Transform tile, Color color)
+        {
+            Color outline = Color.Lerp(color, Color.white, .26f);
+            float half = SlopCityCityForge.ChunkSizeMeters * .5f;
+            foreach (Vector3 item in new[]
+            {
+                new Vector3(0f, .025f, -half), new Vector3(0f, .025f, half),
+                new Vector3(-half, .025f, 0f), new Vector3(half, .025f, 0f)
+            })
+            {
+                bool horizontal = Mathf.Abs(item.z) > 0f;
+                GameObject edge = Primitive("StrategicSkyOutline", PrimitiveType.Cube, tile, item,
+                    horizontal ? new Vector3(SlopCityCityForge.ChunkSizeMeters, .025f, .10f) : new Vector3(.10f, .025f, SlopCityCityForge.ChunkSizeMeters));
+                Collider collider = edge.GetComponent<Collider>(); if (collider) collider.enabled = false;
+                SetRendererColor(edge.GetComponent<Renderer>(), outline);
+            }
         }
 
         private static void BuildStrategicSummaryImpostor(Transform tile, CityForgeStrategicChunkSummary summary)
@@ -691,9 +761,42 @@ namespace SlopCity
             Primitive("FrontLintel", PrimitiveType.Cube, parent, new Vector3(0f, Mathf.Max(2.25f, height - .55f), -span * .5f), new Vector3(doorway, Mathf.Min(1.1f, height * .35f), wall));
             Primitive("Roof_" + (blueprintId ?? "kit"), PrimitiveType.Cube, parent, new Vector3(0f, height + wall * .5f, 0f), new Vector3(span + wall, wall, span + wall));
             int style = BuildingVariant(blueprintId);
-            if (style % 3 == 0) Primitive("RoofAccent", PrimitiveType.Cylinder, parent, new Vector3(0f, height + .55f, 0f), new Vector3(.6f + (style % 4) * .14f, .45f, .6f + (style % 4) * .14f));
-            else if (style % 3 == 1) Primitive("RoofAccent", PrimitiveType.Cube, parent, new Vector3(0f, height + .45f, 0f), new Vector3(Mathf.Min(span * .45f, 3.2f), .7f, Mathf.Min(span * .28f, 2.1f)));
-            else Primitive("RoofAccent", PrimitiveType.Sphere, parent, new Vector3(0f, height + .4f, 0f), Vector3.one * (.5f + (style % 5) * .08f));
+            BuildKitMassing(parent, span, height, style);
+        }
+
+        /// <summary>
+        /// Catalog kit IDs deliberately produce recognizably different
+        /// silhouettes, while plans remain IDs and dimensions rather than
+        /// arbitrary player meshes or transforms.
+        /// </summary>
+        private static void BuildKitMassing(Transform parent, float span, float height, int style)
+        {
+            float roofY = height + .35f;
+            switch (style % 5)
+            {
+                case 0:
+                    Primitive("RoofObservatory", PrimitiveType.Cylinder, parent, new Vector3(0f, roofY + .35f, 0f), new Vector3(.78f, .52f, .78f));
+                    Primitive("RoofLantern", PrimitiveType.Sphere, parent, new Vector3(0f, roofY + .92f, 0f), Vector3.one * .54f);
+                    break;
+                case 1:
+                    Primitive("RoofSetback", PrimitiveType.Cube, parent, new Vector3(0f, roofY + 1.0f, 0f), new Vector3(Mathf.Max(2.2f, span * .56f), 1.9f, Mathf.Max(2.2f, span * .56f)));
+                    Primitive("RoofCrown", PrimitiveType.Cylinder, parent, new Vector3(0f, roofY + 2.15f, 0f), new Vector3(.66f, .28f, .66f));
+                    break;
+                case 2:
+                    float towerOffset = Mathf.Min(span * .22f, 2.3f);
+                    Primitive("RoofTowerWest", PrimitiveType.Cube, parent, new Vector3(-towerOffset, roofY + 1.25f, .06f), new Vector3(Mathf.Max(1.15f, span * .26f), 2.4f, Mathf.Max(1.15f, span * .26f)));
+                    Primitive("RoofTowerEast", PrimitiveType.Cube, parent, new Vector3(towerOffset, roofY + .92f, -.14f), new Vector3(Mathf.Max(1.1f, span * .23f), 1.75f, Mathf.Max(1.1f, span * .23f)));
+                    break;
+                case 3:
+                    Primitive("StreetArcadeCanopy", PrimitiveType.Cube, parent, new Vector3(0f, 2.45f, -span * .5f - .66f), new Vector3(span + .85f, .22f, 1.35f));
+                    Primitive("RoofServiceStack", PrimitiveType.Cube, parent, new Vector3(0f, roofY + .62f, span * .12f), new Vector3(Mathf.Max(1.8f, span * .38f), 1.1f, Mathf.Max(1.8f, span * .38f)));
+                    break;
+                default:
+                    Primitive("RoofGardenTerrace", PrimitiveType.Cube, parent, new Vector3(0f, roofY + .20f, 0f), new Vector3(span * .72f, .30f, span * .72f));
+                    Primitive("RoofWaterTank", PrimitiveType.Cylinder, parent, new Vector3(-Mathf.Min(span * .18f, 1.8f), roofY + .98f, 0f), new Vector3(.72f, .68f, .72f));
+                    Primitive("RoofSolarRack", PrimitiveType.Cube, parent, new Vector3(Mathf.Min(span * .18f, 1.8f), roofY + .57f, 0f), new Vector3(Mathf.Max(1.4f, span * .28f), .22f, Mathf.Max(1.4f, span * .36f)));
+                    break;
+            }
         }
 
         private void BuildServices(ChunkInstance instance, CityForgeResolvedChunk chunk)

@@ -20,11 +20,6 @@ namespace SlopCity
         [SerializeField, Range(40f, 280f)] private float topDownHeight = 130f;
         [SerializeField] private bool editingEnabled = true;
         private const int CityForgeCanvasSortingOrder = 300;
-        // The build canvas scales from its width. Retain these values beside
-        // the pointer fallback so a high-density desktop display can resolve
-        // the same visible toolbar controls as Unity's regular raycaster.
-        private const float BuildUiReferenceWidth = 1280f;
-        private const float BuildUiToolbarHeight = 164f;
         private Canvas canvas;
         private Canvas launcherCanvas;
         private Text heading, message, contextHint;
@@ -211,7 +206,12 @@ namespace SlopCity
             if (current == null || current.button != 0) return;
             EventType type = current.type == EventType.Used ? current.rawType : current.type;
             if (type != EventType.MouseDown && type != EventType.MouseUp) return;
-            Vector2 screenPosition = new Vector2(current.mousePosition.x, Screen.height - current.mousePosition.y);
+            // On macOS, IMGUI can report a Retina backing-pixel coordinate
+            // while the overlay Canvas and RectTransforms use Unity's logical
+            // input space. The raw IMGUI event still tells us that this is a
+            // press/release, but Input.mousePosition supplies the coordinate
+            // that matches the visible controls.
+            Vector2 screenPosition = Input.mousePosition;
 
             if (!opened)
             {
@@ -224,10 +224,8 @@ namespace SlopCity
             }
             if (!canvas || !canvas.gameObject.activeInHierarchy) return;
 
-            // IMGUI reports its own pointer space. Keep both origins available
-            // to the build-toolbar resolver instead of assuming its values
-            // match the legacy input coordinates used by Update().
-            screenPosition = current.mousePosition;
+            // Keep the coordinate above: unlike current.mousePosition it has
+            // the same point scale and bottom-left origin as the Canvas.
 
             if (type == EventType.MouseDown)
             {
@@ -316,6 +314,11 @@ namespace SlopCity
                     SetMessage("Remove the lot before clearing the island ground beneath it.");
                     return false;
                 }
+                if ((next.roads ?? new List<CityForgeRoad>()).Any(road => SlopCityCityForge.RoadTouchesCell(road, cell)))
+                {
+                    SetMessage("Remove the street before clearing island ground beneath it.");
+                    return false;
+                }
                 next.groundCells.Remove(cell);
                 laid = false;
             }
@@ -332,9 +335,14 @@ namespace SlopCity
         {
             if (draft == null || cellX < 0 || cellX > 8 || cellZ < 0 || cellZ > 8) return false;
             CanonicalRoad(ref cellX, ref cellZ, ref direction);
+            CityForgeRoad road = new CityForgeRoad { cellX = cellX, cellZ = cellZ, direction = direction, roadClass = roadClass };
+            if (!remove && !SlopCityCityForge.RoadHasIslandGround(draft, road))
+            {
+                SetMessage("Lay island ground under both sides of a street before placing it.");
+                return false;
+            }
             CityForgeChunkPlan next = draft.Clone();
             SetRoad(next, cellX, cellZ, direction, roadClass, remove);
-            CityForgeRoad road = new CityForgeRoad { cellX = cellX, cellZ = cellZ, direction = direction, roadClass = roadClass };
             if (!road.IsBoundary) return Apply(next, remove ? "Street removal planned." : "Street planned.");
 
             CityForgeCoord neighbour = SlopCityCityForge.Neighbour(selected, direction);
@@ -342,6 +350,11 @@ namespace SlopCity
             if (!EnsureAtomicNeighbour(neighbour) || !EnsureDraft(neighbour)) return false;
             if (!TryGetAtomicDraft(neighbour, out CityForgeChunkPlan reciprocal)) return false;
             ReciprocalRoad(cellX, cellZ, direction, out int reciprocalX, out int reciprocalZ, out CityForgeDirection reciprocalDirection);
+            if (!remove && !SlopCityCityForge.RoadHasIslandGround(reciprocal, new CityForgeRoad { cellX = reciprocalX, cellZ = reciprocalZ, direction = reciprocalDirection, roadClass = roadClass }))
+            {
+                SetMessage("Lay island ground on the neighboring block before joining this street.");
+                return false;
+            }
             SetRoad(reciprocal, reciprocalX, reciprocalZ, reciprocalDirection, roadClass, remove);
             return ApplyAtomic(new Dictionary<CityForgeCoord, CityForgeChunkPlan>
             {
@@ -423,16 +436,6 @@ namespace SlopCity
             PreviewRequested?.Invoke(draft.Clone()); DraftPreviewCompiled?.Invoke(preview);
             RefreshBuildOverlay();
             SetMessage("Draft checks pass. Changes save automatically.");
-        }
-
-        /// <summary>
-        /// Legacy entry point retained for integrations compiled against older
-        /// builds. The editor deliberately has no manual Commit control: every
-        /// valid player change is saved as soon as it is made.
-        /// </summary>
-        public void Commit()
-        {
-            AutoSavePendingEdits("Saved.");
         }
 
         private bool AutoSavePendingEdits(string success)
@@ -1191,7 +1194,7 @@ namespace SlopCity
                 case View.Streets:
                     return removeRoad
                         ? "Choose a road side, then click any grid cell to erase it · the lit bar previews the road · drag to pan · scroll to zoom"
-                        : "Choose a road side, then click any grid cell to place it · the lit bar previews the road · drag to pan · scroll to zoom";
+                        : "Lay island ground under both cells first · choose a road side, then click to place it · the lit bar previews the road · drag to pan · scroll to zoom";
                 case View.Ground: return "Click a cell to lay or clear island ground in the open sky · every change auto-saves";
                 case View.Lots: return "Click a cell to make a lot · Shift-click builds a footprint · changes auto-save";
                 case View.Buildings: return "Choose a kit and design options, then click an empty lot · changes auto-save";
@@ -1380,27 +1383,7 @@ namespace SlopCity
         private bool LauncherContains(Vector2 screenPosition)
         {
             RectTransform rect = launcherButton && launcherButton.isActiveAndEnabled ? launcherButton.GetComponent<RectTransform>() : null;
-            if (!rect) return false;
-            if (RectTransformUtility.RectangleContainsScreenPoint(rect, screenPosition, null)) return true;
-            foreach (Vector2 sourceSize in BuildUiPointerSourceSizes())
-            {
-                float width = sourceSize.x;
-                float height = sourceSize.y;
-                if (width <= 0f || height <= 0f) continue;
-                float referenceX = screenPosition.x / width * BuildUiReferenceWidth;
-                foreach (float referenceBottom in new[]
-                {
-                    screenPosition.y / width * BuildUiReferenceWidth,
-                    (height - screenPosition.y) / width * BuildUiReferenceWidth
-                })
-                {
-                    // The launcher is anchored/pivoted at bottom-left in
-                    // CreateLauncher; use its actual configured bounds.
-                    if (referenceX >= rect.anchoredPosition.x && referenceX <= rect.anchoredPosition.x + rect.rect.width
-                        && referenceBottom >= rect.anchoredPosition.y && referenceBottom <= rect.anchoredPosition.y + rect.rect.height) return true;
-                }
-            }
-            return false;
+            return rect && RectTransformUtility.RectangleContainsScreenPoint(rect, screenPosition, null);
         }
 
         private void ResetLauncherPointerActivation()
@@ -1496,9 +1479,7 @@ namespace SlopCity
         private bool BuildUiSurfaceContains(Vector2 screenPosition)
         {
             if (!buildUiSurface || !buildUiSurface.gameObject.activeInHierarchy) return false;
-            if (RectTransformUtility.RectangleContainsScreenPoint(buildUiSurface, screenPosition, null)) return true;
-            TryManualBuildUiHit(screenPosition, out bool withinToolbar, out Button unused);
-            return withinToolbar;
+            return RectTransformUtility.RectangleContainsScreenPoint(buildUiSurface, screenPosition, null);
         }
 
         private Button BuildUiActivatableButtonAt(Vector2 screenPosition)
@@ -1508,104 +1489,6 @@ namespace SlopCity
                 Button button = buildUiButtons[index];
                 RectTransform rect = button ? button.GetComponent<RectTransform>() : null;
                 if (button && button.IsActive() && button.IsInteractable() && rect && RectTransformUtility.RectangleContainsScreenPoint(rect, screenPosition, null)) return button;
-            }
-            TryManualBuildUiHit(screenPosition, out bool unused, out Button fallback);
-            return fallback;
-        }
-
-        /// <summary>
-        /// Unity's normal ScreenSpaceOverlay hit test is authoritative. This
-        /// only supplies the equivalent answer when a macOS high-density
-        /// backing surface reports legacy/IMGUI pointer values in a different
-        /// pixel space. It deliberately checks the toolbar's bounded visual
-        /// geometry, never the full-screen canvas, so map clicks remain map
-        /// clicks.
-        /// </summary>
-        private void TryManualBuildUiHit(Vector2 rawPointer, out bool withinToolbar, out Button hit)
-        {
-            withinToolbar = false;
-            hit = null;
-            foreach (Vector2 sourceSize in BuildUiPointerSourceSizes())
-            {
-                float width = sourceSize.x;
-                float height = sourceSize.y;
-                if (width <= 0f || height <= 0f) continue;
-                float referenceX = rawPointer.x / width * BuildUiReferenceWidth;
-
-                // Native Input and IMGUI disagree about vertical origin on
-                // some macOS configurations. Either form is unambiguous once
-                // constrained to this short top toolbar.
-                foreach (float referenceTop in new[]
-                {
-                    rawPointer.y / width * BuildUiReferenceWidth,
-                    (height - rawPointer.y) / width * BuildUiReferenceWidth
-                })
-                {
-                    if (referenceX < 0f || referenceX > BuildUiReferenceWidth || referenceTop < 0f || referenceTop > BuildUiToolbarHeight) continue;
-                    withinToolbar = true;
-                    Button candidate = ManualBuildUiButtonAt(referenceX, referenceTop);
-                    if (candidate != null)
-                    {
-                        hit = candidate;
-                        return;
-                    }
-                }
-            }
-        }
-
-        private IEnumerable<Vector2> BuildUiPointerSourceSizes()
-        {
-            // macOS can give Unity a point-sized Screen/Display surface while
-            // native pointer events arrive in backing pixels (Retina). Keep
-            // the reported size and its 2x backing counterpart so both the
-            // launcher and the bounded toolbar resolve the visible control.
-            // This is deliberately constrained by the actual button bounds
-            // in the callers; it never turns the full canvas into UI.
-            foreach (Vector2 size in BuildUiPointerSourceSizesAtReportedScale())
-            {
-                yield return size;
-                yield return new Vector2(size.x * 2f, size.y * 2f);
-            }
-        }
-
-        private IEnumerable<Vector2> BuildUiPointerSourceSizesAtReportedScale()
-        {
-            yield return new Vector2(Screen.width, Screen.height);
-            // CanvasScaler may render into a pixel rect that is neither the
-            // logical Screen size nor exactly 2x it (for example a scaled
-            // macOS window). Use the UI's own resolved geometry as well as
-            // the platform reports. The caller still requires an actual
-            // control's RectTransform bounds before it accepts a hit.
-            foreach (Canvas uiCanvas in new[] { canvas, launcherCanvas })
-            {
-                if (!uiCanvas) continue;
-                Rect pixelRect = uiCanvas.pixelRect;
-                if (pixelRect.width > 0f && pixelRect.height > 0f)
-                    yield return new Vector2(pixelRect.width, pixelRect.height);
-                if (uiCanvas.scaleFactor > 0f)
-                    yield return new Vector2(BuildUiReferenceWidth * uiCanvas.scaleFactor, 720f * uiCanvas.scaleFactor);
-            }
-            if (Display.main == null) yield break;
-            if (Display.main.renderingWidth > 0 && Display.main.renderingHeight > 0)
-                yield return new Vector2(Display.main.renderingWidth, Display.main.renderingHeight);
-            if (Display.main.systemWidth > 0 && Display.main.systemHeight > 0)
-                yield return new Vector2(Display.main.systemWidth, Display.main.systemHeight);
-        }
-
-        private Button ManualBuildUiButtonAt(float referenceX, float referenceTop)
-        {
-            for (int index = buildUiButtons.Count - 1; index >= 0; index--)
-            {
-                Button button = buildUiButtons[index];
-                RectTransform rect = button ? button.GetComponent<RectTransform>() : null;
-                if (!button || !button.IsActive() || !button.IsInteractable() || !rect) continue;
-                // Every Build City control is anchored and pivoted at the
-                // toolbar's top-left corner in CreateUi().
-                float left = rect.anchoredPosition.x;
-                float top = -rect.anchoredPosition.y;
-                float right = left + rect.rect.width;
-                float bottom = top + rect.rect.height;
-                if (referenceX >= left && referenceX <= right && referenceTop >= top && referenceTop <= bottom) return button;
             }
             return null;
         }
