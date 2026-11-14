@@ -55,13 +55,18 @@ namespace SlopCity
 
             if (!controller.TryRestoreOffline(out string restoreError))
             {
+                // City Forge saves are intentionally forward-only. A malformed
+                // current root is replaced by a new sky-island world rather than
+                // leaving the player at an unavailable launcher.
                 if (controller.HasOfflineWorld)
+                    Debug.LogWarning("City Forge replaced an unreadable local world with a new current world: " + (restoreError ?? "unreadable save"), this);
+                controller.InitializeOffline();
+                if (!controller.TrySaveOffline(out string saveError))
                 {
-                    Debug.LogWarning("City Forge kept its existing offline save unchanged. Export or recover this device copy before starting a new world: " + (restoreError ?? "unreadable save"), this);
-                    buildMode.SetLaunchUnavailable("City Forge could not read this device save. Recover or export it before starting a new world.");
+                    Debug.LogWarning("City Forge could not create its local world: " + (saveError ?? "storage unavailable"), this);
+                    buildMode.SetLaunchUnavailable("City Forge cannot save a new world on this device.");
                     yield break;
                 }
-                controller.InitializeOffline();
             }
             // Keep public startup compact: the player can cross physically or use
             // the visible Build City launcher; no mutable authored Old City scene

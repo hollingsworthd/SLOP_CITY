@@ -12,16 +12,17 @@ namespace SlopCity
     /// Offline sparse-world persistence. The small WorldHead index and every
     /// accepted changed ChunkPlan are independent compressed PlayerPrefs shards;
     /// untouched frontier chunks remain deterministic and take no storage. A
-    /// partial write is refused on the next load rather than replaced with an
-    /// empty city, and callers can expose export/recovery UI before device limits.
+    /// partial write is refused on the next load; the composition chooses whether
+    /// to start a fresh forward-only city after that failure.
     /// </summary>
     public sealed class SlopCityCityForgeLocalStore
     {
-        // Island ground is part of every current plan. Start a clean local
-        // namespace instead of silently interpreting an older world shape.
-        public const string IndexKey = "SlopCity.CityForge.WorldHead.v4";
-        public const string IndexPagePrefix = "SlopCity.CityForge.IndexPage.v4.";
-        public const string ChunkPrefix = "SlopCity.CityForge.Chunk.v4.";
+        // Sky-island ground changed the shape of every buildable chunk. Local
+        // City Forge saves are deliberately forward-only: v5 starts a new
+        // namespace instead of trying to interpret an older city as islands.
+        public const string IndexKey = "SlopCity.CityForge.WorldHead.v5";
+        public const string IndexPagePrefix = "SlopCity.CityForge.IndexPage.v5.";
+        public const string ChunkPrefix = "SlopCity.CityForge.Chunk.v5.";
         public const int MaximumPageBytes = SlopCityCityForge.MaximumWorldPageBytes;
         public const int IndexEntriesPerPage = 128;
 

@@ -51,7 +51,7 @@ namespace SlopCity
         /// <summary>Compact cross-site prerequisite facts changed; callers may safely refresh life presentation at their next stream boundary.</summary>
         public event Action OutcomeIndexChanged;
         public event Action<string> ValidationRefused;
-        /// <summary>Offline root exists but could not be verified; callers must offer recovery, never overwrite it.</summary>
+        /// <summary>Offline root exists but could not be verified; composition decides how to recover.</summary>
         public event Action<string> OfflineRecoveryRequired;
 
         public void Configure(SlopCityCityForgeChunkCompiler cityCompiler, SlopCityCityForgeCatalog cityCatalog = null)
