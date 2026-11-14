@@ -98,7 +98,7 @@ namespace SlopCity
         {
             plan = null;
             string[] required = { "coord", "baseChunkHash", "parentChunkRevision", "roads", "removedRoadEdges", "parcels", "buildings", "services", "screens", "landmarks", "situations", "demolishedIds" };
-            if (!Exact(raw, required, new[] { "revision" }, path, out error)
+            if (!Exact(raw, required.Concat(new[] { "groundCells" }).ToArray(), new[] { "revision" }, path, out error)
                 || !Coord(raw, "coord", path + ".coord", out CityForgeCoord coord, out error)
                 || !String(raw, "baseChunkHash", path + ".baseChunkHash", out string baseHash, out error)
                 || !Integer(raw, "parentChunkRevision", 0, MaximumSafeInteger, path + ".parentChunkRevision", out long parent, out error)) return false;
@@ -123,9 +123,10 @@ namespace SlopCity
                 || !ReadScreens(rawScreens, buildings, parcels, roads, path + ".screens", out List<CityForgeScreen> screens, out error)
                 || !ReadLandmarks(rawLandmarks, parcelById, path + ".landmarks", out List<CityForgeLandmark> landmarks, out error)
                 || !ReadSituations(rawSituations, landmarks, path + ".situations", out List<CityForgeSituationState> situations, out error)
-                || !ReadDemolitions(demolished, path + ".demolishedIds", out List<string> demolishedIds, out error)) return false;
+                || !ReadDemolitions(demolished, path + ".demolishedIds", out List<string> demolishedIds, out error)
+                || !ReadGroundCells(raw, path, out List<int> groundCells, out error)) return false;
 
-            plan = new CityForgeChunkPlan { schemaVersion = SlopCityCityForge.ChunkSchemaVersion, coord = coord, baseChunkHash = baseHash, parentChunkRevision = parent, revision = revision, roads = roads, removedRoadEdges = removedEdges, parcels = parcels, buildings = buildings, services = services, screens = screens, landmarks = landmarks, situations = situations, demolishedIds = demolishedIds };
+            plan = new CityForgeChunkPlan { schemaVersion = SlopCityCityForge.ChunkSchemaVersion, coord = coord, baseChunkHash = baseHash, parentChunkRevision = parent, revision = revision, roads = roads, removedRoadEdges = removedEdges, parcels = parcels, buildings = buildings, services = services, screens = screens, landmarks = landmarks, situations = situations, demolishedIds = demolishedIds, groundCells = groundCells };
             string canonical = SlopCityCityForgeCanonical.Pack(plan);
             if (Encoding.UTF8.GetByteCount(canonical) > SlopCityCityForge.MaximumPackedChunkBytes) { plan = null; error = path + " exceeds the City Forge chunk bound."; return false; }
             plan.packedBlobHash = SlopCityCityForge.Sha256(canonical);
@@ -297,6 +298,29 @@ namespace SlopCity
                 if (!SlopCityCityForgeCatalog.Default.SituationAnchorMatches(parsed, landmarks)) { error = itemPath + ".situationId must use its authored landmark outcome."; return false; }
                 situations.Add(parsed);
             }
+            return true;
+        }
+
+        private static bool ReadGroundCells(Dictionary<string, object> raw, string path, out List<int> values, out string error)
+        {
+            values = new List<int>();
+            error = null;
+            if (!ReadArray(raw, "groundCells", path + ".groundCells", SlopCityCityForge.GridSize * SlopCityCityForge.GridSize, out List<object> cells, out error)) return false;
+            HashSet<int> seen = new HashSet<int>();
+            for (int index = 0; index < cells.Count; index++)
+            {
+                string itemPath = path + ".groundCells[" + index.ToString(CultureInfo.InvariantCulture) + "]";
+                object rawCell = cells[index];
+                if (!(rawCell is CityForgeJsonNumber number) || string.IsNullOrEmpty(number.text) || number.text.IndexOfAny(new[] { '.', 'e', 'E' }) >= 0
+                    || !long.TryParse(number.text, NumberStyles.AllowLeadingSign, CultureInfo.InvariantCulture, out long cell)
+                    || cell < 0 || cell >= SlopCityCityForge.GridSize * SlopCityCityForge.GridSize || !seen.Add((int)cell))
+                {
+                    error = itemPath + " is not a unique local ground cell.";
+                    return false;
+                }
+                values.Add((int)cell);
+            }
+            values.Sort();
             return true;
         }
 
@@ -835,13 +859,13 @@ namespace SlopCity
         private static bool ReadFriendlyDelta(Dictionary<string, object> delta, object rawCoord, object rawBaseHash, long parentRevision, string path, out CityForgeChunkPlan plan, out string error)
         {
             plan = null;
-            string[] fields = { "roads", "removedRoadEdges", "parcels", "buildings", "services", "screens", "landmarks", "demolitions", "situations" };
+            string[] fields = { "roads", "removedRoadEdges", "parcels", "buildings", "services", "screens", "landmarks", "demolitions", "situations", "groundCells" };
             if (!Exact(delta, fields, Array.Empty<string>(), path, out error)) return false;
             Dictionary<string, object> full = new Dictionary<string, object>(StringComparer.Ordinal)
             {
                 { "coord", rawCoord }, { "baseChunkHash", rawBaseHash }, { "parentChunkRevision", new CityForgeJsonNumber(parentRevision.ToString(CultureInfo.InvariantCulture)) },
                 { "roads", delta["roads"] }, { "removedRoadEdges", delta["removedRoadEdges"] }, { "parcels", delta["parcels"] }, { "buildings", delta["buildings"] },
-                { "services", delta["services"] }, { "screens", delta["screens"] }, { "landmarks", delta["landmarks"] }, { "situations", delta["situations"] }, { "demolishedIds", delta["demolitions"] }
+                { "services", delta["services"] }, { "screens", delta["screens"] }, { "landmarks", delta["landmarks"] }, { "situations", delta["situations"] }, { "demolishedIds", delta["demolitions"] }, { "groundCells", delta["groundCells"] }
             };
             return ReadPlan(full, path, out plan, out error);
         }
@@ -853,7 +877,8 @@ namespace SlopCity
             Dictionary<string, object> delta = new Dictionary<string, object>(StringComparer.Ordinal)
             {
                 { "roads", canonical["roads"] }, { "removedRoadEdges", canonical["removedRoadEdges"] }, { "parcels", canonical["parcels"] }, { "buildings", canonical["buildings"] },
-                { "services", canonical["services"] }, { "screens", canonical["screens"] }, { "landmarks", canonical["landmarks"] }, { "demolitions", canonical["demolishedIds"] }, { "situations", canonical["situations"] }
+                { "services", canonical["services"] }, { "screens", canonical["screens"] }, { "landmarks", canonical["landmarks"] }, { "demolitions", canonical["demolishedIds"] }, { "situations", canonical["situations"] },
+                { "groundCells", canonical["groundCells"] }
             };
             return CanonicalJson(delta);
         }

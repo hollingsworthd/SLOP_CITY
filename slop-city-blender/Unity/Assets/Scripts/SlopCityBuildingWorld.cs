@@ -469,10 +469,8 @@ namespace SlopCity
                 if (delta.sqrMagnitude > .01f) approach.localRotation = Quaternion.LookRotation(delta);
                 StreetBox(approach, "Paved_Access", Vector3.zero, new Vector3(3.4f, .04f, Mathf.Max(1, delta.magnitude)), streetPavement);
             }
-            foreach (float x in new[] { OuterRect.xMin, OuterRect.xMax })
-                SlopCityInteriorGeometry.Box(root, "Outer_Perimeter_X", new Vector3(x, .55f, OuterRect.center.y), new Vector3(.3f, 1.3f, OuterRect.height), SlopCityInteriorGeometry.Wall, true);
-            foreach (float z in new[] { OuterRect.yMin, OuterRect.yMax })
-                SlopCityInteriorGeometry.Box(root, "Outer_Perimeter_Z", new Vector3(OuterRect.center.x, .55f, z), new Vector3(OuterRect.width, 1.3f, .3f), SlopCityInteriorGeometry.Wall, true);
+            // No perimeter collider: the surveyed outer ring is open so City Forge
+            // Sprawl and the authored envelope can meet at connection stubs.
         }
 
         private void InstallStationLifts(Transform[] all)

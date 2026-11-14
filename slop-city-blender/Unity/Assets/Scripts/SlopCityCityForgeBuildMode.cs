@@ -11,7 +11,7 @@ namespace SlopCity
     [DisallowMultipleComponent]
     public sealed class SlopCityCityForgeBuildMode : MonoBehaviour
     {
-        public enum View { Streets, Lots, Buildings, Services, Life }
+        public enum View { Streets, Ground, Lots, Buildings, Services, Life }
 
         [SerializeField] private SlopCityCityForgeController controller;
         [SerializeField] private Camera buildCamera;
@@ -173,10 +173,11 @@ namespace SlopCity
             MoveCamera();
             UpdateHoveredCell();
             if (Input.GetKeyDown(KeyCode.Alpha1) || Input.GetKeyDown(KeyCode.Keypad1)) SelectView(View.Streets);
-            if (Input.GetKeyDown(KeyCode.Alpha2) || Input.GetKeyDown(KeyCode.Keypad2)) SelectView(View.Lots);
-            if (Input.GetKeyDown(KeyCode.Alpha3) || Input.GetKeyDown(KeyCode.Keypad3)) SelectView(View.Buildings);
-            if (Input.GetKeyDown(KeyCode.Alpha4) || Input.GetKeyDown(KeyCode.Keypad4)) SelectView(View.Services);
-            if (Input.GetKeyDown(KeyCode.Alpha5) || Input.GetKeyDown(KeyCode.Keypad5)) SelectView(View.Life);
+            if (Input.GetKeyDown(KeyCode.Alpha2) || Input.GetKeyDown(KeyCode.Keypad2)) SelectView(View.Ground);
+            if (Input.GetKeyDown(KeyCode.Alpha3) || Input.GetKeyDown(KeyCode.Keypad3)) SelectView(View.Lots);
+            if (Input.GetKeyDown(KeyCode.Alpha4) || Input.GetKeyDown(KeyCode.Keypad4)) SelectView(View.Buildings);
+            if (Input.GetKeyDown(KeyCode.Alpha5) || Input.GetKeyDown(KeyCode.Keypad5)) SelectView(View.Services);
+            if (Input.GetKeyDown(KeyCode.Alpha6) || Input.GetKeyDown(KeyCode.Keypad6)) SelectView(View.Life);
             if (Input.GetKeyDown(KeyCode.Z) && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))) Undo();
             if (Input.GetKeyDown(KeyCode.Y) && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))) Redo();
             if (Input.touchCount == 1 && !suppressBuildUiTouchUntilNoTouches && buildUiTouchFingerId < 0)
@@ -260,8 +261,8 @@ namespace SlopCity
             try { draft = controller.BeginDraft(selected); }
             catch (Exception error) { SetMessage(error.Message); return false; }
             pendingOpenWhenReady = false;
-            ResetAtomicDrafts(draft); history = new SlopCityCityForgeDraftHistory(draft); opened = true; view = View.Streets;
-            ResumeFirstPersonForBuildMode(); SetHudSuppressed(true); GateFirstPerson(true); CaptureCamera(); controller.SetBuildMode(true); controller.StreamAt(selected); ShowStrategicMap(); SetUi(true); SetLauncher(false); RefreshUi(); RefreshBuildOverlay(); SetMessage("Choose a road side, then click any grid cell. The lit bar previews the road you will place."); BuildModeChanged?.Invoke(true); return true;
+            ResetAtomicDrafts(draft); history = new SlopCityCityForgeDraftHistory(draft); opened = true; view = View.Ground;
+            ResumeFirstPersonForBuildMode(); SetHudSuppressed(true); GateFirstPerson(true); CaptureCamera(); controller.SetBuildMode(true); controller.StreamAt(selected); ShowStrategicMap(); SetUi(true); SetLauncher(false); RefreshUi(); RefreshBuildOverlay(); SetMessage("Sky Sprawl blocks are open air. Use Ground to lay island cells before you build."); BuildModeChanged?.Invoke(true); return true;
         }
 
         public void Close()
@@ -285,6 +286,32 @@ namespace SlopCity
         }
 
         public void SelectView(View next) { view = next; RefreshUi(); RefreshBuildOverlay(); }
+        public bool TryToggleGround(int cellX, int cellZ)
+        {
+            if (draft == null || cellX < 0 || cellX > 8 || cellZ < 0 || cellZ > 8) return false;
+            int cell = cellX + cellZ * SlopCityCityForge.GridSize;
+            CityForgeChunkPlan next = draft.Clone();
+            if (next.groundCells == null) next.groundCells = new List<int>();
+            bool laid;
+            if (next.groundCells.Contains(cell))
+            {
+                if ((next.parcels ?? new List<CityForgeParcel>()).Any(parcel => parcel != null && (parcel.cells ?? new List<int>()).Contains(cell)))
+                {
+                    SetMessage("Remove the lot before clearing the island ground beneath it.");
+                    return false;
+                }
+                next.groundCells.Remove(cell);
+                laid = false;
+            }
+            else
+            {
+                next.groundCells.Add(cell);
+                laid = true;
+            }
+            next.groundCells.Sort();
+            return Apply(next, laid ? "Island ground laid." : "Island ground cleared.");
+        }
+
         public bool TrySetRoad(int cellX, int cellZ, CityForgeDirection direction, CityForgeRoadClass roadClass, bool remove)
         {
             if (draft == null || cellX < 0 || cellX > 8 || cellZ < 0 || cellZ > 8) return false;
@@ -309,6 +336,8 @@ namespace SlopCity
         {
             if (draft == null) return false; List<int> selectedCells = (cells ?? Enumerable.Empty<int>()).Distinct().ToList();
             if (selectedCells.Count == 0 || selectedCells.Count > 81 || selectedCells.Any(item => item < 0 || item >= 81) || (draft.parcels ?? new List<CityForgeParcel>()).Any(parcel => parcel != null && parcel.cells != null && parcel.cells.Intersect(selectedCells).Any())) return false;
+            HashSet<int> ground = new HashSet<int>(draft.groundCells ?? new List<int>());
+            if (selectedCells.Any(cell => !ground.Contains(cell))) { SetMessage("Lay island ground under every lot before zoning it."); return false; }
             CityForgeChunkPlan next = draft.Clone(); next.parcels.Add(new CityForgeParcel { id = string.IsNullOrEmpty(parcelId) ? NextId("parcel") : parcelId, zone = zone, cells = selectedCells, entranceEdge = CityForgeDirection.North }); return Apply(next, "Lot planned.");
         }
         public bool TryPlaceBuilding(string parcelId, string blueprintId, string facadeId, string roofId, int floors, CityForgeDirection entrance, string storefrontId = null, string interiorRole = null)
@@ -353,7 +382,7 @@ namespace SlopCity
             if (atomicUndo.Count == 0) return;
             Dictionary<CityForgeCoord, CityForgeChunkPlan> restore = atomicUndo.Pop();
             atomicRedo.Push(CloneDraftMap(atomicDrafts));
-            RestoreAtomicDrafts(restore); SetMessage("Draft edit undone."); RefreshUi(); RefreshBuildOverlay(); NotifyDraftsChanged();
+            RestoreAtomicDrafts(restore); AutoSavePendingEdits("Saved undo.");
         }
 
         public void Redo()
@@ -361,7 +390,7 @@ namespace SlopCity
             if (atomicRedo.Count == 0) return;
             Dictionary<CityForgeCoord, CityForgeChunkPlan> restore = atomicRedo.Pop();
             atomicUndo.Push(CloneDraftMap(atomicDrafts));
-            RestoreAtomicDrafts(restore); SetMessage("Draft edit restored."); RefreshUi(); RefreshBuildOverlay(); NotifyDraftsChanged();
+            RestoreAtomicDrafts(restore); AutoSavePendingEdits("Saved redo.");
         }
 
         public void Preview()
@@ -377,25 +406,53 @@ namespace SlopCity
             previewSink?.ClearCityForgeDraftPreview();
             PreviewRequested?.Invoke(draft.Clone()); DraftPreviewCompiled?.Invoke(preview);
             RefreshBuildOverlay();
-            SetMessage("Draft checks pass. The highlighted plan is ready to commit.");
+            SetMessage("Draft checks pass. Changes save automatically.");
         }
 
+        /// <summary>
+        /// Legacy entry point retained for integrations compiled against older
+        /// builds. The editor deliberately has no manual Commit control: every
+        /// valid player change is saved as soon as it is made.
+        /// </summary>
         public void Commit()
         {
+            AutoSavePendingEdits("Saved.");
+        }
+
+        private bool AutoSavePendingEdits(string success)
+        {
             List<CityForgeChunkPlan> plans = PlansForCommit();
-            if (plans.Count == 0) { SetMessage("Make a City Forge edit before committing."); return; }
-            if (!controller.ValidateDraftOnly(plans, out CityForgeValidation validation)) { SetMessage(validation.Messages.FirstOrDefault() ?? "Check this plan first."); return; }
-            if (CommitRequested != null) { CommitRequested(plans.Select(item => item.Clone()).ToList()); SetMessage("Submitting plan…"); return; }
-            if (!controller.TryCommit(plans, out validation)) { SetMessage(validation.Messages.FirstOrDefault() ?? "Commit failed."); return; }
-            draft = controller.BeginDraft(selected); ResetAtomicDrafts(draft); history = new SlopCityCityForgeDraftHistory(draft); ShowStrategicMap(); SetMessage("Accepted locally. Leave Build Mode to walk the updated block."); RefreshUi(); RefreshBuildOverlay();
+            if (plans.Count == 0) { SetMessage("Saved."); RefreshUi(); RefreshBuildOverlay(); return true; }
+            if (!controller.ValidateDraftOnly(plans, out CityForgeValidation validation)) { SetMessage(validation.Messages.FirstOrDefault() ?? "This change cannot be saved."); return false; }
+            if (CommitRequested != null)
+            {
+                NotifyDraftsChanged(plans);
+                CommitRequested(plans.Select(item => item.Clone()).ToList());
+                SetMessage("Saving City Forge…");
+                return true;
+            }
+            // The player is safely gated in the top-down editor, so update the
+            // nearby presentation immediately instead of teleporting them for
+            // every individual map click.
+            if (!controller.TryCommit(plans, true, false, out validation)) { SetMessage(validation.Messages.FirstOrDefault() ?? "This change could not be saved."); return false; }
+            foreach (CityForgeChunkPlan plan in plans)
+            {
+                if (!controller.TryGetAccepted(plan.coord, out CityForgeChunkPlan accepted)) continue;
+                atomicBaselines[plan.coord] = accepted.Clone();
+                atomicDrafts[plan.coord] = controller.BeginDraft(plan.coord);
+            }
+            if (atomicDrafts.TryGetValue(selected, out CityForgeChunkPlan current)) draft = current.Clone();
+            history = new SlopCityCityForgeDraftHistory(draft);
+            controller.StreamAt(selected);
+            ShowStrategicMap(); SetMessage(success); RefreshUi(); RefreshBuildOverlay(); return true;
         }
 
         /// <summary>Called by a hosted bridge only after its authoritative D1 response is verified.</summary>
         public bool ApplyAuthoritativeCommit(CityForgeWorldHead head, IEnumerable<CityForgeChunkPlan> plans, out CityForgeValidation validation)
         {
-            if (!controller.ApplyAuthoritativeCommit(head, plans, out validation)) { SetMessage(validation.Messages.FirstOrDefault() ?? "The hosted commit was refused."); return false; }
+            if (!controller.ApplyAuthoritativeCommit(head, plans, out validation)) { SetMessage(validation.Messages.FirstOrDefault() ?? "The hosted save was refused."); return false; }
             if (opened && controller.TryGetAccepted(selected, out CityForgeChunkPlan accepted)) { draft = accepted; ResetAtomicDrafts(draft); history = new SlopCityCityForgeDraftHistory(draft); }
-            ShowStrategicMap(); SetMessage("Accepted by the City Forge world."); RefreshUi(); RefreshBuildOverlay(); return true;
+            ShowStrategicMap(); SetMessage("Saved to the City Forge world."); RefreshUi(); RefreshBuildOverlay(); return true;
         }
 
         public void SetStatusMessage(string value) { SetMessage(value); }
@@ -498,7 +555,20 @@ namespace SlopCity
             foreach (KeyValuePair<CityForgeCoord, CityForgeChunkPlan> pair in restore)
             {
                 CityForgeChunkPlan value = pair.Value.Clone(); atomicDrafts[pair.Key] = value;
-                if (!atomicBaselines.ContainsKey(pair.Key)) atomicBaselines[pair.Key] = BaselineFor(value);
+                if (controller.TryGetAccepted(pair.Key, out CityForgeChunkPlan accepted))
+                {
+                    // Undo/redo creates a new immutable revision, never a
+                    // stale copy of an earlier one. Preserve the authored
+                    // shape while binding it to the newest accepted parent.
+                    value.baseChunkHash = accepted.baseChunkHash;
+                    value.parentChunkRevision = accepted.revision;
+                    value.revision = 0;
+                    value.revisionId = string.Empty;
+                    value.packedBlobHash = string.Empty;
+                    atomicDrafts[pair.Key] = value;
+                    atomicBaselines[pair.Key] = accepted;
+                }
+                else if (!atomicBaselines.ContainsKey(pair.Key)) atomicBaselines[pair.Key] = BaselineFor(value);
                 controller.TrySavePrivateDraft(value, out string ignored);
             }
             if (atomicDrafts.TryGetValue(selected, out CityForgeChunkPlan current)) draft = current.Clone();
@@ -530,7 +600,7 @@ namespace SlopCity
                 if (!atomicBaselines.ContainsKey(pair.Key)) atomicBaselines[pair.Key] = BaselineFor(pair.Value);
             }
             if (atomicDrafts.TryGetValue(selected, out CityForgeChunkPlan current)) draft = current.Clone();
-            history = new SlopCityCityForgeDraftHistory(draft); SetMessage(success); RefreshUi(); RefreshBuildOverlay(); NotifyDraftsChanged(updates.Values); return true;
+            history = new SlopCityCityForgeDraftHistory(draft); RefreshUi(); RefreshBuildOverlay(); return AutoSavePendingEdits(success);
         }
 
         private void NotifyDraftsChanged(IEnumerable<CityForgeChunkPlan> values = null)
@@ -690,6 +760,7 @@ namespace SlopCity
             if (!TryGetMapCell(screenPosition, out CityForgeCoord coord, out int x, out int z)) return;
             if (!coord.Equals(selected)) { SelectChunk(coord); return; }
             if (view == View.Streets) ToggleStreet(x, z);
+            else if (view == View.Ground) TryToggleGround(x, z);
             else if (view == View.Lots) AddLot(x, z);
             else if (view == View.Buildings) AddBuilding(x, z);
             else if (view == View.Services) AddService(x, z);
@@ -1026,15 +1097,15 @@ namespace SlopCity
             contextHint = Label(toolbar.transform, "", 13, new Vector2(436, -10), new Vector2(830, 24)); contextHint.alignment = TextAnchor.MiddleRight;
             message = Label(toolbar.transform, "", 13, new Vector2(12, -142), new Vector2(1240, 18));
             float x = 12f;
-            foreach (View choice in new[] { View.Streets, View.Lots, View.Buildings, View.Services, View.Life })
+            foreach (View choice in new[] { View.Streets, View.Ground, View.Lots, View.Buildings, View.Services, View.Life })
             {
-                View local = choice; Button button = Button(toolbar.transform, choice.ToString(), new Vector2(x, -42), new Vector2(84, 30)); button.onClick.AddListener(() => SelectView(local)); viewButtons.Add(choice, button); x += 90f;
+                View local = choice; Button button = Button(toolbar.transform, choice.ToString(), new Vector2(x, -42), new Vector2(80, 30)); button.onClick.AddListener(() => SelectView(local)); viewButtons.Add(choice, button); x += 86f;
             }
-            undoButton = Button(toolbar.transform, "Undo", new Vector2(472, -42), new Vector2(64, 30)); undoButton.onClick.AddListener(Undo);
-            redoButton = Button(toolbar.transform, "Redo", new Vector2(542, -42), new Vector2(64, 30)); redoButton.onClick.AddListener(Redo);
-            Button preview = Button(toolbar.transform, "Review", new Vector2(612, -42), new Vector2(82, 30)); preview.onClick.AddListener(Preview);
-            Button commit = Button(toolbar.transform, "Commit", new Vector2(700, -42), new Vector2(82, 30)); commit.onClick.AddListener(Commit);
-            Button exit = Button(toolbar.transform, "Return", new Vector2(788, -42), new Vector2(82, 30)); exit.onClick.AddListener(Close);
+            undoButton = Button(toolbar.transform, "Undo", new Vector2(532, -42), new Vector2(64, 30)); undoButton.onClick.AddListener(Undo);
+            redoButton = Button(toolbar.transform, "Redo", new Vector2(602, -42), new Vector2(64, 30)); redoButton.onClick.AddListener(Redo);
+            Button preview = Button(toolbar.transform, "Review", new Vector2(672, -42), new Vector2(82, 30)); preview.onClick.AddListener(Preview);
+            Text autosave = Label(toolbar.transform, "Auto-saves", 13, new Vector2(760, -42), new Vector2(96, 30)); autosave.alignment = TextAnchor.MiddleCenter; autosave.color = new Color(.72f, .88f, .55f, 1f);
+            Button exit = Button(toolbar.transform, "Return", new Vector2(862, -42), new Vector2(82, 30)); exit.onClick.AddListener(Close);
 
             roadButton = Button(toolbar.transform, "Road", new Vector2(12, -96), new Vector2(160, 32)); roadButton.onClick.AddListener(CycleRoadClass); RegisterViewControl(View.Streets, roadButton);
             removeRoadButton = Button(toolbar.transform, "Add road", new Vector2(178, -96), new Vector2(112, 32)); removeRoadButton.onClick.AddListener(ToggleRoadRemoval); RegisterViewControl(View.Streets, removeRoadButton);
@@ -1087,10 +1158,11 @@ namespace SlopCity
                     return removeRoad
                         ? "Choose a road side, then click any grid cell to erase it · the lit bar previews the road · drag to pan · scroll to zoom"
                         : "Choose a road side, then click any grid cell to place it · the lit bar previews the road · drag to pan · scroll to zoom";
-                case View.Lots: return "Click a cell to make a lot · Shift-click builds a footprint";
-                case View.Buildings: return "Click an empty lot to place the selected building kit";
-                case View.Services: return "Click a lot to add service · choose a valid host before placing a screen";
-                default: return "Click a Cityworks lot to add or advance its authored situation";
+                case View.Ground: return "Click a cell to lay or clear island ground in the open sky · every change auto-saves";
+                case View.Lots: return "Click a cell to make a lot · Shift-click builds a footprint · changes auto-save";
+                case View.Buildings: return "Choose a kit and design options, then click an empty lot · changes auto-save";
+                case View.Services: return "Click a lot to add service · choose a valid host before placing a screen · changes auto-save";
+                default: return "Click a Cityworks lot to add or advance its authored situation · changes auto-save";
             }
         }
 

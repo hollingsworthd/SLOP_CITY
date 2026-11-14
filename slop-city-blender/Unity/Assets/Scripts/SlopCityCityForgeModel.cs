@@ -4,6 +4,7 @@ using System.Globalization;
 using System.Linq;
 using System.Security.Cryptography;
 using System.Text;
+using UnityEngine;
 
 namespace SlopCity
 {
@@ -71,6 +72,13 @@ namespace SlopCity
         public static bool IsBuildable(CityForgeCoord coordinate)
         {
             return IsCoordinateInRange(coordinate) && !IsProtectedOldCity(coordinate);
+        }
+
+        public static bool IsBuildableWorldPosition(Vector3 worldPosition)
+        {
+            return IsBuildable(new CityForgeCoord(
+                Mathf.FloorToInt(worldPosition.x / ChunkSizeMeters),
+                Mathf.FloorToInt(worldPosition.z / ChunkSizeMeters)));
         }
 
         /// <summary>
@@ -419,6 +427,8 @@ namespace SlopCity
         public List<CityForgeLandmark> landmarks = new List<CityForgeLandmark>();
         public List<CityForgeSituationState> situations = new List<CityForgeSituationState>();
         public List<string> demolishedIds = new List<string>();
+        // Player-laid island ground in the Sky Sprawl. Empty chunks are open void.
+        public List<int> groundCells = new List<int>();
         public string packedBlobHash = string.Empty;
 
         public CityForgeChunkPlan Clone()
@@ -439,6 +449,7 @@ namespace SlopCity
             clone.landmarks = landmarks == null ? new List<CityForgeLandmark>() : landmarks.Select(value => value.Clone()).ToList();
             clone.situations = situations == null ? new List<CityForgeSituationState>() : situations.Select(value => value.Clone()).ToList();
             clone.demolishedIds = demolishedIds == null ? new List<string>() : new List<string>(demolishedIds);
+            clone.groundCells = groundCells == null ? new List<int>() : new List<int>(groundCells);
             clone.packedBlobHash = packedBlobHash;
             return clone;
         }

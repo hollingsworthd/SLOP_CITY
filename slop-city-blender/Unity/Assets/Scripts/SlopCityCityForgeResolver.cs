@@ -273,6 +273,7 @@ namespace SlopCity
             JsonProperty(builder, "buildings", BuildingsJson(plan.buildings), false);
             JsonProperty(builder, "coord", "{\"x\":" + plan.coord.x.ToString(CultureInfo.InvariantCulture) + ",\"z\":" + plan.coord.z.ToString(CultureInfo.InvariantCulture) + "}", false);
             JsonProperty(builder, "demolishedIds", StringsJson((plan.demolishedIds ?? new List<string>()).Distinct().OrderBy(item => item, StringComparer.Ordinal)), false);
+            JsonProperty(builder, "groundCells", IntsJson((plan.groundCells ?? new List<int>()).Distinct().OrderBy(item => item)), false);
             JsonProperty(builder, "landmarks", LandmarksJson(plan.landmarks), false);
             JsonProperty(builder, "parentChunkRevision", plan.parentChunkRevision.ToString(CultureInfo.InvariantCulture), false);
             JsonProperty(builder, "parcels", ParcelsJson(plan.parcels), false);
@@ -283,6 +284,12 @@ namespace SlopCity
             JsonProperty(builder, "situations", SituationsJson(plan.situations), false);
             builder.Append('}');
             return builder.ToString();
+        }
+
+        public static bool MatchesSnapshotHash(CityForgeChunkPlan plan, string snapshotHash)
+        {
+            return plan != null && !string.IsNullOrEmpty(snapshotHash)
+                && string.Equals(Hash(plan), snapshotHash, StringComparison.Ordinal);
         }
 
         public static string Hash(CityForgeChunkPlan plan) { return SlopCityCityForge.Sha256(Pack(plan)); }
@@ -391,6 +398,11 @@ namespace SlopCity
         private static string StringsJson(IEnumerable<string> values)
         {
             return "[" + string.Join(",", (values ?? Enumerable.Empty<string>()).Select(JsonString).ToArray()) + "]";
+        }
+
+        private static string IntsJson(IEnumerable<int> values)
+        {
+            return "[" + string.Join(",", (values ?? Enumerable.Empty<int>()).Select(item => item.ToString(CultureInfo.InvariantCulture)).ToArray()) + "]";
         }
 
         private static string Cell(int value)
@@ -619,6 +631,16 @@ namespace SlopCity
             if (plan.landmarks == null || plan.landmarks.Count > SlopCityCityForge.MaximumLandmarkRecords) validation.Refuse("This block has too many landmark projects.");
             if (plan.situations == null || plan.situations.Count > 96) validation.Refuse("This block has too many active city situations.");
             if (plan.demolishedIds == null || plan.demolishedIds.Count > SlopCityCityForge.MaximumBuildingRecords + SlopCityCityForge.MaximumServiceRecords) validation.Refuse("This block has too many demolition records.");
+            if (plan.groundCells == null || plan.groundCells.Count > SlopCityCityForge.GridSize * SlopCityCityForge.GridSize) validation.Refuse("This block has too much island ground.");
+            if (plan.groundCells != null)
+            {
+                HashSet<int> seen = new HashSet<int>();
+                foreach (int cell in plan.groundCells)
+                {
+                    if (cell < 0 || cell >= SlopCityCityForge.GridSize * SlopCityCityForge.GridSize || !seen.Add(cell))
+                        validation.Refuse("Island ground must use unique local cells.");
+                }
+            }
         }
 
         private void ValidateRoads(CityForgeWorldHead head, CityForgeChunkPlan plan, IDictionary<CityForgeCoord, CityForgeChunkPlan> neighbourPlans, CityForgeValidation validation, bool requireBoundaryPeers)

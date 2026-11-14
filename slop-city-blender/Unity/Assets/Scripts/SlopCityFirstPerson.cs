@@ -294,8 +294,28 @@ namespace SlopCity
                     ApplyMovement(direction * (playerInput.ReadSprint() ? sprintingSpeed : walkingSpeed) * (sandbox ? sandbox.SpeedMultiplier : 1f));
                     if (transform.position.y < -25f)
                     {
-                        RespawnAtCouch();
-                        ShowFeedback("Returned safely to the couch.");
+                        if (SlopCityCityForge.IsBuildableWorldPosition(transform.position))
+                        {
+                            // Sky Sprawl is deliberately all open air except
+                            // for player-laid islands. Let the player pass the
+                            // layered clouds for a while before returning to
+                            // the small public entry deck, never the Old City
+                            // couch.
+                            if (transform.position.y < -240f)
+                            {
+                                CharacterController body = controller;
+                                if (body) body.enabled = false;
+                                transform.position = SlopCityCityForgeTravel.StarterEntryPosition;
+                                verticalSpeed = 0f;
+                                if (body) body.enabled = true;
+                                ShowFeedback("The clouds carried you back to the Sky Sprawl.");
+                            }
+                        }
+                        else
+                        {
+                            RespawnAtCouch();
+                            ShowFeedback("Returned safely to the couch.");
+                        }
                     }
                 }
             }

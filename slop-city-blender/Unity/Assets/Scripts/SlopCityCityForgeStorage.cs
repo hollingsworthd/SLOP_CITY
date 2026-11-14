@@ -17,9 +17,11 @@ namespace SlopCity
     /// </summary>
     public sealed class SlopCityCityForgeLocalStore
     {
-        public const string IndexKey = "SlopCity.CityForge.WorldHead.v3";
-        public const string IndexPagePrefix = "SlopCity.CityForge.IndexPage.v3.";
-        public const string ChunkPrefix = "SlopCity.CityForge.Chunk.v3.";
+        // Island ground is part of every current plan. Start a clean local
+        // namespace instead of silently interpreting an older world shape.
+        public const string IndexKey = "SlopCity.CityForge.WorldHead.v4";
+        public const string IndexPagePrefix = "SlopCity.CityForge.IndexPage.v4.";
+        public const string ChunkPrefix = "SlopCity.CityForge.Chunk.v4.";
         public const int MaximumPageBytes = SlopCityCityForge.MaximumWorldPageBytes;
         public const int IndexEntriesPerPage = 128;
 
@@ -105,11 +107,12 @@ namespace SlopCity
                     plan.revisionId = shard.revisionId;
                     if (plan == null || !plan.coord.Equals(pointer.coord) || !string.Equals(plan.baseChunkHash, pointer.baseChunkHash, StringComparison.Ordinal)
                         || plan.revision != pointer.revision || !string.Equals(plan.revisionId, pointer.revisionId, StringComparison.Ordinal)
-                        || !string.Equals(SlopCityCityForgeCanonical.Hash(plan), pointer.snapshotHash, StringComparison.Ordinal))
+                        || !SlopCityCityForgeCanonical.MatchesSnapshotHash(plan, pointer.snapshotHash))
                     {
                         error = "A saved City Forge block no longer matches its index. Keep this device copy for recovery before changing it.";
                         return false;
                     }
+                    plan.packedBlobHash = SlopCityCityForgeCanonical.Hash(plan);
                     plans.Add(plan);
                 }
                 if (!string.Equals(SlopCityCityForgeCanonical.ChunkMapRoot(head.changedChunks), head.chunkMapRoot, StringComparison.Ordinal))

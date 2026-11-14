@@ -66,7 +66,7 @@ namespace SlopCity
             // Keep public startup compact: the player can cross physically or use
             // the visible Build City launcher; no mutable authored Old City scene
             // is initialized or replaced here.
-            CityForgeCoord entry = new CityForgeCoord(2, 0);
+            CityForgeCoord entry = SlopCityCityForgeTravel.StarterEntryCoordinate;
             controller.StreamAt(entry);
             follower.SetKnownCenter(entry);
         }
@@ -143,8 +143,8 @@ namespace SlopCity
             {
                 // A deterministic public refuge at the editable east starter
                 // entry keeps a walker off colliders about to be recompiled.
-                activeCenter = new CityForgeCoord(2, 0);
-                player.transform.position = new Vector3(148f, 2f, 36f);
+                activeCenter = SlopCityCityForgeTravel.StarterEntryCoordinate;
+                player.transform.position = SlopCityCityForgeTravel.StarterEntryPosition;
             }
             if (capsule) capsule.enabled = true;
             yield return null;

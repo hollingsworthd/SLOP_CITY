@@ -353,6 +353,17 @@ function boundedArray(value, path, max, errors) {
   if (!Array.isArray(value) || value.length > max) { fail(errors, path, `must be an array of at most ${max} entries`); return null; }
   return value;
 }
+function validateGroundCells(value, path, errors) {
+  const cells = boundedArray(value, path, 81, errors);
+  if (!cells) return;
+  const seen = new Set();
+  for (let index = 0; index < cells.length; index += 1) {
+    const cell = cells[index];
+    if (!safeInteger(cell, `${path}[${index}]`, 0, 80, errors)) continue;
+    if (seen.has(cell)) fail(errors, path, 'must contain unique local ground cells');
+    seen.add(cell);
+  }
+}
 function uniqueIds(rows, field, path, errors) {
   const seen = new Set();
   for (let index = 0; index < rows.length; index += 1) {
@@ -721,6 +732,7 @@ export function validateChunkPlan(value, { requireRevision = false, allowReserve
   const errors = [];
   const required = ['coord', 'baseChunkHash', 'parentChunkRevision', 'roads', 'removedRoadEdges', 'parcels', 'buildings', 'services', 'screens', 'landmarks', 'situations', 'demolishedIds'];
   if (requireRevision) required.push('revision');
+  required.push('groundCells');
   if (!exactObject(value, '$', required, [], errors)) return { valid: false, errors };
   if (exactObject(value.coord, '$.coord', ['x', 'z'], [], errors)) {
     safeInteger(value.coord.x, '$.coord.x', -CITY_FORGE_LIMITS.coordinate, CITY_FORGE_LIMITS.coordinate, errors);
@@ -751,6 +763,7 @@ export function validateChunkPlan(value, { requireRevision = false, allowReserve
   validateSituations(value.situations, value.landmarks ?? [], '$.situations', errors, worldLandmarks);
   const demolished = boundedArray(value.demolishedIds, '$.demolishedIds', CITY_FORGE_LIMITS.buildings + CITY_FORGE_LIMITS.services, errors) ?? [];
   if (new Set(demolished).size !== demolished.length || !demolished.every(entry => typeof entry === 'string' && ID.test(entry))) fail(errors, '$.demolishedIds', 'must contain unique local structure identifiers');
+  validateGroundCells(value.groundCells, '$.groundCells', errors);
   try { if (textBytes(canonicalJson(value)) > CITY_FORGE_LIMITS.chunkBytes) fail(errors, '$', 'exceeds the packed chunk-plan limit'); } catch { fail(errors, '$', 'must be serializable'); }
   return { valid: errors.length === 0, errors };
 }
@@ -869,6 +882,7 @@ export function normalizeChunkPlan(value) {
   plan.landmarks = ordered(plan.landmarks, row => row.id);
   plan.situations = ordered(plan.situations, row => row.id);
   plan.demolishedIds = [...plan.demolishedIds].sort();
+  plan.groundCells = [...plan.groundCells].sort((left, right) => left - right);
   return plan;
 }
 export function canonicalChunkPlan(value) { return canonicalJson(normalizeChunkPlan(value)); }

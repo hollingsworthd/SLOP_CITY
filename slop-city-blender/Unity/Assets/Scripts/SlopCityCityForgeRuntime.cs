@@ -95,10 +95,14 @@ namespace SlopCity
             // no parallel raw-key route owns their use behavior.
         }
 
+        private SlopCityCityForgeSkyVista skyVista;
+
         public void Configure(Transform cityListener, bool useConstrainedWebGl)
         {
             listener = cityListener;
             constrainedWebGl = useConstrainedWebGl;
+            if (!skyVista) skyVista = GetComponent<SlopCityCityForgeSkyVista>() ?? gameObject.AddComponent<SlopCityCityForgeSkyVista>();
+            if (skyVista) skyVista.Configure(cityListener);
             RefreshMediaAdmission(true);
         }
 
@@ -122,7 +126,7 @@ namespace SlopCity
             ChunkInstance instance = new ChunkInstance { root = root, coord = coord, resolvedHash = chunk.resolvedHash ?? string.Empty };
             try
             {
-                BuildGround(instance);
+                BuildGround(instance, chunk);
                 BuildRoads(instance, chunk.roads);
                 BuildBuildings(instance, chunk);
                 BuildServices(instance, chunk);
@@ -208,7 +212,7 @@ namespace SlopCity
             root.transform.localPosition = ChunkOrigin(chunk.baseChunk.coord) + Vector3.up * .18f;
             root.SetActive(false);
             preview = new ChunkInstance { root = root, coord = chunk.baseChunk.coord, resolvedHash = chunk.resolvedHash };
-            try { BuildGround(preview); BuildRoads(preview, chunk.roads); BuildBuildings(preview, chunk); BuildServices(preview, chunk); BuildLandmarks(preview, chunk); BuildLife(preview, chunk); root.SetActive(true); }
+            try { BuildGround(preview, chunk); BuildRoads(preview, chunk.roads); BuildBuildings(preview, chunk); BuildServices(preview, chunk); BuildLandmarks(preview, chunk); BuildLife(preview, chunk); root.SetActive(true); }
             catch { if (root) Destroy(root); preview = null; }
         }
 
@@ -282,6 +286,7 @@ namespace SlopCity
             buildOverlay.transform.localPosition = ChunkOrigin(selected);
             Color status = draftIsValid ? new Color(.55f, .94f, .42f) : new Color(1f, .57f, .18f);
             BuildEditorGrid(buildOverlay.transform, status);
+            BuildEditorGround(buildOverlay.transform, draft);
             BuildEditorLots(buildOverlay.transform, draft);
             BuildEditorRoads(buildOverlay.transform, draft, status);
             BuildEditorBuildings(buildOverlay.transform, draft);
@@ -420,7 +425,10 @@ namespace SlopCity
             int x = Mathf.Clamp(hovered.x, 0, SlopCityCityForge.GridSize - 1), z = Mathf.Clamp(hovered.z, 0, SlopCityCityForge.GridSize - 1);
             float cell = SlopCityCityForge.CellSizeMeters;
             Vector3 cellCenter = new Vector3((x + .5f) * cell, .71f, (z + .5f) * cell);
-            EditorPrimitive("HoveredCell", PrimitiveType.Cube, root, cellCenter, new Vector3(cell - .5f, .045f, cell - .5f), view == SlopCityCityForgeBuildMode.View.Streets ? status : new Color(.67f, .86f, .98f));
+            Color hover = view == SlopCityCityForgeBuildMode.View.Streets ? status
+                : view == SlopCityCityForgeBuildMode.View.Ground ? new Color(.72f, .84f, .64f)
+                : new Color(.67f, .86f, .98f);
+            EditorPrimitive("HoveredCell", PrimitiveType.Cube, root, cellCenter, new Vector3(cell - .5f, .045f, cell - .5f), hover);
             if (view != SlopCityCityForgeBuildMode.View.Streets) return;
             CityForgeRoad road = new CityForgeRoad { cellX = x, cellZ = z, direction = direction };
             Vector3 edge = RoadEdgeCentre(road) + Vector3.up * .76f;
@@ -485,6 +493,18 @@ namespace SlopCity
             int roads = (plan.roads ?? new List<CityForgeRoad>()).Count(item => item != null);
             int services = (plan.services ?? new List<CityForgeService>()).Count(item => item != null);
             int landmarks = (plan.landmarks ?? new List<CityForgeLandmark>()).Count(item => item != null);
+            // Ground is deliberately sparse in the Sky Sprawl. Render each
+            // accepted island cell directly on the strategic map so this view
+            // agrees with both the build grid and the walkable world.
+            foreach (int item in (plan.groundCells ?? new List<int>()).Where(cell => cell >= 0 && cell < SlopCityCityForge.GridSize * SlopCityCityForge.GridSize).Distinct().OrderBy(cell => cell))
+            {
+                int x = item % SlopCityCityForge.GridSize, z = item / SlopCityCityForge.GridSize;
+                GameObject ground = Primitive("AcceptedGroundMap_" + item, PrimitiveType.Cube, tile,
+                    new Vector3((x + .5f) * SlopCityCityForge.CellSizeMeters - 36f, .09f, (z + .5f) * SlopCityCityForge.CellSizeMeters - 36f),
+                    new Vector3(SlopCityCityForge.CellSizeMeters - .45f, .04f, SlopCityCityForge.CellSizeMeters - .45f));
+                Collider collider = ground.GetComponent<Collider>(); if (collider) collider.enabled = false;
+                SetRendererColor(ground.GetComponent<Renderer>(), new Color(.54f, .67f, .48f));
+            }
             BuildStrategicCounts(tile, roads, buildings, services, landmarks);
         }
 
@@ -530,12 +550,32 @@ namespace SlopCity
             if (buildOverlayMaterial) Destroy(buildOverlayMaterial);
         }
 
-        private void BuildGround(ChunkInstance instance)
+        private void BuildGround(ChunkInstance instance, CityForgeResolvedChunk chunk)
         {
-            GameObject ground = Primitive("Ground", PrimitiveType.Cube, instance.root.transform,
-                new Vector3(SlopCityCityForge.ChunkSizeMeters * .5f, -.25f, SlopCityCityForge.ChunkSizeMeters * .5f),
-                new Vector3(SlopCityCityForge.ChunkSizeMeters, .5f, SlopCityCityForge.ChunkSizeMeters));
-            DisableShadow(ground);
+            List<int> cells = chunk?.acceptedPlan?.groundCells;
+            if (cells == null || cells.Count == 0) return;
+            float cell = SlopCityCityForge.CellSizeMeters;
+            foreach (int item in cells.Where(value => value >= 0 && value < SlopCityCityForge.GridSize * SlopCityCityForge.GridSize).Distinct().OrderBy(value => value))
+            {
+                int x = item % SlopCityCityForge.GridSize, z = item / SlopCityCityForge.GridSize;
+                GameObject ground = Primitive("Ground_" + item, PrimitiveType.Cube, instance.root.transform,
+                    new Vector3((x + .5f) * cell, -.25f, (z + .5f) * cell),
+                    new Vector3(cell, .5f, cell));
+                Renderer renderer = ground.GetComponent<Renderer>();
+                if (renderer) SetRendererColor(renderer, new Color(.42f, .46f, .40f));
+                DisableShadow(ground);
+            }
+        }
+
+        private void BuildEditorGround(Transform root, CityForgeChunkPlan draft)
+        {
+            foreach (int item in (draft.groundCells ?? new List<int>()).Where(cell => cell >= 0 && cell < SlopCityCityForge.GridSize * SlopCityCityForge.GridSize).Distinct().OrderBy(cell => cell))
+            {
+                int x = item % SlopCityCityForge.GridSize, z = item / SlopCityCityForge.GridSize;
+                EditorPrimitive("DraftGround_" + item, PrimitiveType.Cube, root,
+                    new Vector3((x + .5f) * SlopCityCityForge.CellSizeMeters, .305f, (z + .5f) * SlopCityCityForge.CellSizeMeters),
+                    new Vector3(SlopCityCityForge.CellSizeMeters - .36f, .04f, SlopCityCityForge.CellSizeMeters - .36f), new Color(.62f, .68f, .58f));
+            }
         }
 
         private void BuildRoads(ChunkInstance instance, IEnumerable<CityForgeRoad> roads)

@@ -11,6 +11,11 @@ namespace SlopCity
     [DisallowMultipleComponent]
     public sealed class SlopCityCityForgeTravel : MonoBehaviour
     {
+        // The small starter deck is an intentional safe arrival point, not
+        // default Sprawl ground. Keep travel, fall recovery, and safe reload
+        // on the same known-solid spot.
+        public static readonly CityForgeCoord StarterEntryCoordinate = new CityForgeCoord(2, 0);
+        public static readonly Vector3 StarterEntryPosition = new Vector3(148f, 2f, 36f);
         [SerializeField] private SlopCityCityForgeController controller;
         [SerializeField] private Transform traveler;
         [SerializeField] private KeyCode travelKey = KeyCode.V;
@@ -39,7 +44,7 @@ namespace SlopCity
         public bool TryEnterStarterSprawl()
         {
             if (!controller || !controller.IsInitialized || !traveler) return false;
-            CityForgeCoord entry = new CityForgeCoord(2, 0);
+            CityForgeCoord entry = StarterEntryCoordinate;
             TravelRequested?.Invoke(entry);
             if (EnsureChunkLoaded != null)
             {
@@ -50,7 +55,7 @@ namespace SlopCity
             catch { return false; }
             CharacterController character = traveler.GetComponent<CharacterController>();
             if (character) character.enabled = false;
-            traveler.position = new Vector3(148f, 2f, 36f);
+            traveler.position = StarterEntryPosition;
             if (character) character.enabled = true;
             return true;
         }
@@ -59,9 +64,12 @@ namespace SlopCity
         {
             if (bridge) return;
             bridge = new GameObject("CityForge_StarterSprawlBridge"); bridge.transform.SetParent(transform, false);
-            Build("Deck", new Vector3(142.5f, -.12f, 36f), new Vector3(7f, .24f, 8f));
-            Build("NorthRail", new Vector3(142.5f, 1f, 39.5f), new Vector3(7f, 2f, .16f));
-            Build("SouthRail", new Vector3(142.5f, 1f, 32.5f), new Vector3(7f, 2f, .16f));
+            // Extend just far enough beyond the Old City seam for the entry
+            // spawn to be safely above the void. The surrounding Sprawl stays
+            // open sky until the player lays island ground in City Forge.
+            Build("Deck", new Vector3(145f, -.12f, 36f), new Vector3(14f, .24f, 8f));
+            Build("NorthRail", new Vector3(145f, 1f, 39.5f), new Vector3(14f, 2f, .16f));
+            Build("SouthRail", new Vector3(145f, 1f, 32.5f), new Vector3(14f, 2f, .16f));
         }
 
         private void Build(string name, Vector3 position, Vector3 scale)
