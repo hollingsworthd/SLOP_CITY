@@ -228,7 +228,15 @@ namespace SlopCity
                 buildUiGuiMouseSurfaceCapture = BuildUiSurfaceContains(screenPosition);
                 buildUiGuiMouseCapture = buildUiGuiMouseSurfaceCapture ? BuildUiActivatableButtonAt(screenPosition) : null;
                 buildUiGuiMousePressFrame = Time.frameCount;
-                if (buildUiGuiMouseSurfaceCapture) current.Use();
+                if (buildUiGuiMouseSurfaceCapture)
+                {
+                    // Update can run before this raw desktop event. Cancel a
+                    // mistaken map capture before its matching MouseUp would
+                    // otherwise lay ground behind the toolbar control.
+                    mapMousePressed = false;
+                    mapMouseDragged = false;
+                    current.Use();
+                }
                 return;
             }
 
