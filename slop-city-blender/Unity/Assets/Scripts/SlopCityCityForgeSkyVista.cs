@@ -8,7 +8,8 @@ namespace SlopCity
     {
         private Transform followTarget;
         private GameObject cloudRoot;
-        private bool sprawlActive;
+        private SlopCityCityForgeController controller;
+        private bool buildModeActive;
         private bool savedFog;
         private bool fogOverrideActive;
         private Color savedFogColor;
@@ -31,7 +32,26 @@ namespace SlopCity
         public void Configure(Transform target)
         {
             followTarget = target;
+            AttachController();
             EnsureClouds();
+        }
+
+        private void AttachController()
+        {
+            SlopCityCityForgeController next = GetComponent<SlopCityCityForgeController>() ?? FindFirstObjectByType<SlopCityCityForgeController>();
+            if (controller == next) return;
+            if (controller) controller.BuildModeChanged -= HandleBuildModeChanged;
+            controller = next;
+            if (controller)
+            {
+                controller.BuildModeChanged += HandleBuildModeChanged;
+                buildModeActive = controller.IsBuildMode;
+            }
+        }
+
+        private void HandleBuildModeChanged(bool active)
+        {
+            buildModeActive = active;
         }
 
         private void EnsureClouds()
@@ -93,44 +113,45 @@ namespace SlopCity
         private void LateUpdate()
         {
             if (!followTarget) return;
+            // The real cloud banks belong to the first-person Sky Sprawl.
+            // Build Mode has its own dark planning surface and must not use a
+            // top-down view of those clouds as its map background.
+            AttachController();
             Vector3 position = followTarget.position;
             // Keep the cloud field active over the public entry deck as well
             // as editable chunks; the deck physically straddles the core seam.
             bool sprawl = SlopCityCityForgeTravel.IsSkySprawlPosition(position);
-            if (sprawl != sprawlActive)
+            bool showWorldClouds = sprawl && !buildModeActive;
+            if (showWorldClouds && !fogOverrideActive)
             {
-                sprawlActive = sprawl;
-                if (cloudRoot) cloudRoot.SetActive(sprawl);
-                if (sprawl && !fogOverrideActive)
-                {
-                    savedFog = RenderSettings.fog;
-                    savedFogColor = RenderSettings.fogColor;
-                    savedFogDensity = RenderSettings.fogDensity;
-                    savedFogMode = RenderSettings.fogMode;
-                    RenderSettings.fog = true;
-                    RenderSettings.fogMode = FogMode.Exponential;
-                    RenderSettings.fogColor = new Color(.78f, .84f, .92f);
-                    RenderSettings.fogDensity = .0065f;
-                    fogOverrideActive = true;
-                }
-                else if (!sprawl && fogOverrideActive)
-                {
-                    RenderSettings.fog = savedFog;
-                    RenderSettings.fogColor = savedFogColor;
-                    RenderSettings.fogDensity = savedFogDensity;
-                    RenderSettings.fogMode = savedFogMode;
-                    fogOverrideActive = false;
-                }
+                savedFog = RenderSettings.fog;
+                savedFogColor = RenderSettings.fogColor;
+                savedFogDensity = RenderSettings.fogDensity;
+                savedFogMode = RenderSettings.fogMode;
+                RenderSettings.fog = true;
+                RenderSettings.fogMode = FogMode.Exponential;
+                RenderSettings.fogColor = new Color(.78f, .84f, .92f);
+                RenderSettings.fogDensity = .0065f;
+                fogOverrideActive = true;
+            }
+            else if (!showWorldClouds && fogOverrideActive)
+            {
+                RenderSettings.fog = savedFog;
+                RenderSettings.fogColor = savedFogColor;
+                RenderSettings.fogDensity = savedFogDensity;
+                RenderSettings.fogMode = savedFogMode;
+                fogOverrideActive = false;
             }
 
             SetDistantGroundSuppressed(sprawl);
 
-            if (cloudRoot && sprawl)
+            if (cloudRoot && cloudRoot.activeSelf != showWorldClouds) cloudRoot.SetActive(showWorldClouds);
+            if (cloudRoot && showWorldClouds)
             {
                 cloudRoot.transform.position = new Vector3(position.x, 0f, position.z);
             }
 
-            if (sprawl && fogOverrideActive)
+            if (showWorldClouds && fogOverrideActive)
             {
                 float depth = Mathf.Clamp01((24f - position.y) / 120f);
                 RenderSettings.fogDensity = Mathf.Lerp(.0065f, .022f, depth);
@@ -139,6 +160,8 @@ namespace SlopCity
 
         private void OnDisable()
         {
+            if (controller) controller.BuildModeChanged -= HandleBuildModeChanged;
+            controller = null;
             SetDistantGroundSuppressed(false);
             if (fogOverrideActive)
             {
@@ -148,7 +171,6 @@ namespace SlopCity
                 RenderSettings.fogMode = savedFogMode;
                 fogOverrideActive = false;
             }
-            sprawlActive = false;
             if (cloudRoot) cloudRoot.SetActive(false);
         }
 
