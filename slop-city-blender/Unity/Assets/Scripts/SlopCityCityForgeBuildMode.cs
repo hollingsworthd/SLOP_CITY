@@ -1833,10 +1833,68 @@ namespace SlopCity
             hit = withinToolbar ? BuildUiActivatableButtonAt(inputPosition) : null;
             if (hit || current == null) return;
 
+            // Input.mousePosition is the coordinate supplied to UGUI and the
+            // camera: lower-left, in the player's active screen space. Map it
+            // to the Canvas's top-left reference space before falling back to
+            // IMGUI's platform-specific event position. This is the crucial
+            // path for a Retina player window beneath a native title bar.
+            TryInputMappedToolbarHit(inputPosition, out bool inputWithinToolbar, out Button inputHit);
+            if (inputWithinToolbar) withinToolbar = true;
+            if (inputHit)
+            {
+                hit = inputHit;
+                return;
+            }
+
             TryNativeMacToolbarHit(current.mousePosition, inputPosition, out bool nativeWithinToolbar, out Button nativeHit);
             if (!nativeWithinToolbar) return;
             withinToolbar = true;
             if (nativeHit) hit = nativeHit;
+        }
+
+        /// <summary>
+        /// Resolves a lower-left Input.mousePosition through the actual overlay
+        /// Canvas. This is intentionally a bounded toolbar test; it never
+        /// turns the full-screen canvas into a map-blocking surface.
+        /// </summary>
+        private void TryInputMappedToolbarHit(Vector2 inputPosition, out bool withinToolbar, out Button hit)
+        {
+            withinToolbar = false;
+            hit = null;
+            Rect pixelRect = canvas ? canvas.pixelRect : new Rect(0f, 0f, Screen.width, Screen.height);
+            if (pixelRect.width <= 0f || pixelRect.height <= 0f) pixelRect = new Rect(0f, 0f, Screen.width, Screen.height);
+            RectTransform canvasRect = canvas ? canvas.transform as RectTransform : null;
+            float referenceWidth = canvasRect && canvasRect.rect.width > 0f ? canvasRect.rect.width : BuildUiReferenceWidth;
+            float referenceHeight = canvasRect && canvasRect.rect.height > 0f ? canvasRect.rect.height : 720f;
+            float canvasX = inputPosition.x - pixelRect.x;
+            float canvasTop = pixelRect.y + pixelRect.height - inputPosition.y;
+
+            // This normalized conversion is exact when Input and the overlay
+            // share a backing-pixel surface.
+            ConsiderToolbarReferenceHit(canvasX / pixelRect.width * referenceWidth,
+                canvasTop / pixelRect.height * referenceHeight, ref withinToolbar, ref hit);
+            if (hit) return;
+
+            // CanvasScaler's resolved scale covers the same visual placement
+            // when the Canvas is in a differently scaled player window.
+            float canvasScale = canvas && canvas.scaleFactor > 0f ? canvas.scaleFactor : 1f;
+            ConsiderToolbarReferenceHit(canvasX / canvasScale, canvasTop / canvasScale, ref withinToolbar, ref hit);
+            if (hit) return;
+
+            // A logical Screen surface with a backing-pixel overlay is the
+            // remaining macOS case. Normalize within Input's own screen first.
+            if (Screen.width > 0 && Screen.height > 0)
+                ConsiderToolbarReferenceHit(inputPosition.x / Screen.width * referenceWidth,
+                    (Screen.height - inputPosition.y) / Screen.height * referenceHeight, ref withinToolbar, ref hit);
+        }
+
+        private void ConsiderToolbarReferenceHit(float referenceX, float referenceTop, ref bool withinToolbar, ref Button hit)
+        {
+            if (referenceX < -NativeMacToolbarHitSlop || referenceX > BuildUiReferenceWidth + NativeMacToolbarHitSlop
+                || referenceTop < -NativeMacToolbarHitSlop || referenceTop > BuildUiToolbarHeight + NativeMacToolbarHitSlop) return;
+            withinToolbar = true;
+            Button candidate = ManualBuildUiButtonAt(referenceX, referenceTop, NativeMacToolbarHitSlop);
+            if (candidate) hit = candidate;
         }
 
         private void TryNativeMacToolbarHit(Vector2 guiPosition, Vector2 inputPosition, out bool withinToolbar, out Button hit)
