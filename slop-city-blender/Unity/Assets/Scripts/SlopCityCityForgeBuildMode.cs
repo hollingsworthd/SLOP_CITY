@@ -40,6 +40,11 @@ namespace SlopCity
         private SlopCityCityForgeDraftHistory history;
         private View view;
         private bool opened;
+        // Hosted saves are authoritative but must not eject a player from
+        // their plan between adjacent ground, road, lot, and building edits.
+        // While a bridge verifies one save, retain the editor and make its
+        // controls deliberately inert until the acknowledgement arrives.
+        private bool autosaveInFlight;
         private CityForgeRoadClass roadClass = CityForgeRoadClass.LocalStreet;
         private CityForgeDirection roadDirection = CityForgeDirection.North;
         private CityForgeZone lotZone = CityForgeZone.Home;
@@ -156,6 +161,7 @@ namespace SlopCity
 
         public bool IsOpen { get { return opened; } }
         public bool EditingEnabled { get { return editingEnabled; } }
+        public bool AutosaveInFlight { get { return autosaveInFlight; } }
         public View ActiveView { get { return view; } }
         public CityForgeCoord SelectedChunk { get { return selected; } }
         public CityForgeChunkPlan Draft { get { return draft == null ? null : draft.Clone(); } }
@@ -201,9 +207,20 @@ namespace SlopCity
                 pendingOpenWhenReady = false;
                 openedFromPendingRequest = Open();
             }
-            if (!openedFromPendingRequest && editingEnabled && Input.GetKeyDown(toggleKey)) { if (opened) Close(); else RequestLauncherOpen(); }
+            if (!openedFromPendingRequest && editingEnabled && !autosaveInFlight && Input.GetKeyDown(toggleKey)) { if (opened) Close(); else RequestLauncherOpen(); }
             if (!opened) UpdateLauncherPointerActivation();
             if (!opened) return;
+            if (autosaveInFlight)
+            {
+                // Keep the plan on screen while a hosted bridge verifies its
+                // authoritative write. Do not let a stale mouse up, a mode
+                // key, or a map tap mutate a second draft meanwhile.
+                ResetBuildUiPointerActivation();
+                ResetNativeMapPointer();
+                mapMousePressed = false;
+                mapMouseDragged = false;
+                return;
+            }
             bool mouseStartedOverBuildUi = UpdateBuildUiPointerActivation();
             if (!opened) return;
             UpdateMapMousePointer(mouseStartedOverBuildUi);
@@ -263,6 +280,11 @@ namespace SlopCity
                 return;
             }
             if (!canvas || !canvas.gameObject.activeInHierarchy) return;
+            if (autosaveInFlight)
+            {
+                current.Use();
+                return;
+            }
 
             if (UsesNativeMacMapPointer())
             {
@@ -433,7 +455,14 @@ namespace SlopCity
             selected = coordinate; hasHoveredCell = false; ResetAtomicDrafts(draft); history = new SlopCityCityForgeDraftHistory(draft); controller.StreamAt(selected); ShowStrategicMap(); FocusCamera(); RefreshUi(); RefreshBuildOverlay(); return true;
         }
 
-        public void SelectView(View next) { view = next; RefreshUi(); RefreshBuildOverlay(); }
+        public void SelectView(View next)
+        {
+            if (autosaveInFlight) { SetMessage("Saving City Forge…"); return; }
+            view = next;
+            RefreshUi();
+            RefreshBuildOverlay();
+            SetMessage(ViewHint(next));
+        }
         public bool TrySetGround(int cellX, int cellZ, bool remove)
         {
             if (draft == null || cellX < 0 || cellX > 8 || cellZ < 0 || cellZ > 8) return false;
@@ -463,7 +492,12 @@ namespace SlopCity
             }
             next.groundCells.Sort();
             if (!remove) QueueGroundPlacement(selected, cell);
-            bool applied = Apply(next, remove ? "Island ground cleared." : "Island ground laid.");
+            string success = remove
+                ? "Island ground cleared."
+                : HasAdjacentGroundPair(new HashSet<int>(next.groundCells))
+                    ? "Island ground laid. Next: Streets — click either touching cell to make their shared street."
+                    : "Island ground laid. Next: lay one touching cell before adding a street or building.";
+            bool applied = Apply(next, success);
             if (!applied && !remove) ClearPendingGroundPlacement(selected, cell);
             if (applied && remove) ClearRecentGroundPlacement(selected, cell);
             return applied;
@@ -481,7 +515,7 @@ namespace SlopCity
             }
             CityForgeChunkPlan next = draft.Clone();
             SetRoad(next, cellX, cellZ, direction, roadClass, remove);
-            if (!road.IsBoundary) return Apply(next, remove ? "Street removal planned." : "Street planned.");
+            if (!road.IsBoundary) return Apply(next, remove ? "Street removal planned." : "Street planned. Next: Lots — click a street-touching ground cell.");
 
             CityForgeCoord neighbour = SlopCityCityForge.Neighbour(selected, direction);
             if (SlopCityCityForge.IsProtectedOldCity(neighbour)) { SetMessage("The Old City boundary cannot be changed."); return false; }
@@ -497,7 +531,7 @@ namespace SlopCity
             return ApplyAtomic(new Dictionary<CityForgeCoord, CityForgeChunkPlan>
             {
                 { next.coord, next }, { reciprocal.coord, reciprocal }
-            }, remove ? "Street removal planned on both sides of the boundary." : "Street connection planned on both sides of the boundary.");
+            }, remove ? "Street removal planned on both sides of the boundary." : "Street connection planned. Next: Lots — click a street-touching ground cell.");
         }
         public bool TryPlaceLot(IEnumerable<int> cells, CityForgeZone zone, string parcelId = null)
         {
@@ -505,7 +539,7 @@ namespace SlopCity
             if (selectedCells.Count == 0 || selectedCells.Count > 81 || selectedCells.Any(item => item < 0 || item >= 81) || (draft.parcels ?? new List<CityForgeParcel>()).Any(parcel => parcel != null && parcel.cells != null && parcel.cells.Intersect(selectedCells).Any())) return false;
             HashSet<int> ground = new HashSet<int>(draft.groundCells ?? new List<int>());
             if (selectedCells.Any(cell => !ground.Contains(cell))) { SetMessage("Lay island ground under every lot before zoning it."); return false; }
-            CityForgeChunkPlan next = draft.Clone(); next.parcels.Add(new CityForgeParcel { id = string.IsNullOrEmpty(parcelId) ? NextId("parcel") : parcelId, zone = zone, cells = selectedCells, entranceEdge = CityForgeDirection.North }); return Apply(next, "Lot planned.");
+            CityForgeChunkPlan next = draft.Clone(); next.parcels.Add(new CityForgeParcel { id = string.IsNullOrEmpty(parcelId) ? NextId("parcel") : parcelId, zone = zone, cells = selectedCells, entranceEdge = CityForgeDirection.North }); return Apply(next, "Lot planned. Next: Buildings — choose a design, then click this lot.");
         }
         public bool TryPlaceBuilding(string parcelId, string blueprintId, string facadeId, string roofId, int floors, CityForgeDirection entrance, string storefrontId = null, string interiorRole = null)
         {
@@ -519,7 +553,7 @@ namespace SlopCity
                 return false;
             }
             this.entrance = resolvedEntrance;
-            CityForgeChunkPlan next = draft.Clone(); next.buildings.Add(new CityForgeBuilding { id = NextId("building"), parcelId = parcelId, blueprintId = blueprintId, facadeId = facadeId, roofId = roofId, floors = floors, entranceEdge = resolvedEntrance, storefrontId = storefrontId ?? string.Empty, interiorRole = interiorRole ?? string.Empty }); return Apply(next, "Building kit placed facing the " + DirectionLabel(resolvedEntrance).ToLowerInvariant() + " street.");
+            CityForgeChunkPlan next = draft.Clone(); next.buildings.Add(new CityForgeBuilding { id = NextId("building"), parcelId = parcelId, blueprintId = blueprintId, facadeId = facadeId, roofId = roofId, floors = floors, entranceEdge = resolvedEntrance, storefrontId = storefrontId ?? string.Empty, interiorRole = interiorRole ?? string.Empty }); return Apply(next, "Building placed facing the " + DirectionLabel(resolvedEntrance).ToLowerInvariant() + " street. Add services or keep designing.");
         }
         public bool TryPlaceService(string parcelId, string type)
         {
@@ -559,6 +593,7 @@ namespace SlopCity
         }
         public void Undo()
         {
+            if (autosaveInFlight) { SetMessage("Saving City Forge…"); return; }
             if (atomicUndo.Count == 0) return;
             Dictionary<CityForgeCoord, CityForgeChunkPlan> restore = atomicUndo.Pop();
             atomicRedo.Push(CloneDraftMap(atomicDrafts));
@@ -567,6 +602,7 @@ namespace SlopCity
 
         public void Redo()
         {
+            if (autosaveInFlight) { SetMessage("Saving City Forge…"); return; }
             if (atomicRedo.Count == 0) return;
             Dictionary<CityForgeCoord, CityForgeChunkPlan> restore = atomicRedo.Pop();
             atomicUndo.Push(CloneDraftMap(atomicDrafts));
@@ -575,6 +611,7 @@ namespace SlopCity
 
         public void Preview()
         {
+            if (autosaveInFlight) { SetMessage("Saving City Forge…"); return; }
             if (draft == null) return;
             List<CityForgeChunkPlan> plans = PlansForCommit();
             if (!controller.TryResolveDraftPreview(plans, selected, out CityForgeResolvedChunk preview, out CityForgeValidation validation)) { SetMessage(validation.Messages.FirstOrDefault() ?? "Check this plan first."); return; }
@@ -597,9 +634,10 @@ namespace SlopCity
                 return RestoreDurableOfflineDraft(validation.Messages.FirstOrDefault() ?? "This change cannot be saved.");
             if (CommitRequested != null)
             {
+                SetAutosaveInFlight(true);
                 NotifyDraftsChanged(plans);
                 CommitRequested(plans.Select(item => item.Clone()).ToList());
-                SetMessage("Auto-saving City Forge…");
+                if (autosaveInFlight) SetMessage("Saving City Forge…");
                 return true;
             }
             // The player is safely gated in the top-down editor, so update the
@@ -678,6 +716,25 @@ namespace SlopCity
         }
 
         public void SetStatusMessage(string value) { SetMessage(value); }
+
+        /// <summary>
+        /// Lets an authoritative owner bridge hold this editor open while one
+        /// autosave is being verified. This deliberately does not alter edit
+        /// permission or close the map: the player keeps their plan in view
+        /// and receives a clear saving state instead of being sent back to
+        /// first person after every tile.
+        /// </summary>
+        public void SetAutosaveInFlight(bool value)
+        {
+            if (autosaveInFlight == value) return;
+            autosaveInFlight = value;
+            ResetBuildUiPointerActivation();
+            ResetNativeMapPointer();
+            mapMousePressed = false;
+            mapMouseDragged = false;
+            if (autosaveInFlight) SetMessage("Saving City Forge…");
+            RefreshUi();
+        }
 
         /// <summary>Lets an offline setup or a hosted owner bridge expose this editor only when the player may edit.</summary>
         public void SetEditingEnabled(bool value)
@@ -992,6 +1049,7 @@ namespace SlopCity
 
         private void ClickMap(Vector3 screenPosition)
         {
+            if (autosaveInFlight) { SetMessage("Saving City Forge…"); return; }
             if (!TryGetMapCell(screenPosition, out CityForgeCoord coord, out int x, out int z)) return;
             if (!coord.Equals(selected)) { SelectChunk(coord); return; }
             if (view == View.Streets) ToggleStreet(x, z);
@@ -1004,7 +1062,38 @@ namespace SlopCity
 
         private void ToggleStreet(int x, int z)
         {
-            TrySetRoad(x, z, roadDirection, roadClass, removeRoad);
+            CityForgeDirection direction = roadDirection;
+            // The first two neighbouring island cells have exactly one
+            // sensible shared edge. Choose it for the player so an otherwise
+            // correct starter block never fails simply because Road side was
+            // still set to its previous value.
+            if (!removeRoad && TryFindUniqueGroundedRoadEdge(x, z, out CityForgeDirection inferred))
+            {
+                direction = inferred;
+                if (roadDirection != inferred)
+                {
+                    roadDirection = inferred;
+                    RefreshUi();
+                    RefreshBuildOverlay();
+                }
+            }
+            TrySetRoad(x, z, direction, roadClass, removeRoad);
+        }
+
+        private bool TryFindUniqueGroundedRoadEdge(int x, int z, out CityForgeDirection direction)
+        {
+            direction = CityForgeDirection.North;
+            if (draft == null || x < 0 || x >= SlopCityCityForge.GridSize || z < 0 || z >= SlopCityCityForge.GridSize) return false;
+            HashSet<int> ground = new HashSet<int>(draft.groundCells ?? new List<int>());
+            if (!ground.Contains(x + z * SlopCityCityForge.GridSize)) return false;
+            List<CityForgeDirection> candidates = new List<CityForgeDirection>();
+            if (z + 1 < SlopCityCityForge.GridSize && ground.Contains(x + (z + 1) * SlopCityCityForge.GridSize)) candidates.Add(CityForgeDirection.North);
+            if (x + 1 < SlopCityCityForge.GridSize && ground.Contains(x + 1 + z * SlopCityCityForge.GridSize)) candidates.Add(CityForgeDirection.East);
+            if (z > 0 && ground.Contains(x + (z - 1) * SlopCityCityForge.GridSize)) candidates.Add(CityForgeDirection.South);
+            if (x > 0 && ground.Contains(x - 1 + z * SlopCityCityForge.GridSize)) candidates.Add(CityForgeDirection.West);
+            if (candidates.Count != 1) return false;
+            direction = candidates[0];
+            return true;
         }
 
         private void AddLot(int x, int z)
@@ -1468,6 +1557,12 @@ namespace SlopCity
         {
             GameObject root = new GameObject("CityForgeBuildMode", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
             root.transform.SetParent(transform, false); canvas = root.GetComponent<Canvas>(); canvas.renderMode = RenderMode.ScreenSpaceOverlay; canvas.overrideSorting = true; canvas.sortingOrder = CityForgeCanvasSortingOrder;
+            // The Mac player uses the native OnGUI path below for one
+            // coherent point/pixel conversion. Leaving UGUI's raycaster live
+            // would give the same click a second, stale Input.mousePosition
+            // interpretation on Retina and mixed-DPI displays.
+            GraphicRaycaster buildRaycaster = root.GetComponent<GraphicRaycaster>();
+            if (buildRaycaster) buildRaycaster.enabled = !UsesNativeMacMapPointer();
             CanvasScaler scaler = root.GetComponent<CanvasScaler>(); scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize; scaler.referenceResolution = new Vector2(1280, 720);
             // A root overlay Canvas is screen-sized even when its RectTransform
             // appears to be resized. Giving that root an Image made an
@@ -1535,6 +1630,39 @@ namespace SlopCity
             controls.Add(button.gameObject);
         }
 
+        /// <summary>
+        /// Keeps the first usable city block legible without sneaking a
+        /// default island into the Sky Sprawl. A player always sees the one
+        /// next prerequisite for ground, street, lot, and building.
+        /// </summary>
+        private string BuildProgressHint()
+        {
+            if (autosaveInFlight) return "Saving City Forge…";
+            if (draft == null) return ViewHint(view);
+            HashSet<int> ground = new HashSet<int>(draft.groundCells ?? new List<int>());
+            if (!HasAdjacentGroundPair(ground)) return "Step 1 of 4 · Lay two touching island cells.";
+            if (!(draft.roads ?? new List<CityForgeRoad>()).Any(road => road != null && SlopCityCityForge.RoadHasIslandGround(draft, road)))
+                return "Step 2 of 4 · Streets: click either touching cell; its shared edge is chosen for you.";
+            if (!(draft.parcels ?? new List<CityForgeParcel>()).Any(parcel => HasStreetFrontage(parcel, null)))
+                return "Step 3 of 4 · Lots: click a ground cell touching a street.";
+            if (!(draft.buildings ?? new List<CityForgeBuilding>()).Any(item => item != null))
+                return "Step 4 of 4 · Buildings: choose a kit, then click the street-fronted lot.";
+            return "Block ready · add services, screens, Cityworks, or keep designing.";
+        }
+
+        private static bool HasAdjacentGroundPair(HashSet<int> ground)
+        {
+            if (ground == null || ground.Count < 2) return false;
+            foreach (int cell in ground)
+            {
+                int x = cell % SlopCityCityForge.GridSize;
+                int z = cell / SlopCityCityForge.GridSize;
+                if (x + 1 < SlopCityCityForge.GridSize && ground.Contains(cell + 1)) return true;
+                if (z + 1 < SlopCityCityForge.GridSize && ground.Contains(cell + SlopCityCityForge.GridSize)) return true;
+            }
+            return false;
+        }
+
         private string ViewHint(View value)
         {
             switch (value)
@@ -1542,7 +1670,7 @@ namespace SlopCity
                 case View.Streets:
                     return removeRoad
                         ? "Choose a road side, then click any grid cell to erase it · the lit bar previews the road · drag to pan · scroll to zoom"
-                        : "Lay island ground under both cells first · choose a road side, then click to place it · the lit bar previews the road · drag to pan · scroll to zoom";
+                        : "Lay two touching island cells, then click either one · their shared road edge is chosen for you · drag to pan · scroll to zoom";
                 case View.Ground: return removeGround
                     ? "Erase ground mode · click a clear island cell to return it to open sky · lots and streets stay protected · every change auto-saves"
                     : "Lay ground mode · click open sky to make an island · click Mode: Lay ground to switch to erase · every change auto-saves";
@@ -1575,6 +1703,8 @@ namespace SlopCity
             GameObject root = new GameObject("CityForgeBuildLauncher", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
             root.transform.SetParent(transform, false);
             launcherCanvas = root.GetComponent<Canvas>(); launcherCanvas.renderMode = RenderMode.ScreenSpaceOverlay; launcherCanvas.overrideSorting = true; launcherCanvas.sortingOrder = CityForgeCanvasSortingOrder;
+            GraphicRaycaster launcherRaycaster = root.GetComponent<GraphicRaycaster>();
+            if (launcherRaycaster) launcherRaycaster.enabled = !UsesNativeMacMapPointer();
             CanvasScaler scaler = root.GetComponent<CanvasScaler>(); scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize; scaler.referenceResolution = new Vector2(1280, 720);
             launcherButton = Button(root.transform, "BUILD CITY", Vector2.zero, new Vector2(188f, 52f), true);
             RectTransform rect = launcherButton.GetComponent<RectTransform>(); rect.anchorMin = Vector2.zero; rect.anchorMax = Vector2.zero; rect.pivot = Vector2.zero; rect.anchoredPosition = new Vector2(22f, 22f);
@@ -1684,6 +1814,18 @@ namespace SlopCity
 
             if (Input.touchCount == 0)
             {
+                // macOS owns the complete mouse gesture in OnGUI using its
+                // native event coordinates. Reading legacy Input here races
+                // a stale Retina/mixed-display position against that raw
+                // gesture, which can turn a toolbar click into a map click.
+                if (UsesNativeMacMapPointer())
+                {
+                    launcherMousePressedInside = false;
+                    launcherMouseActivationSequence = activationSequence;
+                    launcherMouseGestureConsumed = false;
+                    observedLauncherPointerActivationSequence = activationSequence;
+                    return;
+                }
                 bool mouseInside = LauncherContains(Input.mousePosition);
                 if (Input.GetMouseButtonDown(0))
                 {
@@ -1768,6 +1910,17 @@ namespace SlopCity
             {
                 ClearBuildUiTouchCapture();
                 suppressBuildUiTouchUntilNoTouches = false;
+                // On macOS, OnGUI owns pointer down/up and uses the native
+                // event coordinate throughout. Do not compete with it here
+                // through legacy Input.mousePosition: that value can lag a
+                // Retina display change and capture the wrong toolbar cell.
+                if (UsesNativeMacMapPointer())
+                {
+                    buildUiMouseCapture = null;
+                    buildUiMouseSurfaceCapture = false;
+                    buildUiMousePressFrame = -1;
+                    return false;
+                }
                 if (Input.GetMouseButtonDown(0))
                 {
                     buildUiMouseSurfaceCapture = BuildUiSurfaceContains(Input.mousePosition);
@@ -2109,10 +2262,16 @@ namespace SlopCity
         private void RefreshUi()
         {
             if (heading) heading.text = "City Forge · " + view + " · block " + selected;
-            if (contextHint) contextHint.text = ViewHint(view);
-            if (undoButton) undoButton.interactable = atomicUndo.Count > 0;
-            if (redoButton) redoButton.interactable = atomicRedo.Count > 0;
-            foreach (KeyValuePair<View, Button> pair in viewButtons) if (pair.Value) pair.Value.GetComponent<Image>().color = pair.Key == view ? new Color(.63f, .82f, .35f, 1f) : new Color(.23f, .34f, .25f, 1f);
+            if (contextHint) contextHint.text = BuildProgressHint();
+            foreach (Button button in buildUiButtons) if (button) button.interactable = !autosaveInFlight;
+            if (undoButton) undoButton.interactable = !autosaveInFlight && atomicUndo.Count > 0;
+            if (redoButton) redoButton.interactable = !autosaveInFlight && atomicRedo.Count > 0;
+            foreach (KeyValuePair<View, Button> pair in viewButtons)
+                if (pair.Value)
+                {
+                    pair.Value.interactable = !autosaveInFlight;
+                    pair.Value.GetComponent<Image>().color = pair.Key == view ? new Color(.63f, .82f, .35f, 1f) : new Color(.23f, .34f, .25f, 1f);
+                }
             foreach (KeyValuePair<View, List<GameObject>> pair in viewControls)
                 foreach (GameObject control in pair.Value)
                     if (control) control.SetActive(pair.Key == view);
