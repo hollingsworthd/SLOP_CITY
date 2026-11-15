@@ -507,11 +507,16 @@ namespace SlopCity
             if (world && !world.PrepareWalkingSpace(position)) return;
             controller.enabled = false;
             transform.position = position;
+            // A named teleport always returns control to the player. Leaving
+            // an old vehicle/editor movement override active could leave the
+            // camera behind in the Old City while the player root moved to the
+            // Sky Sprawl.
+            externalMovement = false;
             seated = false; verticalSpeed = -2f; yaw = heading; pitch = 0f;
-            if (!externalMovement) viewCamera.transform.localPosition = Vector3.up * standingEyeHeight;
+            viewCamera.transform.localPosition = Vector3.up * standingEyeHeight;
             viewCamera.transform.localRotation = Quaternion.identity;
             transform.rotation = Quaternion.Euler(0f, heading, 0f);
-            controller.enabled = !externalMovement;
+            controller.enabled = true;
             Physics.SyncTransforms();
             InvalidateNearbyActionCache();
         }

@@ -11,11 +11,13 @@ namespace SlopCity
     [DisallowMultipleComponent]
     public sealed class SlopCityCityForgeTravel : MonoBehaviour
     {
-        // The small starter deck is an intentional safe arrival point, not
+        // The narrow entry gangway is an intentional safe arrival point, not
         // default Sprawl ground. Keep travel, fall recovery, and safe reload
-        // on the same known-solid spot.
+        // on the same known-solid spot. It stops at the first editable chunk:
+        // all full-size ground beyond it must be player-laid island ground.
         public static readonly CityForgeCoord StarterEntryCoordinate = new CityForgeCoord(2, 0);
-        public static readonly Vector3 StarterEntryPosition = new Vector3(148f, 2f, 36f);
+        public static readonly Vector3 StarterEntryPosition = new Vector3(141f, 2f, 36f);
+        private const float StarterEntryHeading = 90f;
 
         /// <summary>
         /// The crossing slightly overlaps the immutable Old City grid. Treat
@@ -29,10 +31,10 @@ namespace SlopCity
 
         public static bool IsStarterEntryDeck(Vector3 position)
         {
-            // Matches the physical deck made in EnsureBridge(), with a small
-            // edge allowance so a player stepping off it retains Sprawl fall
-            // recovery instead of being sent to the couch.
-            return position.x >= 137f && position.x <= 153f && position.z >= 31f && position.z <= 41f;
+            // Matches the physical gangway made in EnsureBridge(), plus a
+            // small edge allowance so a player stepping off it retains Sprawl
+            // fall recovery instead of being sent to the couch.
+            return position.x >= 137f && position.x <= 145f && position.z >= 33.5f && position.z <= 38.5f;
         }
         [SerializeField] private SlopCityCityForgeController controller;
         [SerializeField] private Transform traveler;
@@ -77,7 +79,10 @@ namespace SlopCity
             // player teleport so the capsule and eye return together.
             SlopCityFirstPerson firstPerson = traveler.GetComponent<SlopCityFirstPerson>();
             if (firstPerson)
-                firstPerson.TeleportTo(StarterEntryPosition, traveler.eulerAngles.y);
+                // Face outward into open sky. Arriving while still looking
+                // inward at the Old City made its finite core floor read like
+                // default Sprawl terrain.
+                firstPerson.TeleportTo(StarterEntryPosition, StarterEntryHeading);
             else
             {
                 CharacterController character = traveler.GetComponent<CharacterController>();
@@ -92,12 +97,12 @@ namespace SlopCity
         {
             if (bridge) return;
             bridge = new GameObject("CityForge_StarterSprawlBridge"); bridge.transform.SetParent(transform, false);
-            // Extend just far enough beyond the Old City seam for the entry
-            // spawn to be safely above the void. The surrounding Sprawl stays
-            // open sky until the player lays island ground in City Forge.
-            Build("Deck", new Vector3(145f, -.12f, 36f), new Vector3(14f, .24f, 8f));
-            Build("NorthRail", new Vector3(145f, 1f, 39.5f), new Vector3(14f, 2f, .16f));
-            Build("SouthRail", new Vector3(145f, 1f, 32.5f), new Vector3(14f, 2f, .16f));
+            // A clear, narrow gangway crosses the Old City seam. Do not put
+            // a deck, rails, or starter pad into the editable chunk: those
+            // looked like a default floor and prevented the player from
+            // walking straight into the cloud-filled void. The bridge ends
+            // exactly at x=144, where player-authored 8m island cells begin.
+            Build("OpenSkyGangway", new Vector3(141f, -.12f, 36f), new Vector3(6f, .24f, 2.2f));
         }
 
         private void Build(string name, Vector3 position, Vector3 scale)

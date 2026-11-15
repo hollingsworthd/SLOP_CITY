@@ -1,4 +1,3 @@
-using System.Collections.Generic;
 using UnityEngine;
 
 namespace SlopCity
@@ -20,8 +19,13 @@ namespace SlopCity
         // look like it still had an infinite floor. Keep the authored city
         // intact everywhere else and suppress only that renderer while the
         // player is in the sky-island frontier.
-        private readonly List<Renderer> distantGroundRenderers = new List<Renderer>();
-        private readonly List<bool> distantGroundWasEnabled = new List<bool>();
+        // The authored ground participates in static batching.  Toggling its
+        // MeshRenderer alone is not reliable on native builds: its baked
+        // draw can survive even after Renderer.enabled is false.  Hide the
+        // actual object while the Sky Sprawl is active, then restore precisely
+        // the scene's prior active state when the player returns to Old City.
+        private GameObject distantGroundObject;
+        private bool distantGroundWasActive;
         private bool distantGroundSuppressed;
 
         public void Configure(Transform target)
@@ -47,15 +51,19 @@ namespace SlopCity
             cloudMaterial.DisableKeyword("_ALPHATEST_ON");
             cloudMaterial.EnableKeyword("_ALPHABLEND_ON");
             cloudMaterial.renderQueue = 3000;
-            float[] depths = { -55f, -90f, -140f, -210f };
-            float[] spans = { 190f, 250f, 320f, 400f };
+            // The first loose bank sits close enough to be visible from the
+            // lip of an island. The remaining banks continue far below it, so
+            // a fall is a long descent through clouds rather than an immediate
+            // fog reset or a distant empty blue void.
+            float[] depths = { -16f, -48f, -95f, -150f, -215f };
+            float[] spans = { 120f, 190f, 260f, 330f, 410f };
             for (int index = 0; index < depths.Length; index++)
             {
                 // Solid transparent quads read as an endless ground plane,
                 // especially on a shallow first-person camera.  Use a loose
                 // bank of collider-free cloud puffs instead, so the player
                 // sees open air between layers while falling through them.
-                int puffCount = 12 + index * 3;
+                int puffCount = 8 + index * 3;
                 for (int puff = 0; puff < puffCount; puff++)
                 {
                     float seed = puff * 2.3999632f + index * .71f;
@@ -150,33 +158,21 @@ namespace SlopCity
             {
                 // Cache at the time it is first needed rather than in Awake:
                 // the scene object can be enabled after this runtime bootstrap.
-                if (distantGroundRenderers.Count == 0)
+                if (!distantGroundObject)
                 {
-                    GameObject distantGround = GameObject.Find("Distant_City_Ground");
-                    if (distantGround)
-                    {
-                        foreach (Renderer renderer in distantGround.GetComponentsInChildren<Renderer>(true))
-                        {
-                            if (!renderer) continue;
-                            distantGroundRenderers.Add(renderer);
-                            distantGroundWasEnabled.Add(renderer.enabled);
-                        }
-                    }
+                    distantGroundObject = GameObject.Find("Distant_City_Ground");
+                    if (distantGroundObject) distantGroundWasActive = distantGroundObject.activeSelf;
                 }
-                foreach (Renderer renderer in distantGroundRenderers)
-                    if (renderer) renderer.enabled = false;
+                if (distantGroundObject && distantGroundObject.activeSelf)
+                {
+                    distantGroundObject.SetActive(false);
+                }
                 distantGroundSuppressed = true;
                 return;
             }
 
             if (!distantGroundSuppressed) return;
-            for (int index = 0; index < distantGroundRenderers.Count; index++)
-            {
-                Renderer renderer = distantGroundRenderers[index];
-                if (renderer) renderer.enabled = distantGroundWasEnabled[index];
-            }
-            distantGroundRenderers.Clear();
-            distantGroundWasEnabled.Clear();
+            if (distantGroundObject) distantGroundObject.SetActive(distantGroundWasActive);
             distantGroundSuppressed = false;
         }
     }
