@@ -145,6 +145,9 @@ namespace SlopCity
         private Vector2 mapGuiMousePrevious;
         private Vector2 mapGuiPointer;
         private bool hasMapGuiPointer;
+        // Temporary macOS QA probe. Remove after collecting the native player
+        // coordinate contract; it caps itself so it cannot flood Player.log.
+        private int nativePointerDebugCount;
         private bool hasHoveredCell;
         private CityForgeCoord hoveredCell;
         private static readonly string[] BuildingBlueprintOptions =
@@ -252,6 +255,7 @@ namespace SlopCity
             Vector2 screenPosition = UsesNativeMacMapPointer()
                 ? GuiPointerToCanvasScreenPoint(current, opened ? canvas : launcherCanvas)
                 : Input.mousePosition;
+            if (UsesNativeMacMapPointer() && type == EventType.MouseDown) LogNativePointer(current, screenPosition);
 
             if (!opened)
             {
@@ -319,6 +323,24 @@ namespace SlopCity
             float pixelsPerPointY = probePixelsY > 0 ? probePixelsY / probePoints : 1f;
             return new Vector2(pixelRect.x + current.mousePosition.x * pixelsPerPointX,
                 pixelRect.y + pixelRect.height - current.mousePosition.y * pixelsPerPointY);
+        }
+
+        // QA-only investigation aid for the macOS build. It records the two
+        // native input spaces and the render rectangles for eight presses.
+        private void LogNativePointer(Event current, Vector2 mappedPosition)
+        {
+            if (nativePointerDebugCount >= 8) return;
+            nativePointerDebugCount++;
+            Rect canvasPixels = canvas ? canvas.pixelRect : new Rect(0f, 0f, Screen.width, Screen.height);
+            Rect cameraPixels = buildCamera ? buildCamera.pixelRect : new Rect(0f, 0f, Screen.width, Screen.height);
+            Debug.Log("CITY_FORGE_POINTER gui=" + current.mousePosition
+                + " input=" + Input.mousePosition
+                + " mapped=" + mappedPosition
+                + " screen=" + Screen.width + "x" + Screen.height
+                + " canvas=" + canvasPixels
+                + " camera=" + cameraPixels
+                + " toolbarRaw=" + BuildUiSurfaceContains(Input.mousePosition)
+                + " toolbarMapped=" + BuildUiSurfaceContains(mappedPosition));
         }
 
         /// <summary>Owns reliable Mac press/release timing in the same
