@@ -210,14 +210,11 @@ namespace SlopCity
             if (current == null || current.button != 0) return;
             EventType type = current.type == EventType.Used ? current.rawType : current.type;
             if (type != EventType.MouseDown && type != EventType.MouseUp) return;
-            if (type == EventType.MouseUp && (opened ? canvas : launcherCanvas))
-            {
-                Canvas diagnosticCanvas = opened ? canvas : launcherCanvas;
-                Debug.Log("[CityForge pointer diagnostic] input=" + Input.mousePosition + " event=" + current.mousePosition + " guiScreen=" + GUIUtility.GUIToScreenPoint(current.mousePosition) + " screen=" + Screen.width + "x" + Screen.height + " canvas=" + diagnosticCanvas.pixelRect + " camera=" + (buildCamera ? buildCamera.pixelRect.ToString() : "none"));
-            }
-            // IMGUI provides dependable desktop press/release timing, but its
-            // pointer coordinate can be point-sized on Retina. The legacy
-            // input coordinate is normalized at every render-target boundary.
+            // Input.mousePosition is already global, lower-left screen pixels:
+            // the exact coordinate contract expected by UGUI and Camera.
+            // Do not remap it through a canvas or camera pixel rect; that
+            // breaks pointer targeting when a render target is letterboxed or
+            // rendered at a different backing resolution.
             Vector2 screenPosition = Input.mousePosition;
 
             if (!opened)
@@ -818,26 +815,11 @@ namespace SlopCity
             buildCamera.transform.position -= new Vector3(movement.x * metresPerPixel, 0f, movement.y * metresPerPixel);
         }
 
-        /// <summary>
-        /// Unity's input API is expressed in the reported Screen space, while
-        /// a Retina camera or overlay can render to a larger backing-pixel
-        /// rectangle. Normalize once at the boundary so a pointer position
-        /// refers to the same visible place in either space.
-        /// </summary>
-        private static Vector2 PointerInPixelRect(Vector2 inputPosition, Rect pixelRect)
-        {
-            if (pixelRect.width <= 0f || pixelRect.height <= 0f) return inputPosition;
-            float inputWidth = Mathf.Max(1f, Screen.width);
-            float inputHeight = Mathf.Max(1f, Screen.height);
-            return new Vector2(pixelRect.x + inputPosition.x * pixelRect.width / inputWidth,
-                pixelRect.y + inputPosition.y * pixelRect.height / inputHeight);
-        }
-
-        private bool TryGetMapCell(Vector3 inputPosition, out CityForgeCoord coordinate, out int x, out int z)
+        private bool TryGetMapCell(Vector3 screenPosition, out CityForgeCoord coordinate, out int x, out int z)
         {
             coordinate = default(CityForgeCoord); x = z = 0;
             if (!buildCamera) return false;
-            Ray ray = buildCamera.ScreenPointToRay(PointerInPixelRect(new Vector2(inputPosition.x, inputPosition.y), buildCamera.pixelRect));
+            Ray ray = buildCamera.ScreenPointToRay(screenPosition);
             if (!new Plane(Vector3.up, Vector3.zero).Raycast(ray, out float distance)) return false;
             Vector3 point = ray.GetPoint(distance);
             coordinate = new CityForgeCoord(Mathf.FloorToInt(point.x / SlopCityCityForge.ChunkSizeMeters), Mathf.FloorToInt(point.z / SlopCityCityForge.ChunkSizeMeters));
@@ -894,9 +876,7 @@ namespace SlopCity
         {
             CityForgeParcel parcel = ParcelAt(x, z);
             if (parcel == null) { SetMessage("Add a lot first."); return; }
-            CityForgeChunkPlan next = draft.Clone();
-            next.services.Add(new CityForgeService { id = NextId("service"), type = serviceType, parcelId = parcel.id });
-            Apply(next, "Service added.");
+            TryPlaceService(parcel.id, serviceType);
         }
 
         private void AddCityworks(int x, int z)
@@ -1480,7 +1460,7 @@ namespace SlopCity
         private bool LauncherContains(Vector2 screenPosition)
         {
             RectTransform rect = launcherButton && launcherButton.isActiveAndEnabled ? launcherButton.GetComponent<RectTransform>() : null;
-            return rect && RectTransformUtility.RectangleContainsScreenPoint(rect, PointerInPixelRect(screenPosition, launcherCanvas ? launcherCanvas.pixelRect : new Rect(0f, 0f, Screen.width, Screen.height)), null);
+            return rect && RectTransformUtility.RectangleContainsScreenPoint(rect, screenPosition, null);
         }
 
         private void ResetLauncherPointerActivation()
@@ -1576,17 +1556,16 @@ namespace SlopCity
         private bool BuildUiSurfaceContains(Vector2 screenPosition)
         {
             if (!buildUiSurface || !buildUiSurface.gameObject.activeInHierarchy) return false;
-            return RectTransformUtility.RectangleContainsScreenPoint(buildUiSurface, PointerInPixelRect(screenPosition, canvas ? canvas.pixelRect : new Rect(0f, 0f, Screen.width, Screen.height)), null);
+            return RectTransformUtility.RectangleContainsScreenPoint(buildUiSurface, screenPosition, null);
         }
 
         private Button BuildUiActivatableButtonAt(Vector2 screenPosition)
         {
-            Vector2 canvasPosition = PointerInPixelRect(screenPosition, canvas ? canvas.pixelRect : new Rect(0f, 0f, Screen.width, Screen.height));
             for (int index = buildUiButtons.Count - 1; index >= 0; index--)
             {
                 Button button = buildUiButtons[index];
                 RectTransform rect = button ? button.GetComponent<RectTransform>() : null;
-                if (button && button.IsActive() && button.IsInteractable() && rect && RectTransformUtility.RectangleContainsScreenPoint(rect, canvasPosition, null)) return button;
+                if (button && button.IsActive() && button.IsInteractable() && rect && RectTransformUtility.RectangleContainsScreenPoint(rect, screenPosition, null)) return button;
             }
             return null;
         }

@@ -731,6 +731,7 @@ namespace SlopCity
         {
             Dictionary<string, CityForgeParcel> values = new Dictionary<string, CityForgeParcel>(StringComparer.Ordinal);
             HashSet<int> occupied = new HashSet<int>();
+            HashSet<int> ground = new HashSet<int>(plan.groundCells ?? new List<int>());
             if (plan.parcels == null) return values;
             foreach (CityForgeParcel parcel in plan.parcels)
             {
@@ -746,11 +747,14 @@ namespace SlopCity
                     continue;
                 }
                 bool cellError = false;
+                bool missingGround = false;
                 foreach (int cell in parcel.cells)
                 {
                     if (cell < 0 || cell >= SlopCityCityForge.GridSize * SlopCityCityForge.GridSize || !occupied.Add(cell)) cellError = true;
+                    else if (!ground.Contains(cell)) missingGround = true;
                 }
                 if (cellError) validation.Refuse("Lots cannot overlap.");
+                if (missingGround) validation.Refuse("A lot needs player-laid island ground beneath every cell.");
             }
             return values;
         }
