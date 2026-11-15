@@ -26,7 +26,7 @@ namespace SlopCity
         private Text launcherStatus;
         private Button undoButton, redoButton;
         private Button launcherButton;
-        private Button roadButton, removeRoadButton, roadDirectionButton, zoneButton, kitButton, facadeButton, roofButton, storefrontButton, entranceButton, floorsButton, interiorButton, serviceButton, landmarkButton, situationButton, situationStateButton, mountButton, hostButton, targetButton, deviceButton;
+        private Button groundActionButton, roadButton, removeRoadButton, roadDirectionButton, zoneButton, kitButton, facadeButton, roofButton, storefrontButton, entranceButton, floorsButton, interiorButton, serviceButton, landmarkButton, situationButton, situationStateButton, mountButton, hostButton, targetButton, deviceButton;
         private readonly Dictionary<View, Button> viewButtons = new Dictionary<View, Button>();
         private readonly Dictionary<View, List<GameObject>> viewControls = new Dictionary<View, List<GameObject>>();
         private CityForgeCoord selected;
@@ -38,6 +38,10 @@ namespace SlopCity
         private CityForgeDirection roadDirection = CityForgeDirection.North;
         private CityForgeZone lotZone = CityForgeZone.Home;
         private bool removeRoad;
+        // Ground is deliberately a non-destructive tool by default. Clearing
+        // island cells is a distinct choice so one more click cannot make a
+        // supported lot or street look like a failed ground placement.
+        private bool removeGround;
         private string buildingBlueprint = "walk-up", facade = "wet-masonry", roof = "service-roof", storefront = "none", interior = "";
         private string serviceType = "care-station", landmarkClass = "", landmarkOutcome = "", situationTemplate = "", situationState = "available", screenMount = "interior-wall-tv", screenDevice = "public-crt-01";
         private int screenHostMode;
@@ -311,15 +315,16 @@ namespace SlopCity
         }
 
         public void SelectView(View next) { view = next; RefreshUi(); RefreshBuildOverlay(); }
-        public bool TryToggleGround(int cellX, int cellZ)
+        public bool TrySetGround(int cellX, int cellZ, bool remove)
         {
             if (draft == null || cellX < 0 || cellX > 8 || cellZ < 0 || cellZ > 8) return false;
             int cell = cellX + cellZ * SlopCityCityForge.GridSize;
             CityForgeChunkPlan next = draft.Clone();
             if (next.groundCells == null) next.groundCells = new List<int>();
-            bool laid;
-            if (next.groundCells.Contains(cell))
+            bool hasGround = next.groundCells.Contains(cell);
+            if (remove)
             {
+                if (!hasGround) { SetMessage("This cell is already open sky. Switch to Lay ground to make an island."); return false; }
                 if ((next.parcels ?? new List<CityForgeParcel>()).Any(parcel => parcel != null && (parcel.cells ?? new List<int>()).Contains(cell)))
                 {
                     SetMessage("Remove the lot before clearing the island ground beneath it.");
@@ -331,15 +336,14 @@ namespace SlopCity
                     return false;
                 }
                 next.groundCells.Remove(cell);
-                laid = false;
             }
             else
             {
+                if (hasGround) { SetMessage("Island ground is already laid. Switch to Erase ground to clear it."); return false; }
                 next.groundCells.Add(cell);
-                laid = true;
             }
             next.groundCells.Sort();
-            return Apply(next, laid ? "Island ground laid." : "Island ground cleared.");
+            return Apply(next, remove ? "Island ground cleared." : "Island ground laid.");
         }
 
         public bool TrySetRoad(int cellX, int cellZ, CityForgeDirection direction, CityForgeRoadClass roadClass, bool remove)
@@ -464,7 +468,8 @@ namespace SlopCity
         {
             List<CityForgeChunkPlan> plans = PlansForCommit();
             if (plans.Count == 0) { SetMessage("Saved."); RefreshUi(); RefreshBuildOverlay(); return true; }
-            if (!controller.ValidateDraftOnly(plans, out CityForgeValidation validation)) { SetMessage(validation.Messages.FirstOrDefault() ?? "This change cannot be saved."); return false; }
+            if (!controller.ValidateDraftOnly(plans, out CityForgeValidation validation))
+                return RestoreDurableOfflineDraft(validation.Messages.FirstOrDefault() ?? "This change cannot be saved.");
             if (CommitRequested != null)
             {
                 NotifyDraftsChanged(plans);
@@ -475,7 +480,8 @@ namespace SlopCity
             // The player is safely gated in the top-down editor, so update the
             // nearby presentation immediately instead of teleporting them for
             // every individual map click.
-            if (!controller.TryCommit(plans, true, false, out validation)) { SetMessage(validation.Messages.FirstOrDefault() ?? "This change could not be saved."); return false; }
+            if (!controller.TryCommit(plans, true, false, out validation))
+                return RestoreDurableOfflineDraft(validation.Messages.FirstOrDefault() ?? "This change could not be saved.");
             foreach (CityForgeChunkPlan plan in plans)
             {
                 if (!controller.TryGetAccepted(plan.coord, out CityForgeChunkPlan accepted)) continue;
@@ -486,6 +492,36 @@ namespace SlopCity
             history = new SlopCityCityForgeDraftHistory(draft);
             controller.StreamAt(selected);
             ShowStrategicMap(); SetMessage(success); RefreshUi(); RefreshBuildOverlay(); return true;
+        }
+
+        /// <summary>
+        /// Offline edits are autosaves, not a separate pending/commit state.
+        /// If validation or PlayerPrefs rejects one, put the editor back on the
+        /// accepted city immediately so its overlay cannot masquerade as a
+        /// persistent change. Hosted bridges keep their own acknowledged draft
+        /// lifecycle and do not take this path.
+        /// </summary>
+        private bool RestoreDurableOfflineDraft(string failure)
+        {
+            if (controller == null || CommitRequested != null) { SetMessage(failure); return false; }
+            foreach (CityForgeCoord coordinate in atomicDrafts.Keys.ToList()) controller.DiscardPrivateDraft(coordinate);
+            try
+            {
+                CityForgeChunkPlan restored = controller.BeginDraft(selected);
+                draft = restored.Clone();
+                ResetAtomicDrafts(draft);
+                history = new SlopCityCityForgeDraftHistory(draft);
+                controller.StreamAt(selected);
+                ShowStrategicMap();
+                RefreshUi();
+                RefreshBuildOverlay();
+                SetMessage("Not saved — restored the last saved city. " + failure);
+            }
+            catch (Exception error)
+            {
+                SetMessage("Not saved. " + (string.IsNullOrEmpty(failure) ? error.Message : failure));
+            }
+            return false;
         }
 
         /// <summary>Called by a hosted bridge only after its authoritative D1 response is verified.</summary>
@@ -801,7 +837,7 @@ namespace SlopCity
             if (!TryGetMapCell(screenPosition, out CityForgeCoord coord, out int x, out int z)) return;
             if (!coord.Equals(selected)) { SelectChunk(coord); return; }
             if (view == View.Streets) ToggleStreet(x, z);
-            else if (view == View.Ground) TryToggleGround(x, z);
+            else if (view == View.Ground) TrySetGround(x, z, removeGround);
             else if (view == View.Lots) AddLot(x, z);
             else if (view == View.Buildings) AddBuilding(x, z);
             else if (view == View.Services) AddService(x, z);
@@ -947,6 +983,7 @@ namespace SlopCity
             RefreshBuildOverlay();
         }
         private void ToggleRoadRemoval() { removeRoad = !removeRoad; RefreshUi(); }
+        private void ToggleGroundRemoval() { removeGround = !removeGround; RefreshUi(); }
         private void CycleLotZone()
         {
             lotZone = (CityForgeZone)(((int)lotZone + 1) % 6);
@@ -1187,6 +1224,7 @@ namespace SlopCity
             Text autosave = Label(toolbar.transform, "Auto-saves", 13, new Vector2(760, -42), new Vector2(96, 30)); autosave.alignment = TextAnchor.MiddleCenter; autosave.color = new Color(.72f, .88f, .55f, 1f);
             Button exit = Button(toolbar.transform, "Return", new Vector2(862, -42), new Vector2(82, 30)); exit.onClick.AddListener(Close);
 
+            groundActionButton = Button(toolbar.transform, "Mode: Lay ground", new Vector2(12, -96), new Vector2(180, 32)); groundActionButton.onClick.AddListener(ToggleGroundRemoval); RegisterViewControl(View.Ground, groundActionButton);
             roadButton = Button(toolbar.transform, "Road", new Vector2(12, -96), new Vector2(160, 32)); roadButton.onClick.AddListener(CycleRoadClass); RegisterViewControl(View.Streets, roadButton);
             removeRoadButton = Button(toolbar.transform, "Add road", new Vector2(178, -96), new Vector2(112, 32)); removeRoadButton.onClick.AddListener(ToggleRoadRemoval); RegisterViewControl(View.Streets, removeRoadButton);
             roadDirectionButton = Button(toolbar.transform, "Direction", new Vector2(296, -96), new Vector2(144, 32)); roadDirectionButton.onClick.AddListener(CycleRoadDirection); RegisterViewControl(View.Streets, roadDirectionButton);
@@ -1238,7 +1276,9 @@ namespace SlopCity
                     return removeRoad
                         ? "Choose a road side, then click any grid cell to erase it · the lit bar previews the road · drag to pan · scroll to zoom"
                         : "Lay island ground under both cells first · choose a road side, then click to place it · the lit bar previews the road · drag to pan · scroll to zoom";
-                case View.Ground: return "Click a cell to lay or clear island ground in the open sky · every change auto-saves";
+                case View.Ground: return removeGround
+                    ? "Erase ground mode · click a clear island cell to return it to open sky · lots and streets stay protected · every change auto-saves"
+                    : "Lay ground mode · click open sky to make an island · click Mode: Lay ground to switch to erase · every change auto-saves";
                 case View.Lots: return "Click a cell to make a lot · Shift-click builds a footprint · lay a street beside it before building · changes auto-save";
                 case View.Buildings: return "Lay a street along the chosen entrance edge, then choose a kit and design options · changes auto-save";
                 case View.Services: return "Lay a street beside the lot, then click it to add service · choose a screen target before placing a screen · changes auto-save";
@@ -1655,6 +1695,7 @@ namespace SlopCity
             foreach (KeyValuePair<View, List<GameObject>> pair in viewControls)
                 foreach (GameObject control in pair.Value)
                     if (control) control.SetActive(pair.Key == view);
+            SetButtonLabel(groundActionButton, removeGround ? "Mode: Erase ground" : "Mode: Lay ground");
             SetButtonLabel(roadButton, "Road: " + RoadClassLabel(roadClass)); SetButtonLabel(removeRoadButton, removeRoad ? "Erase roads" : "Place roads"); SetButtonLabel(roadDirectionButton, "Road side: " + DirectionLabel(roadDirection)); SetButtonLabel(zoneButton, "Zone: " + lotZone);
             SetButtonLabel(kitButton, "Kit: " + buildingBlueprint); SetButtonLabel(facadeButton, "Facade: " + facade); SetButtonLabel(roofButton, "Roof: " + roof); SetButtonLabel(storefrontButton, "Store: " + storefront); SetButtonLabel(entranceButton, "Entry: " + entrance); SetButtonLabel(floorsButton, "Floor + (" + buildingFloors + ")"); SetButtonLabel(interiorButton, "Interior: " + (string.IsNullOrEmpty(interior) ? "none" : interior));
             string host = screenHostMode == 0 ? "building" : screenHostMode == 1 ? "site" : "road";

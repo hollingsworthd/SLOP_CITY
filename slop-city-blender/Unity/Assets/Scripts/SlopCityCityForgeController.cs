@@ -448,6 +448,17 @@ namespace SlopCity
         }
 
         /// <summary>
+        /// Drops a transient editor draft so the next BeginDraft call is
+        /// reconstructed from the accepted, durable world. Offline Build Mode
+        /// uses this after a rejected auto-save rather than leaving an
+        /// unsaved island visible as though it had made it to disk.
+        /// </summary>
+        public void DiscardPrivateDraft(CityForgeCoord coordinate)
+        {
+            drafts.Remove(coordinate);
+        }
+
+        /// <summary>
         /// Prepares, but does not accept, the next authored CitySituation state.
         /// Hosted compositions submit this exact plan to their authority; offline
         /// composition may use TryAdvanceSituationOffline after this validation.

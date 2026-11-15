@@ -39,19 +39,36 @@ namespace SlopCity
             cloudMaterial.EnableKeyword("_ALPHABLEND_ON");
             cloudMaterial.renderQueue = 3000;
             float[] depths = { -55f, -90f, -140f, -210f };
-            float[] scales = { 520f, 680f, 860f, 1100f };
+            float[] spans = { 190f, 250f, 320f, 400f };
             for (int index = 0; index < depths.Length; index++)
             {
-                GameObject layer = GameObject.CreatePrimitive(PrimitiveType.Quad);
-                layer.name = "SkyCloud_" + index;
-                layer.transform.SetParent(cloudRoot.transform, false);
-                layer.transform.localPosition = new Vector3(0f, depths[index], 0f);
-                layer.transform.localRotation = Quaternion.Euler(90f, 0f, 0f);
-                layer.transform.localScale = new Vector3(scales[index], scales[index], 1f);
-                Collider collider = layer.GetComponent<Collider>();
-                if (collider) Destroy(collider);
-                Renderer renderer = layer.GetComponent<Renderer>();
-                if (renderer) renderer.sharedMaterial = cloudMaterial;
+                // Solid transparent quads read as an endless ground plane,
+                // especially on a shallow first-person camera.  Use a loose
+                // bank of collider-free cloud puffs instead, so the player
+                // sees open air between layers while falling through them.
+                int puffCount = 12 + index * 3;
+                for (int puff = 0; puff < puffCount; puff++)
+                {
+                    float seed = puff * 2.3999632f + index * .71f;
+                    float radius = spans[index] * (.16f + .62f * ((puff * 37 + index * 19) % 100) / 100f);
+                    float width = 26f + ((puff * 17 + index * 11) % 19) * 2.4f;
+                    float height = 7f + ((puff * 29 + index * 7) % 7) * 1.4f;
+                    GameObject cloud = GameObject.CreatePrimitive(PrimitiveType.Sphere);
+                    cloud.name = "SkyCloud_" + index + "_" + puff;
+                    cloud.transform.SetParent(cloudRoot.transform, false);
+                    cloud.transform.localPosition = new Vector3(Mathf.Cos(seed) * radius,
+                        depths[index] + ((puff % 5) - 2) * 2.2f, Mathf.Sin(seed) * radius);
+                    cloud.transform.localScale = new Vector3(width, height, width * (.72f + (puff % 4) * .10f));
+                    Collider collider = cloud.GetComponent<Collider>();
+                    if (collider) { collider.enabled = false; Destroy(collider); }
+                    Renderer renderer = cloud.GetComponent<Renderer>();
+                    if (renderer)
+                    {
+                        renderer.sharedMaterial = cloudMaterial;
+                        renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+                        renderer.receiveShadows = false;
+                    }
+                }
             }
             cloudRoot.SetActive(false);
         }
