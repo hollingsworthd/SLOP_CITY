@@ -74,16 +74,10 @@ namespace SlopCity.Editor
                 }
             }
             Transform city = districts[0].transform.parent;
-            // The skyline needs an actual ground plane when viewed from accessible roofs;
-            // otherwise the distant buildings appear suspended over the skybox's lower half.
-            GameObject horizonGround = GameObject.CreatePrimitive(PrimitiveType.Cube);
-            horizonGround.name = "Distant_City_Ground";
-            horizonGround.transform.SetParent(city, false);
-            horizonGround.transform.localPosition = new Vector3(0, -.39f, 0);
-            horizonGround.transform.localScale = new Vector3(1800, .2f, 1800);
-            horizonGround.GetComponent<Renderer>().sharedMaterial = AssetDatabase.LoadAssetAtPath<Material>(SlopCityCityBuilder.MaterialsFolder + "/Asphalt.mat");
-            UnityEngine.Object.DestroyImmediate(horizonGround.GetComponent<Collider>());
-            horizonGround.isStatic = true;
+            // Do not add a horizon floor. The City Forge frontier is a sky-island
+            // world: a kilometre-scale plane makes its open void look like
+            // implicit default ground even when a player has laid no islands.
+            // The authored Old City retains its actual streets and floors.
             foreach (Transform station in city.GetComponentsInChildren<Transform>().Where(item => item.name.StartsWith("Subway_Station_")).ToArray())
             {
                 for (int poster = 0; poster < 4; poster++)
