@@ -1091,8 +1091,13 @@ namespace SlopCity
             // to prove a save. The normal entry deck remains the safe refuge
             // when every point on the last tile is occupied.
             if (!hasClearStandingSpace) destination = SlopCityCityForgeTravel.StarterEntryPosition;
-            player.transform.position = destination;
             if (capsule) capsule.enabled = capsuleEnabled;
+            // TeleportTo restores the first-person eye relative to the player
+            // as well as moving the capsule.  A raw transform assignment here
+            // can leave the camera at its pre-editor world position, making a
+            // real Sky Sprawl arrival appear to be inside the old city.
+            player.TeleportTo(destination, player.transform.eulerAngles.y);
+            if (capsule && !capsuleEnabled) capsule.enabled = false;
         }
 
         private string NextId(string prefix) { return NextId(draft, prefix); }

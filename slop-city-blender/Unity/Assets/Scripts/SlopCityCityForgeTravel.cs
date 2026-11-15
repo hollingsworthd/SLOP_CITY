@@ -71,10 +71,20 @@ namespace SlopCity
             }
             try { controller.StreamAt(entry); }
             catch { return false; }
-            CharacterController character = traveler.GetComponent<CharacterController>();
-            if (character) character.enabled = false;
-            traveler.position = StarterEntryPosition;
-            if (character) character.enabled = true;
+            // Moving just the root transform leaves a child first-person
+            // camera at its previous world position after City Forge has
+            // temporarily used it for the strategic map.  Use the shared
+            // player teleport so the capsule and eye return together.
+            SlopCityFirstPerson firstPerson = traveler.GetComponent<SlopCityFirstPerson>();
+            if (firstPerson)
+                firstPerson.TeleportTo(StarterEntryPosition, traveler.eulerAngles.y);
+            else
+            {
+                CharacterController character = traveler.GetComponent<CharacterController>();
+                if (character) character.enabled = false;
+                traveler.position = StarterEntryPosition;
+                if (character) character.enabled = true;
+            }
             return true;
         }
 

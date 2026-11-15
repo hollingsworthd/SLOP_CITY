@@ -311,11 +311,8 @@ namespace SlopCity
                             // couch.
                             if (transform.position.y < -240f)
                             {
-                                CharacterController body = controller;
-                                if (body) body.enabled = false;
-                                transform.position = SlopCityCityForgeTravel.StarterEntryPosition;
+                                TeleportTo(SlopCityCityForgeTravel.StarterEntryPosition, transform.eulerAngles.y);
                                 verticalSpeed = 0f;
-                                if (body) body.enabled = true;
                                 skySprawlFallLatched = false;
                                 ShowFeedback("The clouds carried you back to the Sky Sprawl.");
                             }

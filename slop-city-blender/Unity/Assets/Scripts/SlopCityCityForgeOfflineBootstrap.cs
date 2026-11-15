@@ -144,12 +144,17 @@ namespace SlopCity
             CharacterController capsule = player.GetComponent<CharacterController>();
             if (capsule) capsule.enabled = false;
             CityForgeCoord playerCenter = CoordinateFor(player.transform.position);
+            bool relocateToStarterDeck = false;
+            float returnHeading = player.transform.eulerAngles.y;
             if (changed.Contains(playerCenter))
             {
                 // A deterministic public refuge at the editable east starter
                 // entry keeps a walker off colliders about to be recompiled.
+                // Move only after its replacement neighborhood is streamed,
+                // through the first-person teleport that keeps the camera and
+                // capsule with the player.
                 activeCenter = SlopCityCityForgeTravel.StarterEntryCoordinate;
-                player.transform.position = SlopCityCityForgeTravel.StarterEntryPosition;
+                relocateToStarterDeck = true;
             }
             if (capsule) capsule.enabled = true;
             yield return null;
@@ -157,6 +162,8 @@ namespace SlopCity
             yield return null;
             if (wasEnabled) player.enabled = true;
             player.SetExternalMovement(false);
+            if (relocateToStarterDeck)
+                player.TeleportTo(SlopCityCityForgeTravel.StarterEntryPosition, returnHeading);
             IsReloading = false; ReloadStateChanged?.Invoke(false); running = null;
         }
 
