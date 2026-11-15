@@ -61,7 +61,7 @@ namespace SlopCity
             cloudRoot.transform.SetParent(transform, false);
             Material cloudMaterial = new Material(Shader.Find("Standard"))
             {
-                color = new Color(.92f, .95f, .98f, .68f),
+                color = new Color(.96f, .98f, 1f, .58f),
                 hideFlags = HideFlags.DontSave
             };
             cloudMaterial.SetFloat("_Mode", 3f);
@@ -71,31 +71,35 @@ namespace SlopCity
             cloudMaterial.DisableKeyword("_ALPHATEST_ON");
             cloudMaterial.EnableKeyword("_ALPHABLEND_ON");
             cloudMaterial.renderQueue = 3000;
-            // The first loose bank sits close enough to be visible from the
-            // lip of an island. The remaining banks continue far below it, so
-            // a fall is a long descent through clouds rather than an immediate
-            // fog reset or a distant empty blue void.
-            float[] depths = { -16f, -48f, -95f, -150f, -215f };
-            float[] spans = { 120f, 190f, 260f, 330f, 410f };
+            // Leave a clear drop immediately beneath every island: a near,
+            // very flat cloud bank read as a second ground plane. The first
+            // billows begin well below the lip, followed by several deeper
+            // banks, so falling is a visible descent through clouds rather
+            // than an instant reset or a blue empty void.
+            float[] depths = { -40f, -86f, -140f, -202f };
+            float[] spans = { 105f, 165f, 235f, 310f };
             for (int index = 0; index < depths.Length; index++)
             {
                 // Solid transparent quads read as an endless ground plane,
                 // especially on a shallow first-person camera.  Use a loose
                 // bank of collider-free cloud puffs instead, so the player
                 // sees open air between layers while falling through them.
-                int puffCount = 8 + index * 3;
+                int puffCount = 10 + index * 4;
                 for (int puff = 0; puff < puffCount; puff++)
                 {
                     float seed = puff * 2.3999632f + index * .71f;
-                    float radius = spans[index] * (.16f + .62f * ((puff * 37 + index * 19) % 100) / 100f);
-                    float width = 26f + ((puff * 17 + index * 11) % 19) * 2.4f;
-                    float height = 7f + ((puff * 29 + index * 7) % 7) * 1.4f;
+                    float radius = spans[index] * (.10f + .66f * ((puff * 37 + index * 19) % 100) / 100f);
+                    // Rounder, smaller billows read as cloud volume from an
+                    // island and during a descent, rather than as broad flat
+                    // greenish slabs under the player.
+                    float width = 15f + ((puff * 17 + index * 11) % 13) * 1.6f;
+                    float height = 12f + ((puff * 29 + index * 7) % 9) * 1.45f;
                     GameObject cloud = GameObject.CreatePrimitive(PrimitiveType.Sphere);
                     cloud.name = "SkyCloud_" + index + "_" + puff;
                     cloud.transform.SetParent(cloudRoot.transform, false);
                     cloud.transform.localPosition = new Vector3(Mathf.Cos(seed) * radius,
                         depths[index] + ((puff % 5) - 2) * 2.2f, Mathf.Sin(seed) * radius);
-                    cloud.transform.localScale = new Vector3(width, height, width * (.72f + (puff % 4) * .10f));
+                    cloud.transform.localScale = new Vector3(width, height, width * (.82f + (puff % 4) * .06f));
                     Collider collider = cloud.GetComponent<Collider>();
                     if (collider) { collider.enabled = false; Destroy(collider); }
                     Renderer renderer = cloud.GetComponent<Renderer>();

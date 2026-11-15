@@ -17,12 +17,14 @@ namespace SlopCity
     /// </summary>
     public sealed class SlopCityCityForgeLocalStore
     {
-        // Sky-island ground changed the shape of every buildable chunk. Local
-        // City Forge saves are deliberately forward-only: v5 starts a new
-        // namespace instead of trying to interpret an older city as islands.
-        public const string IndexKey = "SlopCity.CityForge.WorldHead.v5";
-        public const string IndexPagePrefix = "SlopCity.CityForge.IndexPage.v5.";
-        public const string ChunkPrefix = "SlopCity.CityForge.Chunk.v5.";
+        // Sky-island ground is a clean break: an older City Forge world may
+        // contain its former starter terrain and must never reappear as
+        // player-laid islands. Keep those records intact for manual recovery,
+        // but do not load or migrate them. v6 starts an empty sky world whose
+        // sparse cells are authored only through the current Ground tool.
+        public const string IndexKey = "SlopCity.CityForge.WorldHead.v6";
+        public const string IndexPagePrefix = "SlopCity.CityForge.IndexPage.v6.";
+        public const string ChunkPrefix = "SlopCity.CityForge.Chunk.v6.";
         public const int MaximumPageBytes = SlopCityCityForge.MaximumWorldPageBytes;
         public const int IndexEntriesPerPage = 128;
 
