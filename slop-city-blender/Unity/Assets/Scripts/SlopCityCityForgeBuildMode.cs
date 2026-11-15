@@ -353,7 +353,14 @@ namespace SlopCity
         {
             Rect pixelRect = targetCanvas ? targetCanvas.pixelRect : new Rect(0f, 0f, Screen.width, Screen.height);
             if (pixelRect.width <= 0f || pixelRect.height <= 0f) pixelRect = new Rect(0f, 0f, Screen.width, Screen.height);
-            return new Vector2(pixelRect.x + current.mousePosition.x, pixelRect.y + pixelRect.height - current.mousePosition.y);
+            // IMGUI reports macOS mouse coordinates in logical points, while
+            // the camera and ScreenSpaceOverlay canvas use backing pixels.
+            // A 2x Retina display therefore needs the point-to-pixel scale on
+            // both axes before the top-left GUI origin is flipped for the
+            // lower-left camera/UI coordinate system.
+            float pixelsPerPoint = Mathf.Max(1f, GUIUtility.pixelsPerPoint);
+            return new Vector2(pixelRect.x + current.mousePosition.x * pixelsPerPoint,
+                pixelRect.y + pixelRect.height - current.mousePosition.y * pixelsPerPoint);
         }
 
         public bool Open()
