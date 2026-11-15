@@ -14,8 +14,9 @@
   </script>
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#090d10">
-  <meta name="description" content="SLOP CITY™ — explore the city, catch a broadcast, and find your way home. Follow white-rabbit clues and discover independent broadcasts. Play in your browser with keyboard/mouse or mobile touch.">
+  <meta name="description" content="SLOP CITY™ — explore the city, catch a broadcast, and find your way home. The 3D city is available in a desktop browser.">
   <title>SLOP CITY™ — v{{{ PRODUCT_VERSION }}}</title>
+  <script src="slop-city-browser-capability.js?v={{{ PRODUCT_VERSION }}}"></script>
   <script src="slop-city-browser-links.js?v={{{ PRODUCT_VERSION }}}"></script>
   <script src="slop-city-inline-video.js?v={{{ PRODUCT_VERSION }}}"></script>
   <script src="slop-city-media-diagnostics.js?v={{{ PRODUCT_VERSION }}}"></script>
@@ -85,6 +86,8 @@
     #media-help { color: var(--accent); border: 0; background: none; padding: 0 4px; min-height: 44px; font-size: 10px; white-space: nowrap; }
     footer .site-address { white-space: nowrap; }
     .touch-ui #help, .touch-ui #controls { display: none !important; }
+    .desktop-required .toolbar-actions, .desktop-required #fps, .desktop-required #media-help, .desktop-required .footer-controls { display: none !important; }
+    .desktop-required .gate-content { max-width: 620px; }
     @media (max-width: 620px) { .toolbar { padding: env(safe-area-inset-top) max(14px, env(safe-area-inset-right)) 0 max(14px, env(safe-area-inset-left)); gap: 10px; } .edition, .footer-controls { display: none; } .wordmark { font-size: 11px; letter-spacing: .03em; } .resolution { max-width: 78px; } .toolbar-actions { gap: 6px; } .tool { padding: 8px; font-size: 10px; } footer { padding: 0 max(14px, env(safe-area-inset-right)) env(safe-area-inset-bottom) max(14px, env(safe-area-inset-left)); } .gate-content { padding: 10px 0; } .intro { font-size: 12px; } }
     @media (max-height: 600px) { h1 { font-size: 54px; } .eyebrow { margin-bottom: 14px; } .intro { margin-bottom: 18px; } .gate-content { padding: 8px 0; } .hint { margin-top: 14px; } }
     @media (max-height: 360px) { :root { --slop-toolbar-content-height: 44px; --slop-footer-content-height: 36px; } .toolbar { gap: 8px; } .toolbar-actions { gap: 5px; } .tool { padding: 6px 8px; } #media-help { min-height: 36px; } .gate-content { padding: 0; } .gate-content .intro, .gate-content .hint { display: none; } #media-support.floating { padding: 14px; } }
@@ -185,6 +188,7 @@
     const loading = document.getElementById("loading");
     const status = document.getElementById("status");
     const fullscreen = document.getElementById("fullscreen");
+    const desktopGameBrowser = window.slopCityDesktopGameBrowser === true;
     // Do not advertise a control mapping the host cannot actually honor.
     const fullscreenAvailable = typeof stage.requestFullscreen === "function" && document.fullscreenEnabled !== false;
     fullscreen.hidden = !fullscreenAvailable;
@@ -282,10 +286,19 @@
     window.slopCityFinePointerActive = false;
     document.documentElement.classList.toggle("touch-ui", inputCapabilities.touch);
     document.documentElement.classList.toggle("desktop-ui", !inputCapabilities.touch);
-    if (window.slopCityTouchControls) {
+    if (window.slopCityTouchControls && desktopGameBrowser) {
       document.getElementById("launch-hint").innerHTML = "Left thumb moves. Right thumb looks.<br>Turn your phone sideways for more room. Choose PLAY to enable sound.";
       canvas.setAttribute("aria-label", "SLOP CITY™. Left thumb moves, right thumb looks. Use the on-screen jump, interact and pause buttons.");
       document.querySelector('.footer-controls').textContent = "LEFT MOVE · RIGHT LOOK · USE · JUMP";
+    }
+    if (!desktopGameBrowser) {
+      document.documentElement.classList.add("desktop-required");
+      launch.hidden = true;
+      launch.disabled = true;
+      document.getElementById("launch-hint").textContent = "The 3D city is available in a desktop browser. Video customization and sign-in still work on your phone.";
+      document.querySelector(".eyebrow").textContent = "DESKTOP BROWSER REQUIRED";
+      document.querySelector(".intro").textContent = "SLOP CITY™ does not start its WebGL city, video decoders, or streamed world on phones and touch-only tablets. Open this address on a desktop browser to enter the city.";
+      status.textContent = "CITY AVAILABLE ON DESKTOP";
     }
     let unityInstance = null;
     let loadingStarted = false;
@@ -752,7 +765,7 @@
     };
 
     launch.addEventListener("click", function () {
-      if (launchRequested || loadingStarted || sessionFailed) return;
+      if (!desktopGameBrowser || launchRequested || loadingStarted || sessionFailed) return;
       launchRequested = true;
       if (window.slopCityInlineVideoPolicyVersion !== 3) {
         fail("The playback update could not load. Reload the page to try again.", "The required in-world video guard is missing or out of date.");
