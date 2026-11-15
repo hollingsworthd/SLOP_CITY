@@ -539,7 +539,12 @@ namespace SlopCity
             if (selectedCells.Count == 0 || selectedCells.Count > 81 || selectedCells.Any(item => item < 0 || item >= 81) || (draft.parcels ?? new List<CityForgeParcel>()).Any(parcel => parcel != null && parcel.cells != null && parcel.cells.Intersect(selectedCells).Any())) return false;
             HashSet<int> ground = new HashSet<int>(draft.groundCells ?? new List<int>());
             if (selectedCells.Any(cell => !ground.Contains(cell))) { SetMessage("Lay island ground under every lot before zoning it."); return false; }
-            CityForgeChunkPlan next = draft.Clone(); next.parcels.Add(new CityForgeParcel { id = string.IsNullOrEmpty(parcelId) ? NextId("parcel") : parcelId, zone = zone, cells = selectedCells, entranceEdge = CityForgeDirection.North }); return Apply(next, "Lot planned. Next: Buildings — choose a design, then click this lot.");
+            CityForgeChunkPlan next = draft.Clone();
+            CityForgeParcel parcel = new CityForgeParcel { id = string.IsNullOrEmpty(parcelId) ? NextId("parcel") : parcelId, zone = zone, cells = selectedCells, entranceEdge = CityForgeDirection.North };
+            next.parcels.Add(parcel);
+            return Apply(next, HasStreetFrontage(parcel, null)
+                ? "Lot planned. Next: Buildings — choose a design, then click this lot."
+                : "Lot planned. Add a street beside this lot before placing a building.");
         }
         public bool TryPlaceBuilding(string parcelId, string blueprintId, string facadeId, string roofId, int floors, CityForgeDirection entrance, string storefrontId = null, string interiorRole = null)
         {
@@ -1642,7 +1647,7 @@ namespace SlopCity
             HashSet<int> ground = new HashSet<int>(draft.groundCells ?? new List<int>());
             if (!HasAdjacentGroundPair(ground)) return "Step 1 of 4 · Lay two touching island cells.";
             if (!(draft.roads ?? new List<CityForgeRoad>()).Any(road => road != null && SlopCityCityForge.RoadHasIslandGround(draft, road)))
-                return "Step 2 of 4 · Streets: click either touching cell; its shared edge is chosen for you.";
+                return "Step 2 of 4 · Streets: a two-cell starter pair picks its shared edge; otherwise choose Road side, then click.";
             if (!(draft.parcels ?? new List<CityForgeParcel>()).Any(parcel => HasStreetFrontage(parcel, null)))
                 return "Step 3 of 4 · Lots: click a ground cell touching a street.";
             if (!(draft.buildings ?? new List<CityForgeBuilding>()).Any(item => item != null))
@@ -1670,7 +1675,7 @@ namespace SlopCity
                 case View.Streets:
                     return removeRoad
                         ? "Choose a road side, then click any grid cell to erase it · the lit bar previews the road · drag to pan · scroll to zoom"
-                        : "Lay two touching island cells, then click either one · their shared road edge is chosen for you · drag to pan · scroll to zoom";
+                        : "Lay two touching island cells, then click either one · a simple pair picks its shared edge; otherwise choose Road side · drag to pan · scroll to zoom";
                 case View.Ground: return removeGround
                     ? "Erase ground mode · click a clear island cell to return it to open sky · lots and streets stay protected · every change auto-saves"
                     : "Lay ground mode · click open sky to make an island · click Mode: Lay ground to switch to erase · every change auto-saves";
