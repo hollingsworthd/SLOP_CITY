@@ -20,12 +20,6 @@ namespace SlopCity
         [SerializeField, Range(40f, 280f)] private float topDownHeight = 130f;
         [SerializeField] private bool editingEnabled = true;
         private const int CityForgeCanvasSortingOrder = 300;
-        // City Forge's CanvasScaler uses this authored coordinate system.
-        // Native macOS IMGUI events can be in a different point/pixel space,
-        // so the raw fallback resolves toolbar controls against these bounds.
-        private const float BuildUiReferenceWidth = 1280f;
-        private const float BuildUiToolbarHeight = 164f;
-        private const float NativeMacToolbarHitSlop = 3f;
         private Canvas canvas;
         private Canvas launcherCanvas;
         private Text heading, message, contextHint;
@@ -135,7 +129,10 @@ namespace SlopCity
         // gesture after the toolbar finger is released.
         private bool suppressBuildUiTouchUntilNoTouches;
         private const float LauncherTapSlopPixels = 18f;
-        private const float MapDragThresholdPixels = 8f;
+        // A short desktop click can move several backing pixels before the
+        // release, especially on a Retina trackpad. Treat it as a map click
+        // unless it travels a deliberate, comfortably visible distance.
+        private const float MapDragThresholdPixels = 16f;
         private bool mapMousePressed;
         private bool mapMouseDragged;
         private Vector2 mapMouseStart;
@@ -150,6 +147,13 @@ namespace SlopCity
         private Vector2 mapGuiMousePrevious;
         private Vector2 mapGuiPointer;
         private bool hasMapGuiPointer;
+        // Resolve the grid cell at press time and retain it through release.
+        // This avoids a backing-scale/window move between down and up turning
+        // a ground click into a different block or a dropped map gesture.
+        private bool hasCapturedMapCell;
+        private CityForgeCoord capturedMapCoordinate;
+        private int capturedMapCellX;
+        private int capturedMapCellZ;
         private bool hasHoveredCell;
         private CityForgeCoord hoveredCell;
         private static readonly string[] BuildingBlueprintOptions =
@@ -352,7 +356,7 @@ namespace SlopCity
 
             if (type == EventType.MouseDown)
             {
-                ResolveNativeMacBuildUiHit(current, screenPosition, out buildUiGuiMouseSurfaceCapture, out buildUiGuiMouseCapture);
+                ResolveNativeMacBuildUiHit(screenPosition, out buildUiGuiMouseSurfaceCapture, out buildUiGuiMouseCapture);
                 buildUiGuiMousePressFrame = Time.frameCount;
 
                 // Suppress the legacy gesture so its MouseUp cannot lay or
@@ -363,6 +367,8 @@ namespace SlopCity
                 mapGuiMouseDragged = false;
                 mapGuiMouseStart = screenPosition;
                 mapGuiMousePrevious = screenPosition;
+                if (mapGuiMousePressed) CaptureMapCell(screenPosition);
+                else ClearCapturedMapCell();
                 current.Use();
                 return;
             }
@@ -371,6 +377,7 @@ namespace SlopCity
             {
                 if (!mapGuiMousePressed) return;
                 if (!mapGuiMouseDragged && Vector2.Distance(screenPosition, mapGuiMouseStart) >= MapDragThresholdPixels) mapGuiMouseDragged = true;
+                if (mapGuiMouseDragged) ClearCapturedMapCell();
                 if (mapGuiMouseDragged) PanMap(screenPosition - mapGuiMousePrevious, buildCamera ? buildCamera.pixelHeight : Screen.height);
                 mapGuiMousePrevious = screenPosition;
                 current.Use();
@@ -380,7 +387,7 @@ namespace SlopCity
             if (buildUiGuiMouseSurfaceCapture)
             {
                 Button capture = buildUiGuiMouseCapture;
-                ResolveNativeMacBuildUiHit(current, screenPosition, out bool releasedOnSurface, out Button releasedOnButton);
+                ResolveNativeMacBuildUiHit(screenPosition, out bool releasedOnSurface, out Button releasedOnButton);
                 bool activate = releasedOnSurface && capture && releasedOnButton == capture && !BuildUiButtonActivatedOnOrAfter(capture, buildUiGuiMousePressFrame);
                 buildUiGuiMouseCapture = null;
                 buildUiGuiMouseSurfaceCapture = false;
@@ -391,11 +398,13 @@ namespace SlopCity
             }
 
             if (mapGuiMousePressed && !mapGuiMouseDragged && Vector2.Distance(screenPosition, mapGuiMouseStart) >= MapDragThresholdPixels) mapGuiMouseDragged = true;
-            bool clickMap = mapGuiMousePressed && !mapGuiMouseDragged && !BuildUiSurfaceContains(screenPosition);
+            if (mapGuiMouseDragged) ClearCapturedMapCell();
+            bool clickMap = mapGuiMousePressed && !mapGuiMouseDragged;
             mapGuiMousePressed = false;
             mapGuiMouseDragged = false;
             current.Use();
-            if (clickMap) ClickMap(screenPosition);
+            if (clickMap) ClickCapturedMapCell(screenPosition);
+            else ClearCapturedMapCell();
         }
 
         public bool Open()
@@ -838,7 +847,9 @@ namespace SlopCity
             atomicDrafts.Clear();
             foreach (KeyValuePair<CityForgeCoord, CityForgeChunkPlan> pair in restore)
             {
-                CityForgeChunkPlan value = pair.Value.Clone(); atomicDrafts[pair.Key] = value;
+                CityForgeChunkPlan value = pair.Value.Clone();
+                NormalizeRoads(value);
+                atomicDrafts[pair.Key] = value;
                 if (controller.TryGetAccepted(pair.Key, out CityForgeChunkPlan accepted))
                 {
                     // Undo/redo creates a new immutable revision, never a
@@ -875,10 +886,30 @@ namespace SlopCity
             if (updates == null || updates.Count == 0 || updates.Count > 4) return false;
             foreach (CityForgeChunkPlan value in updates.Values)
                 if (value == null || !controller.CanDraft(value.coord)) { SetMessage("Survey an adjoining accepted block before planning there."); return false; }
-            foreach (CityForgeChunkPlan value in updates.Values)
+            Dictionary<CityForgeCoord, CityForgeChunkPlan> prepared = new Dictionary<CityForgeCoord, CityForgeChunkPlan>();
+            foreach (KeyValuePair<CityForgeCoord, CityForgeChunkPlan> pair in updates)
+            {
+                CityForgeChunkPlan value = pair.Value.Clone();
+                NormalizeRoads(value);
+                prepared[pair.Key] = value;
+            }
+            // Validate the complete candidate before allowing any private-draft
+            // write. Previously a malformed road gesture could be written,
+            // then fail autosave and restore the whole visible city—making a
+            // perfectly good ground tile appear unreliable or lost.
+            Dictionary<CityForgeCoord, CityForgeChunkPlan> candidate = CloneDraftMap(atomicDrafts);
+            foreach (KeyValuePair<CityForgeCoord, CityForgeChunkPlan> pair in prepared) candidate[pair.Key] = pair.Value.Clone();
+            foreach (CityForgeChunkPlan value in candidate.Values) NormalizeRoads(value);
+            if (!controller.ValidateDraftOnly(candidate.Values, out CityForgeValidation validation))
+            {
+                SetMessage(validation.Messages.FirstOrDefault() ?? "That change is not a valid City Forge plan.");
+                return false;
+            }
+            foreach (CityForgeChunkPlan value in candidate.Values)
                 if (!controller.TrySavePrivateDraft(value, out string error)) { SetMessage(error ?? "That edit is unavailable."); return false; }
             PushAtomicUndo();
-            foreach (KeyValuePair<CityForgeCoord, CityForgeChunkPlan> pair in updates)
+            atomicDrafts.Clear();
+            foreach (KeyValuePair<CityForgeCoord, CityForgeChunkPlan> pair in candidate)
             {
                 atomicDrafts[pair.Key] = pair.Value.Clone();
                 if (!atomicBaselines.ContainsKey(pair.Key)) atomicBaselines[pair.Key] = BaselineFor(pair.Value);
@@ -897,6 +928,55 @@ namespace SlopCity
         {
             if (direction == CityForgeDirection.West && x > 0) { x--; direction = CityForgeDirection.East; }
             if (direction == CityForgeDirection.South && z > 0) { z--; direction = CityForgeDirection.North; }
+        }
+
+        private static void NormalizeRoads(CityForgeChunkPlan plan)
+        {
+            if (plan == null) return;
+            Dictionary<string, CityForgeRoad> uniqueRoads = new Dictionary<string, CityForgeRoad>(StringComparer.Ordinal);
+            foreach (CityForgeRoad road in plan.roads ?? new List<CityForgeRoad>())
+            {
+                if (road == null) continue;
+                if (road.cellX < 0 || road.cellX >= SlopCityCityForge.GridSize || road.cellZ < 0 || road.cellZ >= SlopCityCityForge.GridSize
+                    || !Enum.IsDefined(typeof(CityForgeDirection), road.direction))
+                {
+                    uniqueRoads[road.LocalKey] = road;
+                    continue;
+                }
+                int x = road.cellX;
+                int z = road.cellZ;
+                CityForgeDirection direction = road.direction;
+                CanonicalRoad(ref x, ref z, ref direction);
+                road.cellX = x;
+                road.cellZ = z;
+                road.direction = direction;
+                uniqueRoads[CanonicalEdge(x, z, direction)] = road;
+            }
+            plan.roads = uniqueRoads.OrderBy(item => item.Key, StringComparer.Ordinal).Select(item => item.Value).ToList();
+            HashSet<string> roadEdges = new HashSet<string>(uniqueRoads.Keys, StringComparer.Ordinal);
+            List<string> normalizedRemovals = new List<string>();
+            HashSet<string> seenRemovals = new HashSet<string>(StringComparer.Ordinal);
+            foreach (string edge in plan.removedRoadEdges ?? new List<string>())
+            {
+                string canonical = CanonicalizeRoadEdge(edge);
+                if (string.IsNullOrEmpty(canonical) || roadEdges.Contains(canonical) || !seenRemovals.Add(canonical)) continue;
+                normalizedRemovals.Add(canonical);
+            }
+            plan.removedRoadEdges = normalizedRemovals;
+        }
+
+        private static string CanonicalizeRoadEdge(string value)
+        {
+            if (string.IsNullOrEmpty(value) || value.Length < 9 || value[1] != ',' || value[3] != ':'
+                || value[0] < '0' || value[0] > '8' || value[2] < '0' || value[2] > '8') return string.Empty;
+            CityForgeDirection direction;
+            string side = value.Substring(4);
+            if (side == "north") direction = CityForgeDirection.North;
+            else if (side == "east") direction = CityForgeDirection.East;
+            else if (side == "south") direction = CityForgeDirection.South;
+            else if (side == "west") direction = CityForgeDirection.West;
+            else return string.Empty;
+            return CanonicalEdge(value[0] - '0', value[2] - '0', direction);
         }
 
         private static void ReciprocalRoad(int x, int z, CityForgeDirection direction, out int reciprocalX, out int reciprocalZ, out CityForgeDirection reciprocalDirection)
@@ -1000,19 +1080,23 @@ namespace SlopCity
                 mapMouseDragged = false;
                 mapMouseStart = Input.mousePosition;
                 mapMousePrevious = mapMouseStart;
+                if (mapMousePressed) CaptureMapCell(mapMouseStart);
+                else ClearCapturedMapCell();
             }
             if (mapMousePressed && Input.GetMouseButton(0))
             {
                 Vector2 current = Input.mousePosition;
                 if (!mapMouseDragged && Vector2.Distance(current, mapMouseStart) >= MapDragThresholdPixels) mapMouseDragged = true;
+                if (mapMouseDragged) ClearCapturedMapCell();
                 if (mapMouseDragged) PanMap(current - mapMousePrevious, Screen.height);
                 mapMousePrevious = current;
             }
             if (!Input.GetMouseButtonUp(0)) return;
-            bool activate = mapMousePressed && !mapMouseDragged && !BuildUiSurfaceContains(Input.mousePosition);
+            bool activate = mapMousePressed && !mapMouseDragged;
             mapMousePressed = false;
             mapMouseDragged = false;
-            if (activate) ClickMap(Input.mousePosition);
+            if (activate) ClickCapturedMapCell(Input.mousePosition);
+            else ClearCapturedMapCell();
         }
 
         private void UpdateHoveredCell()
@@ -1052,11 +1136,53 @@ namespace SlopCity
             return true;
         }
 
+        private void CaptureMapCell(Vector2 screenPosition)
+        {
+            hasCapturedMapCell = TryGetMapCell(screenPosition, out capturedMapCoordinate, out capturedMapCellX, out capturedMapCellZ);
+        }
+
+        private void ClearCapturedMapCell()
+        {
+            hasCapturedMapCell = false;
+            capturedMapCoordinate = default(CityForgeCoord);
+            capturedMapCellX = 0;
+            capturedMapCellZ = 0;
+        }
+
+        private void ClickCapturedMapCell(Vector2 fallbackScreenPosition)
+        {
+            if (!hasCapturedMapCell)
+            {
+                ClickMap(fallbackScreenPosition);
+                return;
+            }
+            CityForgeCoord coordinate = capturedMapCoordinate;
+            int x = capturedMapCellX;
+            int z = capturedMapCellZ;
+            ClearCapturedMapCell();
+            ClickMapCell(coordinate, x, z);
+        }
+
         private void ClickMap(Vector3 screenPosition)
         {
             if (autosaveInFlight) { SetMessage("Saving City Forge…"); return; }
             if (!TryGetMapCell(screenPosition, out CityForgeCoord coord, out int x, out int z)) return;
-            if (!coord.Equals(selected)) { SelectChunk(coord); return; }
+            ClickMapCell(coord, x, z);
+        }
+
+        private void ClickMapCell(CityForgeCoord coordinate, int x, int z)
+        {
+            if (autosaveInFlight) { SetMessage("Saving City Forge…"); return; }
+            if (!coordinate.Equals(selected))
+            {
+                if (view == View.Ground)
+                {
+                    SetMessage("Click inside the highlighted block to lay ground. Select another block from Streets, Lots, Buildings, Services, or Life.");
+                    return;
+                }
+                SelectChunk(coordinate);
+                return;
+            }
             if (view == View.Streets) ToggleStreet(x, z);
             else if (view == View.Ground) TrySetGround(x, z, removeGround);
             else if (view == View.Lots) AddLot(x, z);
@@ -2002,147 +2128,14 @@ namespace SlopCity
         }
 
         /// <summary>
-        /// Uses the normal UGUI hit first, then resolves the native IMGUI
-        /// coordinate against the authored toolbar geometry. The latter is
-        /// deliberately limited to the visible toolbar instead of treating
-        /// the full-screen overlay Canvas as UI, so a map click remains a map
-        /// click even when macOS reports points and backing pixels differently.
+        /// Both toolbar and map receive the same Canvas-mapped native point.
+        /// Do not try alternative point/pixel scales here: a map click can
+        /// alias into the toolbar under a speculative scale and get swallowed.
         /// </summary>
-        private void ResolveNativeMacBuildUiHit(Event current, Vector2 inputPosition, out bool withinToolbar, out Button hit)
+        private void ResolveNativeMacBuildUiHit(Vector2 screenPosition, out bool withinToolbar, out Button hit)
         {
-            withinToolbar = BuildUiSurfaceContains(inputPosition);
-            hit = withinToolbar ? BuildUiActivatableButtonAt(inputPosition) : null;
-            if (hit || current == null) return;
-
-            // Input.mousePosition is the coordinate supplied to UGUI and the
-            // camera: lower-left, in the player's active screen space. Map it
-            // to the Canvas's top-left reference space before falling back to
-            // IMGUI's platform-specific event position. This is the crucial
-            // path for a Retina player window beneath a native title bar.
-            TryInputMappedToolbarHit(inputPosition, out bool inputWithinToolbar, out Button inputHit);
-            if (inputWithinToolbar) withinToolbar = true;
-            if (inputHit)
-            {
-                hit = inputHit;
-                return;
-            }
-
-            TryNativeMacToolbarHit(current.mousePosition, inputPosition, out bool nativeWithinToolbar, out Button nativeHit);
-            if (!nativeWithinToolbar) return;
-            withinToolbar = true;
-            if (nativeHit) hit = nativeHit;
-        }
-
-        /// <summary>
-        /// Resolves a lower-left Input.mousePosition through the actual overlay
-        /// Canvas. This is intentionally a bounded toolbar test; it never
-        /// turns the full-screen canvas into a map-blocking surface.
-        /// </summary>
-        private void TryInputMappedToolbarHit(Vector2 inputPosition, out bool withinToolbar, out Button hit)
-        {
-            withinToolbar = false;
-            hit = null;
-            Rect pixelRect = canvas ? canvas.pixelRect : new Rect(0f, 0f, Screen.width, Screen.height);
-            if (pixelRect.width <= 0f || pixelRect.height <= 0f) pixelRect = new Rect(0f, 0f, Screen.width, Screen.height);
-            RectTransform canvasRect = canvas ? canvas.transform as RectTransform : null;
-            float referenceWidth = canvasRect && canvasRect.rect.width > 0f ? canvasRect.rect.width : BuildUiReferenceWidth;
-            float referenceHeight = canvasRect && canvasRect.rect.height > 0f ? canvasRect.rect.height : 720f;
-            float canvasX = inputPosition.x - pixelRect.x;
-            float canvasTop = pixelRect.y + pixelRect.height - inputPosition.y;
-
-            // This normalized conversion is exact when Input and the overlay
-            // share a backing-pixel surface.
-            ConsiderToolbarReferenceHit(canvasX / pixelRect.width * referenceWidth,
-                canvasTop / pixelRect.height * referenceHeight, ref withinToolbar, ref hit);
-            if (hit) return;
-
-            // CanvasScaler's resolved scale covers the same visual placement
-            // when the Canvas is in a differently scaled player window.
-            float canvasScale = canvas && canvas.scaleFactor > 0f ? canvas.scaleFactor : 1f;
-            ConsiderToolbarReferenceHit(canvasX / canvasScale, canvasTop / canvasScale, ref withinToolbar, ref hit);
-            if (hit) return;
-
-            // A logical Screen surface with a backing-pixel overlay is the
-            // remaining macOS case. Normalize within Input's own screen first.
-            if (Screen.width > 0 && Screen.height > 0)
-                ConsiderToolbarReferenceHit(inputPosition.x / Screen.width * referenceWidth,
-                    (Screen.height - inputPosition.y) / Screen.height * referenceHeight, ref withinToolbar, ref hit);
-        }
-
-        private void ConsiderToolbarReferenceHit(float referenceX, float referenceTop, ref bool withinToolbar, ref Button hit)
-        {
-            if (referenceX < -NativeMacToolbarHitSlop || referenceX > BuildUiReferenceWidth + NativeMacToolbarHitSlop
-                || referenceTop < -NativeMacToolbarHitSlop || referenceTop > BuildUiToolbarHeight + NativeMacToolbarHitSlop) return;
-            withinToolbar = true;
-            Button candidate = ManualBuildUiButtonAt(referenceX, referenceTop, NativeMacToolbarHitSlop);
-            if (candidate) hit = candidate;
-        }
-
-        private void TryNativeMacToolbarHit(Vector2 guiPosition, Vector2 inputPosition, out bool withinToolbar, out Button hit)
-        {
-            withinToolbar = false;
-            hit = null;
-            foreach (float guiUnitsPerReferenceUnit in NativeMacToolbarScales(guiPosition, inputPosition))
-            {
-                if (guiUnitsPerReferenceUnit <= 0f) continue;
-                float referenceX = guiPosition.x / guiUnitsPerReferenceUnit;
-                float referenceTop = guiPosition.y / guiUnitsPerReferenceUnit;
-                if (referenceX < -NativeMacToolbarHitSlop || referenceX > BuildUiReferenceWidth + NativeMacToolbarHitSlop
-                    || referenceTop < -NativeMacToolbarHitSlop || referenceTop > BuildUiToolbarHeight + NativeMacToolbarHitSlop) continue;
-
-                withinToolbar = true;
-                Button candidate = ManualBuildUiButtonAt(referenceX, referenceTop, NativeMacToolbarHitSlop);
-                if (!candidate) continue;
-                hit = candidate;
-                return;
-            }
-        }
-
-        private IEnumerable<float> NativeMacToolbarScales(Vector2 guiPosition, Vector2 inputPosition)
-        {
-            float canvasScale = canvas && canvas.scaleFactor > 0f ? canvas.scaleFactor : 1f;
-            // First trust the resolved CanvasScaler factor. It is the exact
-            // visual scale when IMGUI is already reporting backing pixels.
-            yield return canvasScale;
-
-            // When IMGUI reports points but Input reports backing pixels (or
-            // vice versa), their horizontal ratio supplies the missing scale.
-            // x avoids the opposing vertical origins of the two APIs.
-            if (Mathf.Abs(guiPosition.x) > .01f && Mathf.Abs(inputPosition.x) > .01f)
-            {
-                float inputToGui = guiPosition.x / inputPosition.x;
-                if (inputToGui > .05f && inputToGui < 20f) yield return canvasScale * inputToGui;
-            }
-
-            // The normal Retina alternatives cover a display move between
-            // down/up and a player window whose reported point scale changes.
-            yield return canvasScale * .5f;
-            yield return canvasScale * 2f;
-
-            Rect pixelRect = canvas ? canvas.pixelRect : new Rect(0f, 0f, Screen.width, Screen.height);
-            if (pixelRect.width > 0f) yield return pixelRect.width / BuildUiReferenceWidth;
-            if (Screen.width > 0) yield return Screen.width / BuildUiReferenceWidth;
-        }
-
-        private Button ManualBuildUiButtonAt(float referenceX, float referenceTop, float slop)
-        {
-            for (int index = buildUiButtons.Count - 1; index >= 0; index--)
-            {
-                Button button = buildUiButtons[index];
-                RectTransform rect = button ? button.GetComponent<RectTransform>() : null;
-                if (!button || !button.IsActive() || !button.IsInteractable() || !rect) continue;
-                // Every editor button is anchored/pivoted at the toolbar's
-                // top-left corner in CreateUi, so this stays in the Canvas
-                // reference coordinate system even if UGUI got a different
-                // native screen-space coordinate.
-                float left = rect.anchoredPosition.x;
-                float top = -rect.anchoredPosition.y;
-                float right = left + rect.rect.width;
-                float bottom = top + rect.rect.height;
-                if (referenceX >= left - slop && referenceX <= right + slop
-                    && referenceTop >= top - slop && referenceTop <= bottom + slop) return button;
-            }
-            return null;
+            withinToolbar = BuildUiSurfaceContains(screenPosition);
+            hit = withinToolbar ? BuildUiActivatableButtonAt(screenPosition) : null;
         }
 
         private static bool BuildUiButtonActivatedOnOrAfter(Button button, int pressFrame)
@@ -2195,6 +2188,7 @@ namespace SlopCity
             mapGuiMousePrevious = Vector2.zero;
             mapGuiPointer = Vector2.zero;
             hasMapGuiPointer = false;
+            ClearCapturedMapCell();
         }
 
         private void CancelBuildUiPointerActivation()
