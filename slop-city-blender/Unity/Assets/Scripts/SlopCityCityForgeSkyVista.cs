@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace SlopCity
@@ -14,6 +15,14 @@ namespace SlopCity
         private Color savedFogColor;
         private float savedFogDensity;
         private FogMode savedFogMode;
+        // The authored scene includes this huge distant visual mesh. It has no
+        // collider, so it never stopped a fall, but it made the Sky Sprawl
+        // look like it still had an infinite floor. Keep the authored city
+        // intact everywhere else and suppress only that renderer while the
+        // player is in the sky-island frontier.
+        private readonly List<Renderer> distantGroundRenderers = new List<Renderer>();
+        private readonly List<bool> distantGroundWasEnabled = new List<bool>();
+        private bool distantGroundSuppressed;
 
         public void Configure(Transform target)
         {
@@ -106,6 +115,8 @@ namespace SlopCity
                 }
             }
 
+            SetDistantGroundSuppressed(sprawl);
+
             if (cloudRoot && sprawl)
             {
                 cloudRoot.transform.position = new Vector3(position.x, 0f, position.z);
@@ -120,14 +131,53 @@ namespace SlopCity
 
         private void OnDisable()
         {
-            if (!fogOverrideActive) return;
-            RenderSettings.fog = savedFog;
-            RenderSettings.fogColor = savedFogColor;
-            RenderSettings.fogDensity = savedFogDensity;
-            RenderSettings.fogMode = savedFogMode;
-            fogOverrideActive = false;
+            SetDistantGroundSuppressed(false);
+            if (fogOverrideActive)
+            {
+                RenderSettings.fog = savedFog;
+                RenderSettings.fogColor = savedFogColor;
+                RenderSettings.fogDensity = savedFogDensity;
+                RenderSettings.fogMode = savedFogMode;
+                fogOverrideActive = false;
+            }
             sprawlActive = false;
             if (cloudRoot) cloudRoot.SetActive(false);
+        }
+
+        private void SetDistantGroundSuppressed(bool suppress)
+        {
+            if (suppress)
+            {
+                // Cache at the time it is first needed rather than in Awake:
+                // the scene object can be enabled after this runtime bootstrap.
+                if (distantGroundRenderers.Count == 0)
+                {
+                    GameObject distantGround = GameObject.Find("Distant_City_Ground");
+                    if (distantGround)
+                    {
+                        foreach (Renderer renderer in distantGround.GetComponentsInChildren<Renderer>(true))
+                        {
+                            if (!renderer) continue;
+                            distantGroundRenderers.Add(renderer);
+                            distantGroundWasEnabled.Add(renderer.enabled);
+                        }
+                    }
+                }
+                foreach (Renderer renderer in distantGroundRenderers)
+                    if (renderer) renderer.enabled = false;
+                distantGroundSuppressed = true;
+                return;
+            }
+
+            if (!distantGroundSuppressed) return;
+            for (int index = 0; index < distantGroundRenderers.Count; index++)
+            {
+                Renderer renderer = distantGroundRenderers[index];
+                if (renderer) renderer.enabled = distantGroundWasEnabled[index];
+            }
+            distantGroundRenderers.Clear();
+            distantGroundWasEnabled.Clear();
+            distantGroundSuppressed = false;
         }
     }
 }

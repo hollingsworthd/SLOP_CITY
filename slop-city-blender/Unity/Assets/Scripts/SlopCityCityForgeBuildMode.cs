@@ -48,6 +48,17 @@ namespace SlopCity
         private string screenHostId = string.Empty;
         private int buildingFloors = 2;
         private CityForgeDirection entrance = CityForgeDirection.North;
+        // Returning from the map after laying ground should put the player on
+        // the accepted island, rather than back on the entry deck wondering
+        // whether the autosave worked. Hosted worlds promote this only after
+        // the authoritative response; offline worlds promote it immediately
+        // after their durable local write.
+        private bool hasPendingGroundPlacement;
+        private CityForgeCoord pendingGroundCoordinate;
+        private int pendingGroundCell = -1;
+        private bool hasRecentGroundPlacement;
+        private CityForgeCoord recentGroundCoordinate;
+        private int recentGroundCell = -1;
         private readonly HashSet<int> lotFootprint = new HashSet<int>();
         // A boundary connection is one player gesture but two authoritative
         // plans. Keep that small atomic set separate from the selected canvas
@@ -293,7 +304,11 @@ namespace SlopCity
             if (!opened) return;
             opened = false; ResetBuildUiPointerActivation(); mapMousePressed = false; mapMouseDragged = false; hasHoveredCell = false; previewSink?.ClearCityForgeDraftPreview(); buildOverlaySink?.ClearCityForgeBuildOverlay(); strategicMap?.ClearCityForgeStrategicMap(); if (controller && controller.IsInitialized) controller.SetBuildMode(false); RestoreCamera(); GateFirstPerson(false); SetHudSuppressed(false); SetUi(false); SetLauncher(editingEnabled);
             SlopCityFirstPerson player = FindFirstObjectByType<SlopCityFirstPerson>();
-            if (player) PlayerNeighbourhoodRequested?.Invoke(new CityForgeCoord(Mathf.FloorToInt(player.transform.position.x / SlopCityCityForge.ChunkSizeMeters), Mathf.FloorToInt(player.transform.position.z / SlopCityCityForge.ChunkSizeMeters)));
+            if (player)
+            {
+                PlacePlayerOnRecentIsland(player);
+                PlayerNeighbourhoodRequested?.Invoke(new CityForgeCoord(Mathf.FloorToInt(player.transform.position.x / SlopCityCityForge.ChunkSizeMeters), Mathf.FloorToInt(player.transform.position.z / SlopCityCityForge.ChunkSizeMeters)));
+            }
             BuildModeChanged?.Invoke(false);
         }
 
@@ -337,7 +352,11 @@ namespace SlopCity
                 next.groundCells.Add(cell);
             }
             next.groundCells.Sort();
-            return Apply(next, remove ? "Island ground cleared." : "Island ground laid.");
+            if (!remove) QueueGroundPlacement(selected, cell);
+            bool applied = Apply(next, remove ? "Island ground cleared." : "Island ground laid.");
+            if (!applied && !remove) ClearPendingGroundPlacement(selected, cell);
+            if (applied && remove) ClearRecentGroundPlacement(selected, cell);
+            return applied;
         }
 
         public bool TrySetRoad(int cellX, int cellZ, CityForgeDirection direction, CityForgeRoadClass roadClass, bool remove)
@@ -383,12 +402,14 @@ namespace SlopCity
             if (draft == null || (draft.buildings ?? new List<CityForgeBuilding>()).Any(item => item != null && item.parcelId == parcelId)) return false;
             CityForgeParcel parcel = (draft.parcels ?? new List<CityForgeParcel>()).FirstOrDefault(item => item != null && item.id == parcelId);
             if (parcel == null) { SetMessage("Add a lot first."); return false; }
-            if (!HasStreetFrontage(parcel, entrance))
+            CityForgeDirection resolvedEntrance = entrance;
+            if (!HasStreetFrontage(parcel, resolvedEntrance) && !TryFindStreetFrontage(parcel, out resolvedEntrance))
             {
-                SetMessage("Lay a street along this lot's " + DirectionLabel(entrance).ToLowerInvariant() + " edge before placing a building.");
+                SetMessage("This lot needs a street touching it before a building can be placed.");
                 return false;
             }
-            CityForgeChunkPlan next = draft.Clone(); next.buildings.Add(new CityForgeBuilding { id = NextId("building"), parcelId = parcelId, blueprintId = blueprintId, facadeId = facadeId, roofId = roofId, floors = floors, entranceEdge = entrance, storefrontId = storefrontId ?? string.Empty, interiorRole = interiorRole ?? string.Empty }); return Apply(next, "Building kit placed.");
+            this.entrance = resolvedEntrance;
+            CityForgeChunkPlan next = draft.Clone(); next.buildings.Add(new CityForgeBuilding { id = NextId("building"), parcelId = parcelId, blueprintId = blueprintId, facadeId = facadeId, roofId = roofId, floors = floors, entranceEdge = resolvedEntrance, storefrontId = storefrontId ?? string.Empty, interiorRole = interiorRole ?? string.Empty }); return Apply(next, "Building kit placed facing the " + DirectionLabel(resolvedEntrance).ToLowerInvariant() + " street.");
         }
         public bool TryPlaceService(string parcelId, string type)
         {
@@ -468,7 +489,7 @@ namespace SlopCity
             {
                 NotifyDraftsChanged(plans);
                 CommitRequested(plans.Select(item => item.Clone()).ToList());
-                SetMessage("Saving City Forge…");
+                SetMessage("Auto-saving City Forge…");
                 return true;
             }
             // The player is safely gated in the top-down editor, so update the
@@ -484,6 +505,7 @@ namespace SlopCity
             }
             if (atomicDrafts.TryGetValue(selected, out CityForgeChunkPlan current)) draft = current.Clone();
             history = new SlopCityCityForgeDraftHistory(draft);
+            ConfirmPendingGroundPlacement();
             controller.StreamAt(selected);
             ShowStrategicMap(); SetMessage(success); RefreshUi(); RefreshBuildOverlay(); return true;
         }
@@ -522,8 +544,27 @@ namespace SlopCity
         public bool ApplyAuthoritativeCommit(CityForgeWorldHead head, IEnumerable<CityForgeChunkPlan> plans, out CityForgeValidation validation)
         {
             if (!controller.ApplyAuthoritativeCommit(head, plans, out validation)) { SetMessage(validation.Messages.FirstOrDefault() ?? "The hosted save was refused."); return false; }
-            if (opened && controller.TryGetAccepted(selected, out CityForgeChunkPlan accepted)) { draft = accepted; ResetAtomicDrafts(draft); history = new SlopCityCityForgeDraftHistory(draft); }
-            ShowStrategicMap(); SetMessage("Saved to the City Forge world."); RefreshUi(); RefreshBuildOverlay(); return true;
+            AcknowledgeAuthoritativeCommit();
+            SetMessage("Saved to the City Forge world.");
+            return true;
+        }
+
+        /// <summary>
+        /// Called after an external owner bridge has installed a verified
+        /// accepted page through its own controller path. It deliberately does
+        /// not apply a second mutation; it only reconciles the editor's
+        /// autosave acknowledgement and presentation with that accepted data.
+        /// </summary>
+        public void AcknowledgeAuthoritativeCommit()
+        {
+            if (opened && controller != null && controller.TryGetAccepted(selected, out CityForgeChunkPlan accepted))
+            {
+                draft = accepted;
+                ResetAtomicDrafts(draft);
+                history = new SlopCityCityForgeDraftHistory(draft);
+            }
+            ConfirmPendingGroundPlacement();
+            ShowStrategicMap(); RefreshUi(); RefreshBuildOverlay();
         }
 
         public void SetStatusMessage(string value) { SetMessage(value); }
@@ -866,8 +907,6 @@ namespace SlopCity
             {
                 buildingBlueprint = BuildingBlueprintsForZone(parcel.zone).FirstOrDefault() ?? buildingBlueprint;
                 RefreshUi();
-                SetMessage("That kit does not fit this " + parcel.zone + " lot. Pick one of this zone's kits.");
-                return;
             }
             TryPlaceBuilding(parcel.id, buildingBlueprint, facade, roof, buildingFloors, entrance, storefront == "none" ? null : storefront, interior);
         }
@@ -946,6 +985,114 @@ namespace SlopCity
                 }
             }
             return false;
+        }
+
+        /// <summary>
+        /// Buildings face the selected entry when it has a street. Otherwise
+        /// choose a real adjoining street deterministically, so a correct
+        /// ground → road → lot sequence never fails because of hidden global
+        /// Entry state from an earlier placement.
+        /// </summary>
+        private bool TryFindStreetFrontage(CityForgeParcel parcel, out CityForgeDirection edge)
+        {
+            foreach (CityForgeDirection candidate in new[] { CityForgeDirection.North, CityForgeDirection.East, CityForgeDirection.South, CityForgeDirection.West })
+            {
+                if (!HasStreetFrontage(parcel, candidate)) continue;
+                edge = candidate;
+                return true;
+            }
+            edge = CityForgeDirection.North;
+            return false;
+        }
+
+        private void QueueGroundPlacement(CityForgeCoord coordinate, int cell)
+        {
+            hasPendingGroundPlacement = true;
+            pendingGroundCoordinate = coordinate;
+            pendingGroundCell = cell;
+        }
+
+        private void ClearPendingGroundPlacement(CityForgeCoord coordinate, int cell)
+        {
+            if (!hasPendingGroundPlacement || !pendingGroundCoordinate.Equals(coordinate) || pendingGroundCell != cell) return;
+            hasPendingGroundPlacement = false;
+            pendingGroundCell = -1;
+        }
+
+        private void ClearRecentGroundPlacement(CityForgeCoord coordinate, int cell)
+        {
+            ClearPendingGroundPlacement(coordinate, cell);
+            if (!hasRecentGroundPlacement || !recentGroundCoordinate.Equals(coordinate) || recentGroundCell != cell) return;
+            hasRecentGroundPlacement = false;
+            recentGroundCell = -1;
+        }
+
+        private void ConfirmPendingGroundPlacement()
+        {
+            if (!hasPendingGroundPlacement || controller == null) return;
+            if (!controller.TryGetAccepted(pendingGroundCoordinate, out CityForgeChunkPlan accepted)) return;
+            if (!(accepted.groundCells ?? new List<int>()).Contains(pendingGroundCell))
+            {
+                hasPendingGroundPlacement = false;
+                pendingGroundCell = -1;
+                return;
+            }
+            hasRecentGroundPlacement = true;
+            recentGroundCoordinate = pendingGroundCoordinate;
+            recentGroundCell = pendingGroundCell;
+            hasPendingGroundPlacement = false;
+            pendingGroundCell = -1;
+        }
+
+        private void PlacePlayerOnRecentIsland(SlopCityFirstPerson player)
+        {
+            // Opening the editor from the couch is supported, but a seated
+            // player has no active walking capsule. Leave the accepted island
+            // queued for a later standing return instead of stranding them.
+            if (!hasRecentGroundPlacement || !player || controller == null || player.IsSeated) return;
+            hasRecentGroundPlacement = false;
+            if (!controller.TryGetAccepted(recentGroundCoordinate, out CityForgeChunkPlan accepted)
+                || !(accepted.groundCells ?? new List<int>()).Contains(recentGroundCell)) return;
+
+            int x = recentGroundCell % SlopCityCityForge.GridSize;
+            int z = recentGroundCell / SlopCityCityForge.GridSize;
+            float cell = SlopCityCityForge.CellSizeMeters;
+            Vector3 center = new Vector3(recentGroundCoordinate.x * SlopCityCityForge.ChunkSizeMeters + (x + .5f) * cell,
+                2f, recentGroundCoordinate.z * SlopCityCityForge.ChunkSizeMeters + (z + .5f) * cell);
+            CharacterController capsule = player.GetComponent<CharacterController>();
+            bool capsuleEnabled = capsule && capsule.enabled;
+            if (capsule) capsule.enabled = false;
+
+            // A bare tile uses its center. If the player placed a lot or a
+            // building on that same tile before returning, choose a clear
+            // corner of the tile rather than embedding the walker in a wall.
+            Vector3[] offsets =
+            {
+                Vector3.zero,
+                new Vector3(-cell * .34f, 0f, -cell * .34f), new Vector3(cell * .34f, 0f, -cell * .34f),
+                new Vector3(-cell * .34f, 0f, cell * .34f), new Vector3(cell * .34f, 0f, cell * .34f)
+            };
+            Vector3 destination = center;
+            bool hasClearStandingSpace = !capsule;
+            if (capsule)
+            {
+                foreach (Vector3 offset in offsets)
+                {
+                    Vector3 candidate = center + offset;
+                    Vector3 bottom = candidate + Vector3.up * (capsule.radius + .03f);
+                    Vector3 top = candidate + Vector3.up * (capsule.height - capsule.radius);
+                    if (Physics.CheckCapsule(bottom, top, capsule.radius * .90f, ~0, QueryTriggerInteraction.Ignore)) continue;
+                    destination = candidate;
+                    hasClearStandingSpace = true;
+                    break;
+                }
+            }
+            // Do not put the capsule inside a dense multi-cell building just
+            // to prove a save. The normal entry deck remains the safe refuge
+            // when every point on the last tile is occupied.
+            if (!hasClearStandingSpace) destination = SlopCityCityForgeTravel.StarterEntryPosition;
+            player.transform.position = destination;
+            if (capsule) capsule.enabled = capsuleEnabled;
         }
 
         private string NextId(string prefix) { return NextId(draft, prefix); }
@@ -1274,7 +1421,7 @@ namespace SlopCity
                     ? "Erase ground mode · click a clear island cell to return it to open sky · lots and streets stay protected · every change auto-saves"
                     : "Lay ground mode · click open sky to make an island · click Mode: Lay ground to switch to erase · every change auto-saves";
                 case View.Lots: return "Click a cell to make a lot · Shift-click builds a footprint · lay a street beside it before building · changes auto-save";
-                case View.Buildings: return "Lay a street along the chosen entrance edge, then choose a kit and design options · changes auto-save";
+                case View.Buildings: return "Click a zoned lot to add a designed building · it automatically faces any street touching the lot · changes auto-save";
                 case View.Services: return "Lay a street beside the lot, then click it to add service · choose a screen target before placing a screen · changes auto-save";
                 default: return "Choose a Cityworks outcome, then click a lot to make its site · click it again to add or advance its situation · changes auto-save";
             }

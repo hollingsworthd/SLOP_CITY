@@ -629,12 +629,22 @@ namespace SlopCity
             foreach (int item in cells.Where(value => value >= 0 && value < SlopCityCityForge.GridSize * SlopCityCityForge.GridSize).Distinct().OrderBy(value => value))
             {
                 int x = item % SlopCityCityForge.GridSize, z = item / SlopCityCityForge.GridSize;
-                GameObject ground = Primitive("Ground_" + item, PrimitiveType.Cube, instance.root.transform,
-                    new Vector3((x + .5f) * cell, -.25f, (z + .5f) * cell),
-                    new Vector3(cell, .5f, cell));
-                Renderer renderer = ground.GetComponent<Renderer>();
-                if (renderer) SetRendererColor(renderer, new Color(.42f, .46f, .40f));
-                DisableShadow(ground);
+                // A player-authored ground cell must read as one finite island,
+                // not as a piece of an implied default terrain plane. Keep its
+                // walkable top exactly at y=0 and give it a visibly inset rock
+                // underside so open sky remains obvious on every side.
+                Vector3 center = new Vector3((x + .5f) * cell, 0f, (z + .5f) * cell);
+                GameObject top = Primitive("IslandTop_" + item, PrimitiveType.Cube, instance.root.transform,
+                    center + Vector3.down * .16f, new Vector3(cell - .20f, .32f, cell - .20f));
+                Renderer topRenderer = top.GetComponent<Renderer>();
+                if (topRenderer) SetRendererColor(topRenderer, new Color(.31f, .52f, .34f));
+                DisableShadow(top);
+
+                GameObject underside = Primitive("IslandUnderside_" + item, PrimitiveType.Cube, instance.root.transform,
+                    center + Vector3.down * .76f, new Vector3(cell - .92f, .88f, cell - .92f));
+                Renderer undersideRenderer = underside.GetComponent<Renderer>();
+                if (undersideRenderer) SetRendererColor(undersideRenderer, new Color(.13f, .18f, .24f));
+                DisableShadow(underside);
             }
         }
 
