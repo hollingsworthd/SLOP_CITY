@@ -299,7 +299,11 @@ namespace SlopCity
             buildOverlay.transform.SetParent(transform, false);
             buildOverlay.transform.localPosition = ChunkOrigin(selected);
             Color status = draftIsValid ? new Color(.55f, .94f, .42f) : new Color(1f, .57f, .18f);
-            BuildEditorGrid(buildOverlay.transform, status);
+            // The bounded strategic map already supplies the continuous 9 × 9
+            // grid across every visible buildable block. A separate dark slab
+            // and status border here made one selected chunk look like a
+            // required placement box, even though clicks raycast directly to
+            // any visible grid cell.
             BuildEditorGround(buildOverlay.transform, draft);
             BuildEditorLots(buildOverlay.transform, draft);
             BuildEditorRoads(buildOverlay.transform, draft, status);
@@ -335,34 +339,6 @@ namespace SlopCity
             buildOverlayPresentationActive = visible;
             foreach (ChunkInstance instance in chunks.Values)
                 if (instance != null && instance.root) instance.root.SetActive(!visible);
-        }
-
-        private void BuildEditorGrid(Transform root, Color status)
-        {
-            const float lineHeight = .035f;
-            const float mapHeight = .29f;
-            float chunk = SlopCityCityForge.ChunkSizeMeters;
-            float cell = SlopCityCityForge.CellSizeMeters;
-            // This is a sky chart, not a default ground slab. Keep the
-            // transient, collider-free backing nearly black-blue so the green
-            // island cells are the only surface-like fills in an empty Sprawl.
-            // The slightly brighter grid remains readable without relying on
-            // the walker's night-time scene lighting.
-            EditorPrimitive("PlanSurface", PrimitiveType.Cube, root,
-                new Vector3(chunk * .5f, .252f, chunk * .5f),
-                new Vector3(chunk - .16f, .025f, chunk - .16f), new Color(.008f, .035f, .075f));
-            Color grid = new Color(.15f, .48f, .68f);
-            for (int index = 0; index <= SlopCityCityForge.GridSize; index++)
-            {
-                float offset = index * cell;
-                EditorPrimitive("GridX_" + index, PrimitiveType.Cube, root, new Vector3(offset, mapHeight, chunk * .5f), new Vector3(.07f, lineHeight, chunk), grid);
-                EditorPrimitive("GridZ_" + index, PrimitiveType.Cube, root, new Vector3(chunk * .5f, mapHeight, offset), new Vector3(chunk, lineHeight, .07f), grid);
-            }
-            float border = .18f;
-            EditorPrimitive("PlanBorderNorth", PrimitiveType.Cube, root, new Vector3(chunk * .5f, mapHeight + .015f, chunk), new Vector3(chunk + border, .05f, border), status);
-            EditorPrimitive("PlanBorderSouth", PrimitiveType.Cube, root, new Vector3(chunk * .5f, mapHeight + .015f, 0f), new Vector3(chunk + border, .05f, border), status);
-            EditorPrimitive("PlanBorderEast", PrimitiveType.Cube, root, new Vector3(chunk, mapHeight + .015f, chunk * .5f), new Vector3(border, .05f, chunk + border), status);
-            EditorPrimitive("PlanBorderWest", PrimitiveType.Cube, root, new Vector3(0f, mapHeight + .015f, chunk * .5f), new Vector3(border, .05f, chunk + border), status);
         }
 
         private void BuildEditorLots(Transform root, CityForgeChunkPlan draft)

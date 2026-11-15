@@ -71,6 +71,10 @@ test('City Forge grids its bounded strategic window and retains one safe cross-c
     runtime.indexOf('private void BuildStrategicGrid('),
     runtime.indexOf('private static void BuildStrategicSummaryImpostor'),
   );
+  const overlay = runtime.slice(
+    runtime.indexOf('public void ShowCityForgeBuildOverlay('),
+    runtime.indexOf('public void ClearCityForgeBuildOverlay()'),
+  );
   const click = buildMode.slice(
     buildMode.indexOf('private void ClickMapCell(CityForgeCoord coordinate, int x, int z)'),
     buildMode.indexOf('private void ToggleStreet'),
@@ -90,6 +94,8 @@ test('City Forge grids its bounded strategic window and retains one safe cross-c
   assert.match(strategicGrid, /if \(!SlopCityCityForge\.IsBuildable\(coordinate\)\) continue;/, 'the immutable Old City must remain grid-free');
   assert.match(strategicGrid, /for \(int \w+ = 0; \w+ <= SlopCityCityForge\.GridSize; \w+\+\+\)/, 'each buildable chunk must receive all of its 9 by 9 cell lines');
   assert.match(strategicGrid, /SlopCityCityForge\.CellSizeMeters/, 'strategic grid lines must use the same cell geometry as placement');
+  assert.doesNotMatch(overlay, /BuildEditorGrid\(/, 'the selected draft must not add a second grid box over the shared strategic grid');
+  assert.doesNotMatch(runtime, /PlanSurface|PlanBorder|private void BuildEditorGrid/, 'direct placement must not show a dark selected-chunk slab or border');
 
   assert.doesNotMatch(click, /if \(view == View\.Ground\)[\s\S]*?Click inside the highlighted block/, 'Ground must not discard a click merely because it lands outside the previously selected block');
   assert.match(click, /QueueMapAction\(coordinate, x, z\);/, 'an outside visible-cell click must retain its target while the destination loads');
