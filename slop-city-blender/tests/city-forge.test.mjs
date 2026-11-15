@@ -60,6 +60,48 @@ test('City Forge keeps map clicks separate from the bounded toolbar', () => {
   assert.match(launcher, /Press B to build your city/, 'the locked-pointer entry route must remain explicit');
 });
 
+test('City Forge grids its bounded strategic window and retains one safe cross-chunk action', () => {
+  const buildMode = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeBuildMode.cs', import.meta.url), 'utf8');
+  const runtime = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeRuntime.cs', import.meta.url), 'utf8');
+  const strategic = runtime.slice(
+    runtime.indexOf('public void ShowCityForgeStrategicMap(CityForgeWorldHead head, CityForgeCoord center, int radius,'),
+    runtime.indexOf('public void ClearCityForgeStrategicMap()'),
+  );
+  const strategicGrid = runtime.slice(
+    runtime.indexOf('private void BuildStrategicGrid('),
+    runtime.indexOf('private static void BuildStrategicSummaryImpostor'),
+  );
+  const click = buildMode.slice(
+    buildMode.indexOf('private void ClickMapCell(CityForgeCoord coordinate, int x, int z)'),
+    buildMode.indexOf('private void ToggleStreet'),
+  );
+  const select = buildMode.slice(
+    buildMode.indexOf('public bool SelectChunk(CityForgeCoord coordinate)'),
+    buildMode.indexOf('public void SelectView'),
+  );
+  const toolChanges = buildMode.slice(
+    buildMode.indexOf('private void CycleRoadClass()'),
+    buildMode.indexOf('public bool TryMergeLots'),
+  );
+
+  assert.match(strategic, /int boundedRadius = Mathf\.Clamp\(radius, 1, 6\);/, 'the visible planning grid must remain a bounded 13 by 13 window');
+  assert.match(strategic, /BuildStrategicGrid\([^;]*boundedRadius[^;]*\);/, 'the strategic window must receive one shared cell-grid overlay');
+  assert.match(strategicGrid, /for \(int \w+ = -radius; \w+ <= radius; \w+\+\+\)/, 'the shared grid must cover every chunk in the visible window');
+  assert.match(strategicGrid, /if \(!SlopCityCityForge\.IsBuildable\(coordinate\)\) continue;/, 'the immutable Old City must remain grid-free');
+  assert.match(strategicGrid, /for \(int \w+ = 0; \w+ <= SlopCityCityForge\.GridSize; \w+\+\+\)/, 'each buildable chunk must receive all of its 9 by 9 cell lines');
+  assert.match(strategicGrid, /SlopCityCityForge\.CellSizeMeters/, 'strategic grid lines must use the same cell geometry as placement');
+
+  assert.doesNotMatch(click, /if \(view == View\.Ground\)[\s\S]*?Click inside the highlighted block/, 'Ground must not discard a click merely because it lands outside the previously selected block');
+  assert.match(click, /QueueMapAction\(coordinate, x, z\);/, 'an outside visible-cell click must retain its target while the destination loads');
+  assert.match(click, /SelectChunk\(coordinate, out \w+\)/, 'the retained action must select/load its clicked block');
+  assert.match(buildMode, /private bool hasPendingMapAction;/, 'the queued action must retain explicit state');
+  assert.match(buildMode, /public event Action<CityForgeCoord> ChunkNavigationCanceled;/, 'the public editor must be able to invalidate hosted navigation');
+  assert.match(select, /ApplyPendingMapAction\(\);/, 'the queued click must run after the target draft is available, without a second click');
+  assert.match(buildMode, /ChunkNavigationCanceled\?\.Invoke\(coordinate\);/, 'canceling a queued action must invalidate its hosted navigation');
+  assert.match(click, /pendingMapActionExtendsLotFootprint = Input\.GetKey/, 'a delayed lot action must retain its Shift modifier');
+  assert.match(toolChanges, /CancelPendingMapAction\(\); roadClass =/, 'tool changes must cancel, not reinterpret, a queued action');
+});
+
 test('protected core and all-sides starter ring have exact coordinate semantics', () => {
   assert.equal(isOldCityCoordinate(-2, -2), true);
   assert.equal(isOldCityCoordinate(1, 1), true);

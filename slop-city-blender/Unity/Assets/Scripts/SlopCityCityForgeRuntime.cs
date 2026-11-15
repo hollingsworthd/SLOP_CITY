@@ -70,6 +70,12 @@ namespace SlopCity
         private float nextAdmission;
         private ChunkInstance preview;
         private GameObject strategicMap;
+        // One collider-free mesh covers the bounded strategic window. A grid
+        // per chunk is useful planning feedback, but thousands of cube
+        // primitives would turn a map-only view into a mobile allocation
+        // spike.
+        private Mesh strategicGridMesh;
+        private Material strategicGridMaterial;
         private GameObject buildOverlay;
         private Material buildOverlayMaterial;
         private bool buildOverlayPresentationActive;
@@ -237,6 +243,10 @@ namespace SlopCity
             if (head == null) return;
             int boundedRadius = Mathf.Clamp(radius, 1, 6);
             strategicMap = new GameObject("CityForgeStrategicMap"); strategicMap.transform.SetParent(transform, false);
+            // Every visible buildable block presents its real 9 × 9 planning
+            // grid. This remains a bounded strategic layer, not physical
+            // chunk geometry or an unbounded frontier allocation.
+            BuildStrategicGrid(strategicMap.transform, center, boundedRadius);
             SlopCityCityForgeGenerator generator = new SlopCityCityForgeGenerator(SlopCityCityForgeCatalog.Default);
             for (int x = -boundedRadius; x <= boundedRadius; x++)
                 for (int z = -boundedRadius; z <= boundedRadius; z++)
@@ -261,9 +271,12 @@ namespace SlopCity
 
         public void ClearCityForgeStrategicMap()
         {
-            if (!strategicMap) return;
-            strategicMap.SetActive(false);
-            Destroy(strategicMap); strategicMap = null;
+            if (strategicMap)
+            {
+                strategicMap.SetActive(false);
+                Destroy(strategicMap); strategicMap = null;
+            }
+            if (strategicGridMesh) { Destroy(strategicGridMesh); strategicGridMesh = null; }
         }
 
         /// <summary>
@@ -579,6 +592,81 @@ namespace SlopCity
             }
         }
 
+        /// <summary>
+        /// Renders the 9 × 9 cells for every buildable coordinate in the
+        /// current 13 × 13 strategic window. The mesh is presentation only:
+        /// it has no collider, plan, fixture, or streaming ownership and is
+        /// released with the bounded map window.
+        /// </summary>
+        private void BuildStrategicGrid(Transform root, CityForgeCoord center, int radius)
+        {
+            if (!root || radius < 0) return;
+            List<Vector3> vertices = new List<Vector3>();
+            List<int> triangles = new List<int>();
+            float chunk = SlopCityCityForge.ChunkSizeMeters;
+            float cell = SlopCityCityForge.CellSizeMeters;
+            const float gridHeight = .014f;
+            const float lineWidth = .055f;
+            for (int x = -radius; x <= radius; x++)
+                for (int z = -radius; z <= radius; z++)
+                {
+                    CityForgeCoord coordinate = new CityForgeCoord(center.x + x, center.z + z);
+                    if (!SlopCityCityForge.IsBuildable(coordinate)) continue;
+                    Vector3 origin = ChunkOrigin(coordinate);
+                    for (int index = 0; index <= SlopCityCityForge.GridSize; index++)
+                    {
+                        float offset = index * cell;
+                        AddStrategicGridBar(vertices, triangles,
+                            new Vector3(origin.x + offset, gridHeight, origin.z + chunk * .5f), lineWidth, chunk);
+                        AddStrategicGridBar(vertices, triangles,
+                            new Vector3(origin.x + chunk * .5f, gridHeight, origin.z + offset), chunk, lineWidth);
+                    }
+                }
+            if (vertices.Count == 0) return;
+            GameObject grid = new GameObject("CityForgeStrategicGrid");
+            grid.transform.SetParent(root, false);
+            MeshFilter filter = grid.AddComponent<MeshFilter>();
+            MeshRenderer renderer = grid.AddComponent<MeshRenderer>();
+            strategicGridMesh = new Mesh { name = "City Forge strategic cell grid", hideFlags = HideFlags.DontSave };
+            strategicGridMesh.SetVertices(vertices);
+            strategicGridMesh.SetTriangles(triangles, 0, true);
+            strategicGridMesh.RecalculateBounds();
+            filter.sharedMesh = strategicGridMesh;
+            renderer.sharedMaterial = BuildStrategicGridMaterial();
+            SetEditorRendererColor(renderer, new Color(.12f, .42f, .60f));
+            renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            renderer.receiveShadows = false;
+        }
+
+        private static void AddStrategicGridBar(List<Vector3> vertices, List<int> triangles, Vector3 center, float width, float depth)
+        {
+            int first = vertices.Count;
+            float halfWidth = width * .5f;
+            float halfDepth = depth * .5f;
+            vertices.Add(new Vector3(center.x - halfWidth, center.y, center.z - halfDepth));
+            vertices.Add(new Vector3(center.x - halfWidth, center.y, center.z + halfDepth));
+            vertices.Add(new Vector3(center.x + halfWidth, center.y, center.z + halfDepth));
+            vertices.Add(new Vector3(center.x + halfWidth, center.y, center.z - halfDepth));
+            triangles.Add(first); triangles.Add(first + 1); triangles.Add(first + 2);
+            triangles.Add(first); triangles.Add(first + 2); triangles.Add(first + 3);
+        }
+
+        private Material BuildStrategicGridMaterial()
+        {
+            if (strategicGridMaterial) return strategicGridMaterial;
+            Shader shader = Shader.Find("Unlit/Color") ?? Shader.Find("Standard");
+            if (!shader) return null;
+            strategicGridMaterial = new Material(shader) { name = "City Forge strategic grid", hideFlags = HideFlags.DontSave };
+            if (strategicGridMaterial.HasProperty("_Metallic")) strategicGridMaterial.SetFloat("_Metallic", 0f);
+            if (strategicGridMaterial.HasProperty("_Glossiness")) strategicGridMaterial.SetFloat("_Glossiness", 0f);
+            if (strategicGridMaterial.HasProperty("_EmissionColor"))
+            {
+                strategicGridMaterial.SetColor("_EmissionColor", Color.white);
+                strategicGridMaterial.EnableKeyword("_EMISSION");
+            }
+            return strategicGridMaterial;
+        }
+
         private static void BuildStrategicSummaryImpostor(Transform tile, CityForgeStrategicChunkSummary summary)
         {
             BuildStrategicCounts(tile, summary.roadCount, summary.buildingCount, summary.serviceCount, summary.landmarkCount);
@@ -619,6 +707,7 @@ namespace SlopCity
         {
             ClearCityForgeBuildOverlay(); ClearCityForgeStrategicMap(); ClearCityForgeDraftPreview(); ReleaseAllCityForgeChunks();
             if (buildOverlayMaterial) Destroy(buildOverlayMaterial);
+            if (strategicGridMaterial) Destroy(strategicGridMaterial);
         }
 
         private void BuildGround(ChunkInstance instance, CityForgeResolvedChunk chunk)

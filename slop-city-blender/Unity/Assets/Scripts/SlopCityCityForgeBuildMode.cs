@@ -158,6 +158,17 @@ namespace SlopCity
         private int capturedMapCellZ;
         private bool hasHoveredCell;
         private CityForgeCoord hoveredCell;
+        // A strategic-grid click may name a chunk whose authoritative page or
+        // durable draft is still on its way. Keep the exact local-cell/tool
+        // intent so the first click is not discarded after that bounded load
+        // completes. The action remains scoped to one validated chunk; it is
+        // not an unbounded map-edit queue.
+        private bool hasPendingMapAction;
+        private CityForgeCoord pendingMapActionCoordinate;
+        private int pendingMapActionCellX;
+        private int pendingMapActionCellZ;
+        private View pendingMapActionView;
+        private bool pendingMapActionExtendsLotFootprint;
         private static readonly string[] BuildingBlueprintOptions =
         {
             "walk-up", "courtyard-home", "tower-residence", "live-work-block", "workshop", "repair-bay", "clinic", "laundry", "depot", "small-office",
@@ -190,6 +201,8 @@ namespace SlopCity
         /// <summary>Bridge hook for a reciprocal boundary peer; it must not navigate or replace the selected center.</summary>
         public event Func<CityForgeCoord, bool> EnsureAtomicNeighbourLoaded;
         public event Action<CityForgeCoord> ChunkNavigationRequested;
+        /// <summary>Notifies a hosted owner bridge that an in-flight map action is no longer wanted.</summary>
+        public event Action<CityForgeCoord> ChunkNavigationCanceled;
 
         private void Awake()
         {
@@ -455,7 +468,7 @@ namespace SlopCity
         public void Close()
         {
             if (!opened) return;
-            opened = false; ResetBuildUiPointerActivation(); ResetNativeMapPointer(); mapMousePressed = false; mapMouseDragged = false; hasHoveredCell = false; previewSink?.ClearCityForgeDraftPreview(); buildOverlaySink?.ClearCityForgeBuildOverlay(); strategicMap?.ClearCityForgeStrategicMap(); if (controller && controller.IsInitialized) controller.SetBuildMode(false); RestoreCamera(); GateFirstPerson(false); SetHudSuppressed(false); SetUi(false); SetLauncher(editingEnabled);
+            opened = false; CancelPendingMapAction(); ResetBuildUiPointerActivation(); ResetNativeMapPointer(); mapMousePressed = false; mapMouseDragged = false; hasHoveredCell = false; previewSink?.ClearCityForgeDraftPreview(); buildOverlaySink?.ClearCityForgeBuildOverlay(); strategicMap?.ClearCityForgeStrategicMap(); if (controller && controller.IsInitialized) controller.SetBuildMode(false); RestoreCamera(); GateFirstPerson(false); SetHudSuppressed(false); SetUi(false); SetLauncher(editingEnabled);
             SlopCityFirstPerson player = FindFirstObjectByType<SlopCityFirstPerson>();
             if (player)
             {
@@ -467,18 +480,33 @@ namespace SlopCity
 
         public bool SelectChunk(CityForgeCoord coordinate)
         {
+            bool ignored;
+            return SelectChunk(coordinate, out ignored);
+        }
+
+        /// <summary>
+        /// Selects a strategic-grid chunk. A false return with
+        /// <paramref name="waitingForData"/> set means the hosted bridge is
+        /// loading its bounded page or durable draft and will call this again
+        /// when that exact chunk is usable.
+        /// </summary>
+        private bool SelectChunk(CityForgeCoord coordinate, out bool waitingForData)
+        {
+            waitingForData = false;
             if (!opened || !controller) return false;
-            if (!EnsureLoaded(coordinate)) return false;
+            if (!EnsureLoaded(coordinate)) { waitingForData = true; return false; }
             if (!controller.CanDraft(coordinate)) { SetMessage("Survey an adjoining block first."); return false; }
-            if (!EnsureDraft(coordinate)) return false;
+            if (!EnsureDraft(coordinate)) { waitingForData = true; return false; }
             try { draft = controller.BeginDraft(coordinate); }
             catch (Exception error) { SetMessage(error.Message); return false; }
-            selected = coordinate; hasHoveredCell = false; ResetAtomicDrafts(draft); history = new SlopCityCityForgeDraftHistory(draft); controller.StreamAt(selected); ShowStrategicMap(); FocusCamera(); RefreshUi(); RefreshBuildOverlay(); return true;
+            bool changedSelection = !selected.Equals(coordinate);
+            selected = coordinate; hasHoveredCell = false; if (changedSelection) lotFootprint.Clear(); ResetAtomicDrafts(draft); history = new SlopCityCityForgeDraftHistory(draft); controller.StreamAt(selected); ShowStrategicMap(); FocusCamera(); RefreshUi(); RefreshBuildOverlay(); ApplyPendingMapAction(); return true;
         }
 
         public void SelectView(View next)
         {
             if (autosaveInFlight) { SetMessage("Saving City Forge…"); return; }
+            if (view != next) CancelPendingMapAction();
             view = next;
             RefreshUi();
             RefreshBuildOverlay();
@@ -1185,21 +1213,82 @@ namespace SlopCity
         private void ClickMapCell(CityForgeCoord coordinate, int x, int z)
         {
             if (autosaveInFlight) { SetMessage("Saving City Forge…"); return; }
-            if (!coordinate.Equals(selected))
+            if (!SlopCityCityForge.IsBuildable(coordinate))
             {
-                if (view == View.Ground)
-                {
-                    SetMessage("Click inside the highlighted block to lay ground. Select another block from Streets, Lots, Buildings, Services, or Life.");
-                    return;
-                }
-                SelectChunk(coordinate);
+                CancelPendingMapAction();
+                SetMessage("The Old City is protected. Choose a City Forge grid block.");
                 return;
             }
-            if (view == View.Streets) ToggleStreet(x, z);
-            else if (view == View.Ground) TrySetGround(x, z, removeGround);
-            else if (view == View.Lots) AddLot(x, z);
-            else if (view == View.Buildings) AddBuilding(x, z);
-            else if (view == View.Services) AddService(x, z);
+            if (!coordinate.Equals(selected))
+            {
+                QueueMapAction(coordinate, x, z);
+                bool waitingForData;
+                if (!SelectChunk(coordinate, out waitingForData) && !waitingForData) CancelPendingMapAction();
+                return;
+            }
+            CancelPendingMapAction();
+            ApplyMapAction(view, x, z, Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift));
+        }
+
+        private void QueueMapAction(CityForgeCoord coordinate, int x, int z)
+        {
+            if (hasPendingMapAction && !pendingMapActionCoordinate.Equals(coordinate)) CancelPendingMapAction();
+            hasPendingMapAction = true;
+            pendingMapActionCoordinate = coordinate;
+            pendingMapActionCellX = x;
+            pendingMapActionCellZ = z;
+            // Tool changes cancel a queued action, so its execution cannot be
+            // silently reinterpreted after a hosted page/draft hydration.
+            pendingMapActionView = view;
+            pendingMapActionExtendsLotFootprint = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+        }
+
+        private void ClearPendingMapAction()
+        {
+            hasPendingMapAction = false;
+            pendingMapActionCoordinate = default(CityForgeCoord);
+            pendingMapActionCellX = 0;
+            pendingMapActionCellZ = 0;
+            pendingMapActionView = View.Ground;
+            pendingMapActionExtendsLotFootprint = false;
+        }
+
+        /// <summary>Cancels a local pending action and tells an owner bridge that its matching navigation is stale.</summary>
+        private void CancelPendingMapAction()
+        {
+            if (!hasPendingMapAction) return;
+            CityForgeCoord coordinate = pendingMapActionCoordinate;
+            ClearPendingMapAction();
+            if (hasPendingNavigation && pendingNavigation.Equals(coordinate)) hasPendingNavigation = false;
+            ChunkNavigationCanceled?.Invoke(coordinate);
+        }
+
+        /// <summary>Called by a hosted bridge after a terminal page or draft failure for this exact requested chunk.</summary>
+        public void CancelPendingMapAction(CityForgeCoord coordinate)
+        {
+            if (!hasPendingMapAction || !pendingMapActionCoordinate.Equals(coordinate)) return;
+            ClearPendingMapAction();
+            if (hasPendingNavigation && pendingNavigation.Equals(coordinate)) hasPendingNavigation = false;
+        }
+
+        private void ApplyPendingMapAction()
+        {
+            if (!hasPendingMapAction || !selected.Equals(pendingMapActionCoordinate)) return;
+            View actionView = pendingMapActionView;
+            int x = pendingMapActionCellX;
+            int z = pendingMapActionCellZ;
+            bool extendsLotFootprint = pendingMapActionExtendsLotFootprint;
+            ClearPendingMapAction();
+            if (!autosaveInFlight) ApplyMapAction(actionView, x, z, extendsLotFootprint);
+        }
+
+        private void ApplyMapAction(View actionView, int x, int z, bool extendsLotFootprint)
+        {
+            if (actionView == View.Streets) ToggleStreet(x, z);
+            else if (actionView == View.Ground) TrySetGround(x, z, removeGround);
+            else if (actionView == View.Lots) AddLot(x, z, extendsLotFootprint);
+            else if (actionView == View.Buildings) AddBuilding(x, z);
+            else if (actionView == View.Services) AddService(x, z);
             else AddLife(x, z);
         }
 
@@ -1241,8 +1330,13 @@ namespace SlopCity
 
         private void AddLot(int x, int z)
         {
+            AddLot(x, z, Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift));
+        }
+
+        private void AddLot(int x, int z, bool extendsFootprint)
+        {
             int cell = x + z * 9;
-            if (Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift))
+            if (extendsFootprint)
             {
                 if (!lotFootprint.Add(cell)) lotFootprint.Remove(cell);
                 SetMessage(lotFootprint.Count + " grid cells selected for a lot footprint."); return;
@@ -1474,17 +1568,19 @@ namespace SlopCity
             return x + "," + z + ":" + side;
         }
 
-        private void CycleRoadClass() { roadClass = (CityForgeRoadClass)(((int)roadClass + 1) % 5); RefreshUi(); RefreshBuildOverlay(); }
+        private void CycleRoadClass() { CancelPendingMapAction(); roadClass = (CityForgeRoadClass)(((int)roadClass + 1) % 5); RefreshUi(); RefreshBuildOverlay(); }
         private void CycleRoadDirection()
         {
+            CancelPendingMapAction();
             roadDirection = (CityForgeDirection)(((int)roadDirection + 1) % 4);
             RefreshUi();
             RefreshBuildOverlay();
         }
-        private void ToggleRoadRemoval() { removeRoad = !removeRoad; RefreshUi(); }
-        private void ToggleGroundRemoval() { removeGround = !removeGround; RefreshUi(); }
+        private void ToggleRoadRemoval() { CancelPendingMapAction(); removeRoad = !removeRoad; RefreshUi(); }
+        private void ToggleGroundRemoval() { CancelPendingMapAction(); removeGround = !removeGround; RefreshUi(); }
         private void CycleLotZone()
         {
+            CancelPendingMapAction();
             lotZone = (CityForgeZone)(((int)lotZone + 1) % 6);
             string[] preferred = { "walk-up", "workshop", "corner-shop", "care-station", "studio", "garden" }; buildingBlueprint = preferred[(int)lotZone];
             landmarkClass = landmarkOutcome = string.Empty;
@@ -1494,6 +1590,7 @@ namespace SlopCity
         {
             List<string> options = BuildingBlueprintsForZone(lotZone);
             if (options.Count == 0) return;
+            CancelPendingMapAction();
             int index = options.IndexOf(buildingBlueprint); buildingBlueprint = options[(index + 1 + options.Count) % options.Count]; RefreshUi();
         }
 
@@ -1501,16 +1598,18 @@ namespace SlopCity
         {
             return BuildingBlueprintOptions.Where(value => SlopCityCityForgeCatalog.Default.IsBuildingAllowedInZone(value, zone)).ToList();
         }
-        private void CycleFacade() { string[] values = { "wet-masonry", "poured-concrete", "glazed-ceramic", "oxidized-metal", "painted-render", "brick-utility", "night-glass", "garden-lattice" }; facade = values[(Array.IndexOf(values, facade) + 1 + values.Length) % values.Length]; RefreshUi(); }
-        private void CycleRoof() { string[] values = { "service-roof", "rain-garden", "solar-rack", "water-tank", "relay-array", "lantern-roof", "terrace", "greenhouse", "vent-stack", "civic-canopy", "screen-crown", "utility-bridge" }; roof = values[(Array.IndexOf(values, roof) + 1 + values.Length) % values.Length]; RefreshUi(); }
-        private void CycleStorefront() { string[] values = { "none", "shutter", "awning", "glazed", "arcade", "market-stall" }; storefront = values[(Array.IndexOf(values, storefront) + 1 + values.Length) % values.Length]; RefreshUi(); }
+        private void CycleFacade() { CancelPendingMapAction(); string[] values = { "wet-masonry", "poured-concrete", "glazed-ceramic", "oxidized-metal", "painted-render", "brick-utility", "night-glass", "garden-lattice" }; facade = values[(Array.IndexOf(values, facade) + 1 + values.Length) % values.Length]; RefreshUi(); }
+        private void CycleRoof() { CancelPendingMapAction(); string[] values = { "service-roof", "rain-garden", "solar-rack", "water-tank", "relay-array", "lantern-roof", "terrace", "greenhouse", "vent-stack", "civic-canopy", "screen-crown", "utility-bridge" }; roof = values[(Array.IndexOf(values, roof) + 1 + values.Length) % values.Length]; RefreshUi(); }
+        private void CycleStorefront() { CancelPendingMapAction(); string[] values = { "none", "shutter", "awning", "glazed", "arcade", "market-stall" }; storefront = values[(Array.IndexOf(values, storefront) + 1 + values.Length) % values.Length]; RefreshUi(); }
         private void CycleInterior()
         {
+            CancelPendingMapAction();
             string[] values = { "", "home-room", "workshop-floor", "repair-counter", "care-room", "laundry-room", "depot-bay", "office-floor", "shop-floor", "market-floor", "cafe-room", "exchange-room", "library-room", "community-room", "screening-room", "studio-room", "venue-room", "archive-room", "performance-room", "utility-room", "shelter-room" };
             interior = values[(Array.IndexOf(values, interior) + 1 + values.Length) % values.Length]; RefreshUi();
         }
         private void CycleService()
         {
+            CancelPendingMapAction();
             string[] values = { "care-station", "repair-counter", "laundry-service", "delivery-bay", "neighborhood-office", "market-stall", "food-counter", "exchange-desk", "library-desk", "utility-desk", "community-room", "screening-service", "studio-service", "venue-door", "archive-desk", "garden-steward", "water-service", "power-service", "shelter-desk", "service-yard-bay" };
             serviceType = values[(Array.IndexOf(values, serviceType) + 1 + values.Length) % values.Length]; RefreshUi();
         }
@@ -1525,6 +1624,7 @@ namespace SlopCity
         private void CycleLandmarkOutcome()
         {
             List<LandmarkChoice> choices = LandmarkChoices(lotZone); if (choices.Count == 0) return;
+            CancelPendingMapAction();
             int current = choices.FindIndex(item => item.classId == landmarkClass && item.outcomeId == landmarkOutcome);
             LandmarkChoice next = choices[(current + 1 + choices.Count) % choices.Count]; landmarkClass = next.classId; landmarkOutcome = next.outcomeId; RefreshUi();
         }
@@ -1532,10 +1632,12 @@ namespace SlopCity
         {
             string[] choices = SlopCityCityForgeCatalog.Default.Situations.OrderBy(item => item, StringComparer.Ordinal).ToArray();
             if (choices.Length == 0) return;
+            CancelPendingMapAction();
             int current = Array.IndexOf(choices, situationTemplate); situationTemplate = choices[(current + 1 + choices.Length) % choices.Length]; RefreshUi();
         }
         private void CycleSituationState()
         {
+            CancelPendingMapAction();
             string[] states = { "available", "active", "resolved", "paused", "archived", "unavailable" };
             int current = Array.IndexOf(states, situationState); situationState = states[(current + 1 + states.Length) % states.Length]; RefreshUi();
         }
@@ -1550,23 +1652,26 @@ namespace SlopCity
         }
         private void CycleScreenMount()
         {
+            CancelPendingMapAction();
             string[] values = { "interior-wall-tv", "facade-media-wall", "plaza-civic-support", "street-kiosk-screen" };
             screenMount = values[(Array.IndexOf(values, screenMount) + 1 + values.Length) % values.Length]; screenHostId = string.Empty; RefreshUi();
         }
-        private void CycleScreenHost() { screenHostMode = (screenHostMode + 1) % 3; screenHostId = string.Empty; RefreshUi(); }
+        private void CycleScreenHost() { CancelPendingMapAction(); screenHostMode = (screenHostMode + 1) % 3; screenHostId = string.Empty; RefreshUi(); }
         private void CycleScreenTarget()
         {
             List<string> choices = AvailableScreenHosts();
             if (choices.Count == 0) { SetMessage("No compatible host is available for that mount."); return; }
+            CancelPendingMapAction();
             int current = choices.IndexOf(screenHostId); screenHostId = choices[(current + 1 + choices.Count) % choices.Count]; RefreshUi();
         }
         private void CycleScreenDevice()
         {
+            CancelPendingMapAction();
             string[] values = { "public-crt-01", "public-led-01", "public-projector-01", "public-window-01" };
             screenDevice = values[(Array.IndexOf(values, screenDevice) + 1 + values.Length) % values.Length]; RefreshUi();
         }
-        private void CycleEntrance() { entrance = (CityForgeDirection)(((int)entrance + 1) % 4); RefreshUi(); }
-        private void ChangeFloors(int amount) { buildingFloors = Mathf.Clamp(buildingFloors + amount, 1, 24); RefreshUi(); }
+        private void CycleEntrance() { CancelPendingMapAction(); entrance = (CityForgeDirection)(((int)entrance + 1) % 4); RefreshUi(); }
+        private void ChangeFloors(int amount) { CancelPendingMapAction(); buildingFloors = Mathf.Clamp(buildingFloors + amount, 1, 24); RefreshUi(); }
 
         public bool TryMergeLots(IEnumerable<string> parcelIds, string mergedId = null)
         {
@@ -1627,6 +1732,7 @@ namespace SlopCity
         public bool TrySelectScreenHost(string hostId)
         {
             if (string.IsNullOrEmpty(hostId) || !AvailableScreenHosts().Contains(hostId)) return false;
+            CancelPendingMapAction();
             screenHostId = hostId;
             RefreshUi();
             return true;
