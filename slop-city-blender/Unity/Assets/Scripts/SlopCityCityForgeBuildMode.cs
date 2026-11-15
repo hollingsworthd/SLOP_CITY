@@ -118,16 +118,6 @@ namespace SlopCity
         private bool mapMouseDragged;
         private Vector2 mapMouseStart;
         private Vector2 mapMousePrevious;
-        // macOS desktop input can report its Input.mousePosition in points
-        // while both the city map camera and the overlay render in backing
-        // pixels. Keep a separate native-event gesture for that platform so
-        // a visible cell always resolves to the cell the player clicked.
-        private bool mapGuiMousePressed;
-        private bool mapGuiMouseDragged;
-        private Vector2 mapGuiMouseStart;
-        private Vector2 mapGuiMousePrevious;
-        private Vector2 mapGuiPointer;
-        private bool hasMapGuiPointer;
         private bool hasHoveredCell;
         private CityForgeCoord hoveredCell;
         private static readonly string[] BuildingBlueprintOptions =
@@ -217,20 +207,13 @@ namespace SlopCity
         private void OnGUI()
         {
             Event current = Event.current;
-            if (current == null) return;
+            if (current == null || current.button != 0) return;
             EventType type = current.type == EventType.Used ? current.rawType : current.type;
-            if (type == EventType.MouseMove && opened && UsesNativeMacMapPointer() && canvas && canvas.gameObject.activeInHierarchy)
-            {
-                mapGuiPointer = GuiPointerToCanvasScreenPoint(current, canvas);
-                hasMapGuiPointer = true;
-                return;
-            }
-            if (current.button != 0 || (type != EventType.MouseDown && type != EventType.MouseDrag && type != EventType.MouseUp)) return;
-            // On macOS, native IMGUI events are the reliable source for a
-            // desktop click, but they use a top-left origin in the Canvas's
-            // backing-pixel space. Convert against the actual canvas pixel
-            // rect; Screen.height can be a smaller Retina point size.
-            Vector2 screenPosition = GuiPointerToCanvasScreenPoint(current, opened ? canvas : launcherCanvas);
+            if (type != EventType.MouseDown && type != EventType.MouseUp) return;
+            // IMGUI provides dependable desktop press/release timing, but its
+            // pointer coordinate can be point-sized on Retina. The legacy
+            // input coordinate is normalized at every render-target boundary.
+            Vector2 screenPosition = Input.mousePosition;
 
             if (!opened)
             {
@@ -242,12 +225,6 @@ namespace SlopCity
                 return;
             }
             if (!canvas || !canvas.gameObject.activeInHierarchy) return;
-
-            if (UsesNativeMacMapPointer())
-            {
-                HandleNativeMacMapPointer(current, type, screenPosition);
-                return;
-            }
 
             if (type == EventType.MouseDown)
             {
@@ -274,78 +251,6 @@ namespace SlopCity
             buildUiGuiMousePressFrame = -1;
             current.Use();
             if (activate) InvokeBuildUiFallback(capture, PointerInputModule.kMouseLeftId);
-        }
-
-        private static bool UsesNativeMacMapPointer()
-        {
-            return Application.platform == RuntimePlatform.OSXPlayer || Application.platform == RuntimePlatform.OSXEditor;
-        }
-
-        /// <summary>
-        /// Owns desktop City Forge gestures on macOS. IMGUI exposes the
-        /// backing-pixel coordinate that matches the ScreenSpaceOverlay
-        /// canvas and build camera, unlike the point-sized legacy input value
-        /// on a Retina display.
-        /// </summary>
-        private void HandleNativeMacMapPointer(Event current, EventType type, Vector2 screenPosition)
-        {
-            mapGuiPointer = screenPosition;
-            hasMapGuiPointer = true;
-
-            if (type == EventType.MouseDown)
-            {
-                buildUiGuiMouseSurfaceCapture = BuildUiSurfaceContains(screenPosition);
-                buildUiGuiMouseCapture = buildUiGuiMouseSurfaceCapture ? BuildUiActivatableButtonAt(screenPosition) : null;
-                buildUiGuiMousePressFrame = Time.frameCount;
-
-                // Update can receive the legacy point-space MouseDown first.
-                // Cancel it here so its MouseUp cannot lay or select a
-                // different cell behind this native backing-pixel gesture.
-                mapMousePressed = false;
-                mapMouseDragged = false;
-                mapGuiMousePressed = !buildUiGuiMouseSurfaceCapture;
-                mapGuiMouseDragged = false;
-                mapGuiMouseStart = screenPosition;
-                mapGuiMousePrevious = screenPosition;
-                current.Use();
-                return;
-            }
-
-            if (type == EventType.MouseDrag)
-            {
-                if (!mapGuiMousePressed) return;
-                if (!mapGuiMouseDragged && Vector2.Distance(screenPosition, mapGuiMouseStart) >= MapDragThresholdPixels) mapGuiMouseDragged = true;
-                if (mapGuiMouseDragged) PanMap(screenPosition - mapGuiMousePrevious, buildCamera ? buildCamera.pixelHeight : Screen.height);
-                mapGuiMousePrevious = screenPosition;
-                current.Use();
-                return;
-            }
-
-            if (buildUiGuiMouseSurfaceCapture)
-            {
-                Button capture = buildUiGuiMouseCapture;
-                bool activate = capture && BuildUiActivatableButtonAt(screenPosition) == capture && !BuildUiButtonActivatedOnOrAfter(capture, buildUiGuiMousePressFrame);
-                buildUiGuiMouseCapture = null;
-                buildUiGuiMouseSurfaceCapture = false;
-                buildUiGuiMousePressFrame = -1;
-                current.Use();
-                if (activate) InvokeBuildUiFallback(capture, PointerInputModule.kMouseLeftId);
-                return;
-            }
-
-            if (mapGuiMousePressed && !mapGuiMouseDragged && Vector2.Distance(screenPosition, mapGuiMouseStart) >= MapDragThresholdPixels) mapGuiMouseDragged = true;
-            bool clickMap = mapGuiMousePressed && !mapGuiMouseDragged && !BuildUiSurfaceContains(screenPosition);
-            mapGuiMousePressed = false;
-            mapGuiMouseDragged = false;
-            current.Use();
-            if (clickMap) ClickMap(screenPosition);
-        }
-
-        private static Vector2 GuiPointerToCanvasScreenPoint(Event current, Canvas targetCanvas)
-        {
-            Rect pixelRect = targetCanvas ? targetCanvas.pixelRect : new Rect(0f, 0f, Screen.width, Screen.height);
-            if (pixelRect.width <= 0f || pixelRect.height <= 0f) pixelRect = new Rect(0f, 0f, Screen.width, Screen.height);
-            return new Vector2(pixelRect.x + current.mousePosition.x, pixelRect.y + pixelRect.height - current.mousePosition.y);
         }
 
         public bool Open()
@@ -384,7 +289,7 @@ namespace SlopCity
         public void Close()
         {
             if (!opened) return;
-            opened = false; ResetBuildUiPointerActivation(); ResetNativeMapPointer(); mapMousePressed = false; mapMouseDragged = false; hasHoveredCell = false; previewSink?.ClearCityForgeDraftPreview(); buildOverlaySink?.ClearCityForgeBuildOverlay(); strategicMap?.ClearCityForgeStrategicMap(); if (controller && controller.IsInitialized) controller.SetBuildMode(false); RestoreCamera(); GateFirstPerson(false); SetHudSuppressed(false); SetUi(false); SetLauncher(editingEnabled);
+            opened = false; ResetBuildUiPointerActivation(); mapMousePressed = false; mapMouseDragged = false; hasHoveredCell = false; previewSink?.ClearCityForgeDraftPreview(); buildOverlaySink?.ClearCityForgeBuildOverlay(); strategicMap?.ClearCityForgeStrategicMap(); if (controller && controller.IsInitialized) controller.SetBuildMode(false); RestoreCamera(); GateFirstPerson(false); SetHudSuppressed(false); SetUi(false); SetLauncher(editingEnabled);
             SlopCityFirstPerson player = FindFirstObjectByType<SlopCityFirstPerson>();
             if (player) PlayerNeighbourhoodRequested?.Invoke(new CityForgeCoord(Mathf.FloorToInt(player.transform.position.x / SlopCityCityForge.ChunkSizeMeters), Mathf.FloorToInt(player.transform.position.z / SlopCityCityForge.ChunkSizeMeters)));
             BuildModeChanged?.Invoke(false);
@@ -852,15 +757,6 @@ namespace SlopCity
 
         private void UpdateMapMousePointer(bool mouseStartedOverBuildUi)
         {
-            if (UsesNativeMacMapPointer())
-            {
-                // The native OnGUI path owns Mac mouse coordinates in the
-                // build camera's backing-pixel space. Touch input remains on
-                // its existing path below.
-                mapMousePressed = false;
-                mapMouseDragged = false;
-                return;
-            }
             if (Input.touchCount > 0)
             {
                 mapMousePressed = false;
@@ -899,9 +795,7 @@ namespace SlopCity
         {
             bool nextHasHover = false;
             CityForgeCoord nextHover = default(CityForgeCoord);
-            Vector2 pointer = UsesNativeMacMapPointer() && hasMapGuiPointer ? mapGuiPointer : Input.mousePosition;
-            bool pointerDragging = UsesNativeMacMapPointer() ? mapGuiMouseDragged : mapMouseDragged;
-            if (!BuildUiSurfaceContains(pointer) && !pointerDragging && TryGetMapCell(pointer, out CityForgeCoord coordinate, out int x, out int z) && coordinate.Equals(selected))
+            if (!BuildUiSurfaceContains(Input.mousePosition) && !mapMouseDragged && TryGetMapCell(Input.mousePosition, out CityForgeCoord coordinate, out int x, out int z) && coordinate.Equals(selected))
             {
                 nextHasHover = true;
                 nextHover = new CityForgeCoord(x, z);
@@ -919,11 +813,26 @@ namespace SlopCity
             buildCamera.transform.position -= new Vector3(movement.x * metresPerPixel, 0f, movement.y * metresPerPixel);
         }
 
-        private bool TryGetMapCell(Vector3 screenPosition, out CityForgeCoord coordinate, out int x, out int z)
+        /// <summary>
+        /// Unity's input API is expressed in the reported Screen space, while
+        /// a Retina camera or overlay can render to a larger backing-pixel
+        /// rectangle. Normalize once at the boundary so a pointer position
+        /// refers to the same visible place in either space.
+        /// </summary>
+        private static Vector2 PointerInPixelRect(Vector2 inputPosition, Rect pixelRect)
+        {
+            if (pixelRect.width <= 0f || pixelRect.height <= 0f) return inputPosition;
+            float inputWidth = Mathf.Max(1f, Screen.width);
+            float inputHeight = Mathf.Max(1f, Screen.height);
+            return new Vector2(pixelRect.x + inputPosition.x * pixelRect.width / inputWidth,
+                pixelRect.y + inputPosition.y * pixelRect.height / inputHeight);
+        }
+
+        private bool TryGetMapCell(Vector3 inputPosition, out CityForgeCoord coordinate, out int x, out int z)
         {
             coordinate = default(CityForgeCoord); x = z = 0;
             if (!buildCamera) return false;
-            Ray ray = buildCamera.ScreenPointToRay(screenPosition);
+            Ray ray = buildCamera.ScreenPointToRay(PointerInPixelRect(new Vector2(inputPosition.x, inputPosition.y), buildCamera.pixelRect));
             if (!new Plane(Vector3.up, Vector3.zero).Raycast(ray, out float distance)) return false;
             Vector3 point = ray.GetPoint(distance);
             coordinate = new CityForgeCoord(Mathf.FloorToInt(point.x / SlopCityCityForge.ChunkSizeMeters), Mathf.FloorToInt(point.z / SlopCityCityForge.ChunkSizeMeters));
@@ -1566,7 +1475,7 @@ namespace SlopCity
         private bool LauncherContains(Vector2 screenPosition)
         {
             RectTransform rect = launcherButton && launcherButton.isActiveAndEnabled ? launcherButton.GetComponent<RectTransform>() : null;
-            return rect && RectTransformUtility.RectangleContainsScreenPoint(rect, screenPosition, null);
+            return rect && RectTransformUtility.RectangleContainsScreenPoint(rect, PointerInPixelRect(screenPosition, launcherCanvas ? launcherCanvas.pixelRect : new Rect(0f, 0f, Screen.width, Screen.height)), null);
         }
 
         private void ResetLauncherPointerActivation()
@@ -1601,16 +1510,6 @@ namespace SlopCity
             {
                 ClearBuildUiTouchCapture();
                 suppressBuildUiTouchUntilNoTouches = false;
-                if (UsesNativeMacMapPointer())
-                {
-                    // The native desktop event path below owns macOS toolbar
-                    // activation. Do not let a Retina point-space fallback
-                    // race it and classify a visible map click as UI.
-                    buildUiMouseCapture = null;
-                    buildUiMouseSurfaceCapture = false;
-                    buildUiMousePressFrame = -1;
-                    return false;
-                }
                 if (Input.GetMouseButtonDown(0))
                 {
                     buildUiMouseSurfaceCapture = BuildUiSurfaceContains(Input.mousePosition);
@@ -1672,16 +1571,17 @@ namespace SlopCity
         private bool BuildUiSurfaceContains(Vector2 screenPosition)
         {
             if (!buildUiSurface || !buildUiSurface.gameObject.activeInHierarchy) return false;
-            return RectTransformUtility.RectangleContainsScreenPoint(buildUiSurface, screenPosition, null);
+            return RectTransformUtility.RectangleContainsScreenPoint(buildUiSurface, PointerInPixelRect(screenPosition, canvas ? canvas.pixelRect : new Rect(0f, 0f, Screen.width, Screen.height)), null);
         }
 
         private Button BuildUiActivatableButtonAt(Vector2 screenPosition)
         {
+            Vector2 canvasPosition = PointerInPixelRect(screenPosition, canvas ? canvas.pixelRect : new Rect(0f, 0f, Screen.width, Screen.height));
             for (int index = buildUiButtons.Count - 1; index >= 0; index--)
             {
                 Button button = buildUiButtons[index];
                 RectTransform rect = button ? button.GetComponent<RectTransform>() : null;
-                if (button && button.IsActive() && button.IsInteractable() && rect && RectTransformUtility.RectangleContainsScreenPoint(rect, screenPosition, null)) return button;
+                if (button && button.IsActive() && button.IsInteractable() && rect && RectTransformUtility.RectangleContainsScreenPoint(rect, canvasPosition, null)) return button;
             }
             return null;
         }
@@ -1726,16 +1626,6 @@ namespace SlopCity
             ClearBuildUiTouchCapture();
             buildUiTouchReleasedThisFrame = false;
             suppressBuildUiTouchUntilNoTouches = false;
-        }
-
-        private void ResetNativeMapPointer()
-        {
-            mapGuiMousePressed = false;
-            mapGuiMouseDragged = false;
-            mapGuiMouseStart = Vector2.zero;
-            mapGuiMousePrevious = Vector2.zero;
-            mapGuiPointer = Vector2.zero;
-            hasMapGuiPointer = false;
         }
 
         private void CancelBuildUiPointerActivation()
@@ -1912,13 +1802,13 @@ namespace SlopCity
         }
         private void OnApplicationFocus(bool focused)
         {
-            if (!focused) { ResetLauncherPointerActivation(); CancelBuildUiPointerActivation(); ResetNativeMapPointer(); }
+            if (!focused) { ResetLauncherPointerActivation(); CancelBuildUiPointerActivation(); }
         }
         private void OnApplicationPause(bool paused)
         {
-            if (paused) { ResetLauncherPointerActivation(); CancelBuildUiPointerActivation(); ResetNativeMapPointer(); }
+            if (paused) { ResetLauncherPointerActivation(); CancelBuildUiPointerActivation(); }
         }
-        private void OnDisable() { ResetLauncherPointerActivation(); ResetBuildUiPointerActivation(); ResetNativeMapPointer(); }
+        private void OnDisable() { ResetLauncherPointerActivation(); ResetBuildUiPointerActivation(); }
         private struct CameraState { public Vector3 position; public Quaternion rotation; public bool orthographic; public float orthographicSize; }
         private struct LandmarkChoice
         {
