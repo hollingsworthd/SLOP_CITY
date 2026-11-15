@@ -432,7 +432,7 @@ namespace SlopCity
         private static bool ParseEdge(string value, out int x, out int z, out CityForgeDirection direction)
         {
             x = z = 0; direction = CityForgeDirection.North;
-            if (string.IsNullOrEmpty(value) || value.Length < 9 || value[1] != ',' || value[3] != ':' || value[0] < '0' || value[0] > '8' || value[2] < '0' || value[2] > '8' || !Direction(value.Substring(4), out direction)) return false;
+            if (string.IsNullOrEmpty(value) || value.Length < 8 || value[1] != ',' || value[3] != ':' || value[0] < '0' || value[0] > '8' || value[2] < '0' || value[2] > '8' || !Direction(value.Substring(4), out direction)) return false;
             x = value[0] - '0'; z = value[2] - '0'; return true;
         }
         private static string Edge(CityForgeRoad value) { return value.cellX.ToString(CultureInfo.InvariantCulture) + "," + value.cellZ.ToString(CultureInfo.InvariantCulture) + ":" + DirectionName(value.direction); }

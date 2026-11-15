@@ -943,7 +943,7 @@ namespace SlopCity
         private static bool TryRoadEdge(string value, out int x, out int z, out CityForgeDirection direction)
         {
             x = z = 0; direction = CityForgeDirection.North;
-            if (string.IsNullOrEmpty(value) || value.Length < 9 || value[1] != ',' || value[3] != ':' || value[0] < '0' || value[0] > '8' || value[2] < '0' || value[2] > '8') return false;
+            if (string.IsNullOrEmpty(value) || value.Length < 8 || value[1] != ',' || value[3] != ':' || value[0] < '0' || value[0] > '8' || value[2] < '0' || value[2] > '8') return false;
             string side = value.Substring(4);
             if (side == "north") direction = CityForgeDirection.North;
             else if (side == "east") direction = CityForgeDirection.East;
@@ -1115,7 +1115,7 @@ namespace SlopCity
         private static bool TryRoadEdge(string value, out int x, out int z, out CityForgeDirection direction)
         {
             x = z = 0; direction = CityForgeDirection.North;
-            if (string.IsNullOrEmpty(value) || value.Length < 9 || value[1] != ',' || value[3] != ':' || value[0] < '0' || value[0] > '8' || value[2] < '0' || value[2] > '8') return false;
+            if (string.IsNullOrEmpty(value) || value.Length < 8 || value[1] != ',' || value[3] != ':' || value[0] < '0' || value[0] > '8' || value[2] < '0' || value[2] > '8') return false;
             string side = value.Substring(4);
             if (side == "north") direction = CityForgeDirection.North;
             else if (side == "east") direction = CityForgeDirection.East;

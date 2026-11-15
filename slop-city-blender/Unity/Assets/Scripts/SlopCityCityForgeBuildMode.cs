@@ -967,7 +967,7 @@ namespace SlopCity
 
         private static string CanonicalizeRoadEdge(string value)
         {
-            if (string.IsNullOrEmpty(value) || value.Length < 9 || value[1] != ',' || value[3] != ':'
+            if (string.IsNullOrEmpty(value) || value.Length < 8 || value[1] != ',' || value[3] != ':'
                 || value[0] < '0' || value[0] > '8' || value[2] < '0' || value[2] > '8') return string.Empty;
             CityForgeDirection direction;
             string side = value.Substring(4);
