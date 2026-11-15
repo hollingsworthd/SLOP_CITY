@@ -20,6 +20,12 @@ namespace SlopCity
         [SerializeField, Range(40f, 280f)] private float topDownHeight = 130f;
         [SerializeField] private bool editingEnabled = true;
         private const int CityForgeCanvasSortingOrder = 300;
+        // City Forge's CanvasScaler uses this authored coordinate system.
+        // Native macOS IMGUI events can be in a different point/pixel space,
+        // so the raw fallback resolves toolbar controls against these bounds.
+        private const float BuildUiReferenceWidth = 1280f;
+        private const float BuildUiToolbarHeight = 164f;
+        private const float NativeMacToolbarHitSlop = 3f;
         private Canvas canvas;
         private Canvas launcherCanvas;
         private Text heading, message, contextHint;
@@ -129,10 +135,9 @@ namespace SlopCity
         private bool mapMouseDragged;
         private Vector2 mapMouseStart;
         private Vector2 mapMousePrevious;
-        // macOS can report legacy mouse input in point space while the
-        // ScreenSpaceOverlay canvas and map camera use backing pixels. Keep
-        // the native event gesture separate so a visible map cell is always
-        // the cell that receives the click on Retina displays.
+        // macOS can drop a short legacy mouse gesture. Keep native IMGUI
+        // timing separate while map coordinates stay in Input.mousePosition's
+        // screen space, the contract shared by UGUI and Camera raycasts.
         private bool mapGuiMousePressed;
         private bool mapGuiMouseDragged;
         private Vector2 mapGuiMouseStart;
@@ -232,15 +237,17 @@ namespace SlopCity
             EventType type = current.type == EventType.Used ? current.rawType : current.type;
             if (type == EventType.MouseMove && opened && UsesNativeMacMapPointer() && canvas && canvas.gameObject.activeInHierarchy)
             {
-                mapGuiPointer = GuiPointerToCanvasScreenPoint(current, canvas);
+                // Input.mousePosition is the lower-left screen coordinate
+                // contract used by the overlay Canvas and the map camera.
+                // IMGUI supplies dependable Mac press/release timing, but not
+                // a second map coordinate space.
+                mapGuiPointer = Input.mousePosition;
                 hasMapGuiPointer = true;
                 return;
             }
             if (current.button != 0) return;
             if (type != EventType.MouseDown && type != EventType.MouseDrag && type != EventType.MouseUp) return;
-            Vector2 screenPosition = UsesNativeMacMapPointer()
-                ? GuiPointerToCanvasScreenPoint(current, opened ? canvas : launcherCanvas)
-                : Input.mousePosition;
+            Vector2 screenPosition = Input.mousePosition;
 
             if (!opened)
             {
@@ -291,11 +298,8 @@ namespace SlopCity
             return Application.platform == RuntimePlatform.OSXPlayer || Application.platform == RuntimePlatform.OSXEditor;
         }
 
-        /// <summary>
-        /// Owns desktop City Forge gestures on macOS. IMGUI reports the native
-        /// location that matches the backing-pixel canvas and build camera,
-        /// avoiding the Retina point-space mismatch in legacy input polling.
-        /// </summary>
+        /// <summary>Owns reliable Mac press/release timing while keeping map
+        /// raycasts in Unity's documented Input.mousePosition screen space.</summary>
         private void HandleNativeMacMapPointer(Event current, EventType type, Vector2 screenPosition)
         {
             mapGuiPointer = screenPosition;
@@ -303,8 +307,7 @@ namespace SlopCity
 
             if (type == EventType.MouseDown)
             {
-                buildUiGuiMouseSurfaceCapture = BuildUiSurfaceContains(screenPosition);
-                buildUiGuiMouseCapture = buildUiGuiMouseSurfaceCapture ? BuildUiActivatableButtonAt(screenPosition) : null;
+                ResolveNativeMacBuildUiHit(current, screenPosition, out buildUiGuiMouseSurfaceCapture, out buildUiGuiMouseCapture);
                 buildUiGuiMousePressFrame = Time.frameCount;
 
                 // Suppress the legacy gesture so its MouseUp cannot lay or
@@ -332,7 +335,8 @@ namespace SlopCity
             if (buildUiGuiMouseSurfaceCapture)
             {
                 Button capture = buildUiGuiMouseCapture;
-                bool activate = capture && BuildUiActivatableButtonAt(screenPosition) == capture && !BuildUiButtonActivatedOnOrAfter(capture, buildUiGuiMousePressFrame);
+                ResolveNativeMacBuildUiHit(current, screenPosition, out bool releasedOnSurface, out Button releasedOnButton);
+                bool activate = releasedOnSurface && capture && releasedOnButton == capture && !BuildUiButtonActivatedOnOrAfter(capture, buildUiGuiMousePressFrame);
                 buildUiGuiMouseCapture = null;
                 buildUiGuiMouseSurfaceCapture = false;
                 buildUiGuiMousePressFrame = -1;
@@ -347,23 +351,6 @@ namespace SlopCity
             mapGuiMouseDragged = false;
             current.Use();
             if (clickMap) ClickMap(screenPosition);
-        }
-
-        private static Vector2 GuiPointerToCanvasScreenPoint(Event current, Canvas targetCanvas)
-        {
-            Rect pixelRect = targetCanvas ? targetCanvas.pixelRect : new Rect(0f, 0f, Screen.width, Screen.height);
-            if (pixelRect.width <= 0f || pixelRect.height <= 0f) pixelRect = new Rect(0f, 0f, Screen.width, Screen.height);
-            // IMGUI reports macOS mouse coordinates in logical points, while
-            // the camera and ScreenSpaceOverlay canvas use backing pixels.
-            // GUIUtility.pixelsPerPoint is editor-only. AlignRectToDevice is
-            // the runtime API that exposes the same GUI-point-to-device-pixel
-            // scale, including Retina and per-display scaling.
-            const float probePoints = 256f;
-            GUIUtility.AlignRectToDevice(new Rect(0f, 0f, probePoints, probePoints), out int probePixelsX, out int probePixelsY);
-            float pixelsPerPointX = probePixelsX > 0 ? probePixelsX / probePoints : 1f;
-            float pixelsPerPointY = probePixelsY > 0 ? probePixelsY / probePoints : 1f;
-            return new Vector2(pixelRect.x + current.mousePosition.x * pixelsPerPointX,
-                pixelRect.y + pixelRect.height - current.mousePosition.y * pixelsPerPointY);
         }
 
         public bool Open()
@@ -1829,6 +1816,92 @@ namespace SlopCity
                 Button button = buildUiButtons[index];
                 RectTransform rect = button ? button.GetComponent<RectTransform>() : null;
                 if (button && button.IsActive() && button.IsInteractable() && rect && RectTransformUtility.RectangleContainsScreenPoint(rect, screenPosition, null)) return button;
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// Uses the normal UGUI hit first, then resolves the native IMGUI
+        /// coordinate against the authored toolbar geometry. The latter is
+        /// deliberately limited to the visible toolbar instead of treating
+        /// the full-screen overlay Canvas as UI, so a map click remains a map
+        /// click even when macOS reports points and backing pixels differently.
+        /// </summary>
+        private void ResolveNativeMacBuildUiHit(Event current, Vector2 inputPosition, out bool withinToolbar, out Button hit)
+        {
+            withinToolbar = BuildUiSurfaceContains(inputPosition);
+            hit = withinToolbar ? BuildUiActivatableButtonAt(inputPosition) : null;
+            if (hit || current == null) return;
+
+            TryNativeMacToolbarHit(current.mousePosition, inputPosition, out bool nativeWithinToolbar, out Button nativeHit);
+            if (!nativeWithinToolbar) return;
+            withinToolbar = true;
+            if (nativeHit) hit = nativeHit;
+        }
+
+        private void TryNativeMacToolbarHit(Vector2 guiPosition, Vector2 inputPosition, out bool withinToolbar, out Button hit)
+        {
+            withinToolbar = false;
+            hit = null;
+            foreach (float guiUnitsPerReferenceUnit in NativeMacToolbarScales(guiPosition, inputPosition))
+            {
+                if (guiUnitsPerReferenceUnit <= 0f) continue;
+                float referenceX = guiPosition.x / guiUnitsPerReferenceUnit;
+                float referenceTop = guiPosition.y / guiUnitsPerReferenceUnit;
+                if (referenceX < -NativeMacToolbarHitSlop || referenceX > BuildUiReferenceWidth + NativeMacToolbarHitSlop
+                    || referenceTop < -NativeMacToolbarHitSlop || referenceTop > BuildUiToolbarHeight + NativeMacToolbarHitSlop) continue;
+
+                withinToolbar = true;
+                Button candidate = ManualBuildUiButtonAt(referenceX, referenceTop, NativeMacToolbarHitSlop);
+                if (!candidate) continue;
+                hit = candidate;
+                return;
+            }
+        }
+
+        private IEnumerable<float> NativeMacToolbarScales(Vector2 guiPosition, Vector2 inputPosition)
+        {
+            float canvasScale = canvas && canvas.scaleFactor > 0f ? canvas.scaleFactor : 1f;
+            // First trust the resolved CanvasScaler factor. It is the exact
+            // visual scale when IMGUI is already reporting backing pixels.
+            yield return canvasScale;
+
+            // When IMGUI reports points but Input reports backing pixels (or
+            // vice versa), their horizontal ratio supplies the missing scale.
+            // x avoids the opposing vertical origins of the two APIs.
+            if (Mathf.Abs(guiPosition.x) > .01f && Mathf.Abs(inputPosition.x) > .01f)
+            {
+                float inputToGui = guiPosition.x / inputPosition.x;
+                if (inputToGui > .05f && inputToGui < 20f) yield return canvasScale * inputToGui;
+            }
+
+            // The normal Retina alternatives cover a display move between
+            // down/up and a player window whose reported point scale changes.
+            yield return canvasScale * .5f;
+            yield return canvasScale * 2f;
+
+            Rect pixelRect = canvas ? canvas.pixelRect : new Rect(0f, 0f, Screen.width, Screen.height);
+            if (pixelRect.width > 0f) yield return pixelRect.width / BuildUiReferenceWidth;
+            if (Screen.width > 0) yield return Screen.width / BuildUiReferenceWidth;
+        }
+
+        private Button ManualBuildUiButtonAt(float referenceX, float referenceTop, float slop)
+        {
+            for (int index = buildUiButtons.Count - 1; index >= 0; index--)
+            {
+                Button button = buildUiButtons[index];
+                RectTransform rect = button ? button.GetComponent<RectTransform>() : null;
+                if (!button || !button.IsActive() || !button.IsInteractable() || !rect) continue;
+                // Every editor button is anchored/pivoted at the toolbar's
+                // top-left corner in CreateUi, so this stays in the Canvas
+                // reference coordinate system even if UGUI got a different
+                // native screen-space coordinate.
+                float left = rect.anchoredPosition.x;
+                float top = -rect.anchoredPosition.y;
+                float right = left + rect.rect.width;
+                float bottom = top + rect.rect.height;
+                if (referenceX >= left - slop && referenceX <= right + slop
+                    && referenceTop >= top - slop && referenceTop <= bottom + slop) return button;
             }
             return null;
         }
