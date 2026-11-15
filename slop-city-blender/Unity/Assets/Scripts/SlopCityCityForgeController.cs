@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
 using System.Linq;
 using UnityEngine;
 
@@ -187,9 +188,15 @@ namespace SlopCity
                 long currentRevision = accepted.TryGetValue(plan.coord, out CityForgeChunkPlan prior) ? prior.revision : 0;
                 if (plan.parentChunkRevision != currentRevision) validation.Refuse("This block changed while you were planning. Reload it before building.");
             }
+            // An unrelated edit may retain an already accepted reciprocal
+            // street seam. Give validation just those accepted neighbors;
+            // ValidateChangedBoundaryOverlays still requires both plans when
+            // the seam itself changes in this command.
+            Dictionary<CityForgeCoord, CityForgeChunkPlan> validationNeighbours = ValidationNeighboursFor(atomic);
+            ValidateChangedBoundaryOverlays(atomic, validation);
             foreach (CityForgeChunkPlan plan in plans)
             {
-                CityForgeValidation checkedPlan = validator.ValidateChunkPlan(head, plan, atomic, true, KnownLandmarksFor(atomic), true, outcomeIndex);
+                CityForgeValidation checkedPlan = validator.ValidateChunkPlan(head, plan, validationNeighbours, true, KnownLandmarksFor(atomic), true, outcomeIndex);
                 foreach (string message in checkedPlan.Messages) validation.Refuse(message);
                 if (accepted.TryGetValue(plan.coord, out CityForgeChunkPlan prior))
                 {
@@ -198,6 +205,98 @@ namespace SlopCity
                 }
             }
             return validation.IsValid;
+        }
+
+        /// <summary>
+        /// Returns a bounded validation view: the proposed atomic command plus
+        /// accepted neighbors for the handful of boundary overlays it retains
+        /// or changes. A neighbor is never implicitly committed.
+        /// </summary>
+        private Dictionary<CityForgeCoord, CityForgeChunkPlan> ValidationNeighboursFor(IDictionary<CityForgeCoord, CityForgeChunkPlan> atomic)
+        {
+            Dictionary<CityForgeCoord, CityForgeChunkPlan> result = new Dictionary<CityForgeCoord, CityForgeChunkPlan>();
+            foreach (KeyValuePair<CityForgeCoord, CityForgeChunkPlan> pair in atomic) result[pair.Key] = pair.Value;
+            foreach (KeyValuePair<CityForgeCoord, CityForgeChunkPlan> pair in atomic)
+            {
+                accepted.TryGetValue(pair.Key, out CityForgeChunkPlan previous);
+                foreach (CityForgeDirection direction in CardinalDirections)
+                {
+                    bool needsPeer = false;
+                    for (int offset = 0; offset < SlopCityCityForge.GridSize; offset++)
+                    {
+                        if (BoundaryOverlay(previous, direction, offset) == 0 && BoundaryOverlay(pair.Value, direction, offset) == 0) continue;
+                        needsPeer = true;
+                        break;
+                    }
+                    if (!needsPeer) continue;
+                    CityForgeCoord neighbour = SlopCityCityForge.Neighbour(pair.Key, direction);
+                    if (!result.ContainsKey(neighbour) && accepted.TryGetValue(neighbour, out CityForgeChunkPlan saved)) result[neighbour] = saved;
+                }
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Mirrors the authoritative boundary-command rule: an unchanged,
+        /// already reciprocal seam may be checked against accepted state, but a
+        /// changed boundary overlay must include a changed reciprocal proposal.
+        /// </summary>
+        private void ValidateChangedBoundaryOverlays(IDictionary<CityForgeCoord, CityForgeChunkPlan> atomic, CityForgeValidation validation)
+        {
+            HashSet<string> checkedEdges = new HashSet<string>(StringComparer.Ordinal);
+            foreach (KeyValuePair<CityForgeCoord, CityForgeChunkPlan> pair in atomic)
+            {
+                accepted.TryGetValue(pair.Key, out CityForgeChunkPlan previous);
+                foreach (CityForgeDirection direction in CardinalDirections)
+                {
+                    CityForgeCoord neighbour = SlopCityCityForge.Neighbour(pair.Key, direction);
+                    if (SlopCityCityForge.IsProtectedOldCity(neighbour)) continue;
+                    for (int offset = 0; offset < SlopCityCityForge.GridSize; offset++)
+                    {
+                        int before = BoundaryOverlay(previous, direction, offset);
+                        int after = BoundaryOverlay(pair.Value, direction, offset);
+                        if (before == after || !checkedEdges.Add(SlopCityCityForge.BoundaryKey(pair.Key, direction, offset))) continue;
+                        bool peerIsChanging = atomic.TryGetValue(neighbour, out CityForgeChunkPlan peerNext);
+                        accepted.TryGetValue(neighbour, out CityForgeChunkPlan peerPrevious);
+                        CityForgeDirection peerDirection = SlopCityCityForge.Opposite(direction);
+                        int peerBefore = BoundaryOverlay(peerPrevious, peerDirection, offset);
+                        int peerAfter = BoundaryOverlay(peerIsChanging ? peerNext : peerPrevious, peerDirection, offset);
+                        if (after != peerAfter)
+                        {
+                            validation.Refuse("Roads must meet the same street type on both sides of a block edge.");
+                            continue;
+                        }
+                        if (!peerIsChanging || peerBefore == peerAfter)
+                            validation.Refuse("A changed road crossing a block edge must be saved atomically with its neighbouring block.");
+                    }
+                }
+            }
+        }
+
+        private static readonly CityForgeDirection[] CardinalDirections =
+        {
+            CityForgeDirection.North, CityForgeDirection.East, CityForgeDirection.South, CityForgeDirection.West
+        };
+
+        // 0 represents generated/base topology, 1 an explicit removal, and
+        // values from 2 upward preserve the exact player-selected road class.
+        private static int BoundaryOverlay(CityForgeChunkPlan plan, CityForgeDirection direction, int offset)
+        {
+            if (plan == null) return 0;
+            foreach (CityForgeRoad road in plan.roads ?? Enumerable.Empty<CityForgeRoad>())
+                if (road != null && road.IsBoundary && road.direction == direction && road.BoundaryOffset == offset) return 2 + (int)road.roadClass;
+            string edge = BoundaryEdge(direction, offset);
+            return plan.removedRoadEdges != null && plan.removedRoadEdges.Contains(edge) ? 1 : 0;
+        }
+
+        private static string BoundaryEdge(CityForgeDirection direction, int offset)
+        {
+            string value = offset.ToString(CultureInfo.InvariantCulture);
+            string maximum = (SlopCityCityForge.GridSize - 1).ToString(CultureInfo.InvariantCulture);
+            if (direction == CityForgeDirection.North) return value + "," + maximum + ":north";
+            if (direction == CityForgeDirection.East) return maximum + "," + value + ":east";
+            if (direction == CityForgeDirection.South) return value + ",0:south";
+            return "0," + value + ":west";
         }
 
         /// <summary>Compiles an unaccepted preview without mutating accepted state, persistence, or streamed ownership.</summary>
@@ -583,9 +682,11 @@ namespace SlopCity
                 foreach (CityForgeChunkPlan plan in plans)
                     if (!accepted.TryGetValue(plan.coord, out CityForgeChunkPlan prior) || !IsSituationOnlyChange(prior, plan)) { validation.Refuse("Only a CitySituation lifecycle change may bypass a reciprocal street command."); return false; }
             }
+            Dictionary<CityForgeCoord, CityForgeChunkPlan> validationNeighbours = requireBoundaryPeers ? ValidationNeighboursFor(atomic) : atomic;
+            if (requireBoundaryPeers) ValidateChangedBoundaryOverlays(atomic, validation);
             foreach (CityForgeChunkPlan plan in plans)
             {
-                CityForgeValidation result = validator.ValidateChunkPlan(head, plan, atomic, requireBoundaryPeers, KnownLandmarksFor(atomic), true, outcomeIndex);
+                CityForgeValidation result = validator.ValidateChunkPlan(head, plan, validationNeighbours, requireBoundaryPeers, KnownLandmarksFor(atomic), true, outcomeIndex);
                 foreach (string message in result.Messages) validation.Refuse(message);
                 if (accepted.TryGetValue(plan.coord, out CityForgeChunkPlan prior))
                 {
