@@ -210,6 +210,11 @@ namespace SlopCity
             if (current == null || current.button != 0) return;
             EventType type = current.type == EventType.Used ? current.rawType : current.type;
             if (type != EventType.MouseDown && type != EventType.MouseUp) return;
+            if (type == EventType.MouseUp && (opened ? canvas : launcherCanvas))
+            {
+                Canvas diagnosticCanvas = opened ? canvas : launcherCanvas;
+                Debug.Log("[CityForge pointer diagnostic] input=" + Input.mousePosition + " event=" + current.mousePosition + " guiScreen=" + GUIUtility.GUIToScreenPoint(current.mousePosition) + " screen=" + Screen.width + "x" + Screen.height + " canvas=" + diagnosticCanvas.pixelRect + " camera=" + (buildCamera ? buildCamera.pixelRect.ToString() : "none"));
+            }
             // IMGUI provides dependable desktop press/release timing, but its
             // pointer coordinate can be point-sized on Retina. The legacy
             // input coordinate is normalized at every render-target boundary.
