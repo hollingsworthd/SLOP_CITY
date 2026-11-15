@@ -19,6 +19,7 @@ const plan = (x = 2, z = 0) => ({
   coord: { x, z }, baseChunkHash: hash, parentChunkRevision: 0,
   roads: [{ edge: '0,0:north', class: 'local-street' }],
   removedRoadEdges: [],
+  groundCells: [0, 1, 9],
   parcels: [{ id: 'parcel-a', cells: ['0,0', '1,0'], zone: 'trade' }],
   buildings: [{ id: 'building-a', parcelId: 'parcel-a', blueprintId: 'corner-shop', facadeId: 'wet-masonry', roofId: 'service-roof', floors: 2, entranceEdge: 'north', storefrontId: 'arcade' }],
   services: [{ id: 'service-a', type: 'care-station', parcelId: 'parcel-a' }],
@@ -52,6 +53,8 @@ test('City Forge keeps map clicks separate from the bounded toolbar', () => {
   assert.match(mapPointer, /mapMousePressed = !mouseStartedOverBuildUi;/);
   assert.doesNotMatch(mapPointer, /IsPointerOverGameObject/, 'unrelated HUD raycasters must not swallow map presses');
   assert.match(mapPointer, /!BuildUiSurfaceContains\(Input\.mousePosition\)/, 'releasing over the toolbar must not edit through it');
+  assert.doesNotMatch(source, /enabled = !UsesNativeMacMapPointer/, 'macOS must retain the normal UGUI raycasters');
+  assert.match(source, /LegacyMouseGestureUnavailable\(\)/, 'native desktop input may be a guarded fallback, not the only pointer route');
   assert.match(launcher, /launcherButton\.gameObject\.SetActive\(!launcherCursorLocked\)/, 'a locked first-person cursor must not receive an intrusive center button');
   assert.doesNotMatch(launcher, /new Vector2\(\.5f, \.5f\)/, 'the launcher must not return to the center of the viewport');
   assert.match(launcher, /Press B to build your city/, 'the locked-pointer entry route must remain explicit');
@@ -122,6 +125,7 @@ test('screen hosts derive stable catalog slots across building, civic/plaza, and
     { screenId: 'screen-road', hostId: 'road-0-0-north', screenMountId: 'street-kiosk-screen', deviceId: 'public-window-01' },
   ];
   candidate.parcels.push({ id: 'parcel-civic', cells: ['2,0'], zone: 'civic' });
+  candidate.groundCells.push(2);
   assert.equal(validateChunkPlan(candidate).valid, true);
   const assignments = screenSlotAssignments(candidate.screens, candidate.buildings, candidate.parcels, candidate.roads)
     .filter(item => item.hostId === 'building-a')

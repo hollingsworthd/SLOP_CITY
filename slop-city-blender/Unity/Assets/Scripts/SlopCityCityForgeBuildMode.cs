@@ -137,10 +137,12 @@ namespace SlopCity
         private bool mapMouseDragged;
         private Vector2 mapMouseStart;
         private Vector2 mapMousePrevious;
-        // macOS can drop a short legacy mouse gesture and can report the
-        // legacy Input position in an unrelated backing-pixel space. Keep
-        // native IMGUI timing and its Canvas-mapped position together so the
-        // visible toolbar and map cells receive the gesture the player made.
+        // macOS occasionally drops a short legacy gesture. Keep the native
+        // path strictly as a fallback: normal UGUI/Input coordinates remain
+        // the one canonical route for every platform, including Retina Macs.
+        // Making native IMGUI the only route made a scale mismatch capable of
+        // disabling the entire launcher, toolbar, and map at once.
+        private bool nativeMacPointerFallback;
         private bool mapGuiMousePressed;
         private bool mapGuiMouseDragged;
         private Vector2 mapGuiMouseStart;
@@ -257,7 +259,7 @@ namespace SlopCity
             Event current = Event.current;
             if (current == null) return;
             EventType type = current.type == EventType.Used ? current.rawType : current.type;
-            if (type == EventType.MouseMove && opened && UsesNativeMacMapPointer() && canvas && canvas.gameObject.activeInHierarchy)
+            if (type == EventType.MouseMove && opened && nativeMacPointerFallback && canvas && canvas.gameObject.activeInHierarchy)
             {
                 mapGuiPointer = GuiPointerToCanvasScreenPoint(current, canvas);
                 hasMapGuiPointer = true;
@@ -265,22 +267,24 @@ namespace SlopCity
             }
             if (current.button != 0) return;
             if (type != EventType.MouseDown && type != EventType.MouseDrag && type != EventType.MouseUp) return;
-            // On Retina and mixed-DPI Mac desktops Input.mousePosition can
-            // stay in a stale backing-pixel space while the player window has
-            // moved. The IMGUI event is the pointer the player actually used;
-            // translate it into the overlay/camera pixel rectangle once and
-            // carry that coordinate through the whole gesture.
-            Vector2 screenPosition = UsesNativeMacMapPointer()
+            bool useNativeMacFallback = nativeMacPointerFallback
+                || (type == EventType.MouseDown && UsesNativeMacMapPointer() && LegacyMouseGestureUnavailable());
+            // Unity's documented screen coordinate remains the ordinary path
+            // for both RectTransform hit tests and Camera.ScreenPointToRay.
+            // Only a gesture missing from legacy input uses the native event.
+            Vector2 screenPosition = useNativeMacFallback
                 ? GuiPointerToCanvasScreenPoint(current, opened ? canvas : launcherCanvas)
                 : Input.mousePosition;
 
             if (!opened)
             {
+                if (type == EventType.MouseDown && useNativeMacFallback) nativeMacPointerFallback = true;
                 if (type == EventType.MouseDown && launcherCanvas && launcherCanvas.gameObject.activeInHierarchy && launcherButton && launcherButton.isActiveAndEnabled && launcherButton.interactable && LauncherContains(screenPosition))
                 {
                     current.Use();
                     RequestLauncherOpen();
                 }
+                if (type == EventType.MouseUp) nativeMacPointerFallback = false;
                 return;
             }
             if (!canvas || !canvas.gameObject.activeInHierarchy) return;
@@ -290,8 +294,9 @@ namespace SlopCity
                 return;
             }
 
-            if (UsesNativeMacMapPointer())
+            if (useNativeMacFallback)
             {
+                if (type == EventType.MouseDown) nativeMacPointerFallback = true;
                 HandleNativeMacMapPointer(current, type, screenPosition);
                 return;
             }
@@ -326,6 +331,11 @@ namespace SlopCity
         private static bool UsesNativeMacMapPointer()
         {
             return Application.platform == RuntimePlatform.OSXPlayer || Application.platform == RuntimePlatform.OSXEditor;
+        }
+
+        private static bool LegacyMouseGestureUnavailable()
+        {
+            return !Input.GetMouseButton(0) && !Input.GetMouseButtonDown(0) && !Input.GetMouseButtonUp(0);
         }
 
         /// <summary>
@@ -392,6 +402,7 @@ namespace SlopCity
                 buildUiGuiMouseCapture = null;
                 buildUiGuiMouseSurfaceCapture = false;
                 buildUiGuiMousePressFrame = -1;
+                nativeMacPointerFallback = false;
                 current.Use();
                 if (activate) InvokeBuildUiFallback(capture, PointerInputModule.kMouseLeftId);
                 return;
@@ -399,9 +410,10 @@ namespace SlopCity
 
             if (mapGuiMousePressed && !mapGuiMouseDragged && Vector2.Distance(screenPosition, mapGuiMouseStart) >= MapDragThresholdPixels) mapGuiMouseDragged = true;
             if (mapGuiMouseDragged) ClearCapturedMapCell();
-            bool clickMap = mapGuiMousePressed && !mapGuiMouseDragged;
+            bool clickMap = mapGuiMousePressed && !mapGuiMouseDragged && !BuildUiSurfaceContains(screenPosition);
             mapGuiMousePressed = false;
             mapGuiMouseDragged = false;
+            nativeMacPointerFallback = false;
             current.Use();
             if (clickMap) ClickCapturedMapCell(screenPosition);
             else ClearCapturedMapCell();
@@ -1052,11 +1064,11 @@ namespace SlopCity
 
         private void UpdateMapMousePointer(bool mouseStartedOverBuildUi)
         {
-            if (UsesNativeMacMapPointer() && Input.touchCount == 0)
+            if (nativeMacPointerFallback && Input.touchCount == 0)
             {
-                // The IMGUI path owns macOS desktop gestures in the map
-                // camera's native backing-pixel space. Touch remains on the
-                // normal path below.
+                // A rare legacy-input miss is being handled through the
+                // guarded native fallback. Every ordinary Mac gesture stays
+                // on this same Input.mousePosition path as other platforms.
                 mapMousePressed = false;
                 mapMouseDragged = false;
                 return;
@@ -1092,7 +1104,7 @@ namespace SlopCity
                 mapMousePrevious = current;
             }
             if (!Input.GetMouseButtonUp(0)) return;
-            bool activate = mapMousePressed && !mapMouseDragged;
+            bool activate = mapMousePressed && !mapMouseDragged && !BuildUiSurfaceContains(Input.mousePosition);
             mapMousePressed = false;
             mapMouseDragged = false;
             if (activate) ClickCapturedMapCell(Input.mousePosition);
@@ -1103,8 +1115,8 @@ namespace SlopCity
         {
             bool nextHasHover = false;
             CityForgeCoord nextHover = default(CityForgeCoord);
-            Vector2 pointer = UsesNativeMacMapPointer() && hasMapGuiPointer ? mapGuiPointer : Input.mousePosition;
-            bool pointerDragging = UsesNativeMacMapPointer() ? mapGuiMouseDragged : mapMouseDragged;
+            Vector2 pointer = nativeMacPointerFallback && hasMapGuiPointer ? mapGuiPointer : Input.mousePosition;
+            bool pointerDragging = nativeMacPointerFallback ? mapGuiMouseDragged : mapMouseDragged;
             if (!BuildUiSurfaceContains(pointer) && !pointerDragging && TryGetMapCell(pointer, out CityForgeCoord coordinate, out int x, out int z) && coordinate.Equals(selected))
             {
                 nextHasHover = true;
@@ -1688,12 +1700,9 @@ namespace SlopCity
         {
             GameObject root = new GameObject("CityForgeBuildMode", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
             root.transform.SetParent(transform, false); canvas = root.GetComponent<Canvas>(); canvas.renderMode = RenderMode.ScreenSpaceOverlay; canvas.overrideSorting = true; canvas.sortingOrder = CityForgeCanvasSortingOrder;
-            // The Mac player uses the native OnGUI path below for one
-            // coherent point/pixel conversion. Leaving UGUI's raycaster live
-            // would give the same click a second, stale Input.mousePosition
-            // interpretation on Retina and mixed-DPI displays.
-            GraphicRaycaster buildRaycaster = root.GetComponent<GraphicRaycaster>();
-            if (buildRaycaster) buildRaycaster.enabled = !UsesNativeMacMapPointer();
+            // Keep the normal UGUI raycaster live on every platform. The
+            // native IMGUI branch is only a last-resort fallback when legacy
+            // input missed a gesture entirely, never the primary UI route.
             CanvasScaler scaler = root.GetComponent<CanvasScaler>(); scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize; scaler.referenceResolution = new Vector2(1280, 720);
             // A root overlay Canvas is screen-sized even when its RectTransform
             // appears to be resized. Giving that root an Image made an
@@ -1834,8 +1843,6 @@ namespace SlopCity
             GameObject root = new GameObject("CityForgeBuildLauncher", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
             root.transform.SetParent(transform, false);
             launcherCanvas = root.GetComponent<Canvas>(); launcherCanvas.renderMode = RenderMode.ScreenSpaceOverlay; launcherCanvas.overrideSorting = true; launcherCanvas.sortingOrder = CityForgeCanvasSortingOrder;
-            GraphicRaycaster launcherRaycaster = root.GetComponent<GraphicRaycaster>();
-            if (launcherRaycaster) launcherRaycaster.enabled = !UsesNativeMacMapPointer();
             CanvasScaler scaler = root.GetComponent<CanvasScaler>(); scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize; scaler.referenceResolution = new Vector2(1280, 720);
             launcherButton = Button(root.transform, "BUILD CITY", Vector2.zero, new Vector2(188f, 52f), true);
             RectTransform rect = launcherButton.GetComponent<RectTransform>(); rect.anchorMin = Vector2.zero; rect.anchorMax = Vector2.zero; rect.pivot = Vector2.zero; rect.anchoredPosition = new Vector2(22f, 22f);
@@ -1945,11 +1952,11 @@ namespace SlopCity
 
             if (Input.touchCount == 0)
             {
-                // macOS owns the complete mouse gesture in OnGUI using its
-                // native event coordinates. Reading legacy Input here races
-                // a stale Retina/mixed-display position against that raw
-                // gesture, which can turn a toolbar click into a map click.
-                if (UsesNativeMacMapPointer())
+                // A native fallback is active only when legacy input missed
+                // its MouseDown entirely. Do not suppress ordinary macOS
+                // UGUI/Input gestures just because the player uses a Retina
+                // display or moved the window between monitors.
+                if (nativeMacPointerFallback)
                 {
                     launcherMousePressedInside = false;
                     launcherMouseActivationSequence = activationSequence;
@@ -2041,11 +2048,7 @@ namespace SlopCity
             {
                 ClearBuildUiTouchCapture();
                 suppressBuildUiTouchUntilNoTouches = false;
-                // On macOS, OnGUI owns pointer down/up and uses the native
-                // event coordinate throughout. Do not compete with it here
-                // through legacy Input.mousePosition: that value can lag a
-                // Retina display change and capture the wrong toolbar cell.
-                if (UsesNativeMacMapPointer())
+                if (nativeMacPointerFallback)
                 {
                     buildUiMouseCapture = null;
                     buildUiMouseSurfaceCapture = false;
@@ -2188,6 +2191,7 @@ namespace SlopCity
             mapGuiMousePrevious = Vector2.zero;
             mapGuiPointer = Vector2.zero;
             hasMapGuiPointer = false;
+            nativeMacPointerFallback = false;
             ClearCapturedMapCell();
         }
 
