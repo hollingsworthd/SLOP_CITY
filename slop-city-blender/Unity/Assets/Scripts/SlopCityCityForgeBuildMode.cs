@@ -135,9 +135,10 @@ namespace SlopCity
         private bool mapMouseDragged;
         private Vector2 mapMouseStart;
         private Vector2 mapMousePrevious;
-        // macOS can drop a short legacy mouse gesture. Keep native IMGUI
-        // timing separate while map coordinates stay in Input.mousePosition's
-        // screen space, the contract shared by UGUI and Camera raycasts.
+        // macOS can drop a short legacy mouse gesture and can report the
+        // legacy Input position in an unrelated backing-pixel space. Keep
+        // native IMGUI timing and its Canvas-mapped position together so the
+        // visible toolbar and map cells receive the gesture the player made.
         private bool mapGuiMousePressed;
         private bool mapGuiMouseDragged;
         private Vector2 mapGuiMouseStart;
@@ -237,17 +238,20 @@ namespace SlopCity
             EventType type = current.type == EventType.Used ? current.rawType : current.type;
             if (type == EventType.MouseMove && opened && UsesNativeMacMapPointer() && canvas && canvas.gameObject.activeInHierarchy)
             {
-                // Input.mousePosition is the lower-left screen coordinate
-                // contract used by the overlay Canvas and the map camera.
-                // IMGUI supplies dependable Mac press/release timing, but not
-                // a second map coordinate space.
-                mapGuiPointer = Input.mousePosition;
+                mapGuiPointer = GuiPointerToCanvasScreenPoint(current, canvas);
                 hasMapGuiPointer = true;
                 return;
             }
             if (current.button != 0) return;
             if (type != EventType.MouseDown && type != EventType.MouseDrag && type != EventType.MouseUp) return;
-            Vector2 screenPosition = Input.mousePosition;
+            // On Retina and mixed-DPI Mac desktops Input.mousePosition can
+            // stay in a stale backing-pixel space while the player window has
+            // moved. The IMGUI event is the pointer the player actually used;
+            // translate it into the overlay/camera pixel rectangle once and
+            // carry that coordinate through the whole gesture.
+            Vector2 screenPosition = UsesNativeMacMapPointer()
+                ? GuiPointerToCanvasScreenPoint(current, opened ? canvas : launcherCanvas)
+                : Input.mousePosition;
 
             if (!opened)
             {
@@ -298,8 +302,27 @@ namespace SlopCity
             return Application.platform == RuntimePlatform.OSXPlayer || Application.platform == RuntimePlatform.OSXEditor;
         }
 
-        /// <summary>Owns reliable Mac press/release timing while keeping map
-        /// raycasts in Unity's documented Input.mousePosition screen space.</summary>
+        /// <summary>
+        /// Converts the native top-left IMGUI event to the lower-left pixel
+        /// coordinates used by both a ScreenSpaceOverlay Canvas and a Camera.
+        /// AlignRectToDevice is available in macOS players (unlike the
+        /// editor-only pixelsPerPoint API), and handles Retina/per-display
+        /// scaling without assuming a fixed 2x backing store.
+        /// </summary>
+        private static Vector2 GuiPointerToCanvasScreenPoint(Event current, Canvas targetCanvas)
+        {
+            Rect pixelRect = targetCanvas ? targetCanvas.pixelRect : new Rect(0f, 0f, Screen.width, Screen.height);
+            if (pixelRect.width <= 0f || pixelRect.height <= 0f) pixelRect = new Rect(0f, 0f, Screen.width, Screen.height);
+            const float probePoints = 256f;
+            GUIUtility.AlignRectToDevice(new Rect(0f, 0f, probePoints, probePoints), out int probePixelsX, out int probePixelsY);
+            float pixelsPerPointX = probePixelsX > 0 ? probePixelsX / probePoints : 1f;
+            float pixelsPerPointY = probePixelsY > 0 ? probePixelsY / probePoints : 1f;
+            return new Vector2(pixelRect.x + current.mousePosition.x * pixelsPerPointX,
+                pixelRect.y + pixelRect.height - current.mousePosition.y * pixelsPerPointY);
+        }
+
+        /// <summary>Owns reliable Mac press/release timing in the same
+        /// Canvas-mapped pixel space used by the map camera.</summary>
         private void HandleNativeMacMapPointer(Event current, EventType type, Vector2 screenPosition)
         {
             mapGuiPointer = screenPosition;
