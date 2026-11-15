@@ -355,12 +355,15 @@ namespace SlopCity
             if (pixelRect.width <= 0f || pixelRect.height <= 0f) pixelRect = new Rect(0f, 0f, Screen.width, Screen.height);
             // IMGUI reports macOS mouse coordinates in logical points, while
             // the camera and ScreenSpaceOverlay canvas use backing pixels.
-            // A 2x Retina display therefore needs the point-to-pixel scale on
-            // both axes before the top-left GUI origin is flipped for the
-            // lower-left camera/UI coordinate system.
-            float pixelsPerPoint = Mathf.Max(1f, GUIUtility.pixelsPerPoint);
-            return new Vector2(pixelRect.x + current.mousePosition.x * pixelsPerPoint,
-                pixelRect.y + pixelRect.height - current.mousePosition.y * pixelsPerPoint);
+            // GUIUtility.pixelsPerPoint is editor-only. AlignRectToDevice is
+            // the runtime API that exposes the same GUI-point-to-device-pixel
+            // scale, including Retina and per-display scaling.
+            const float probePoints = 256f;
+            GUIUtility.AlignRectToDevice(new Rect(0f, 0f, probePoints, probePoints), out int probePixelsX, out int probePixelsY);
+            float pixelsPerPointX = probePixelsX > 0 ? probePixelsX / probePoints : 1f;
+            float pixelsPerPointY = probePixelsY > 0 ? probePixelsY / probePoints : 1f;
+            return new Vector2(pixelRect.x + current.mousePosition.x * pixelsPerPointX,
+                pixelRect.y + pixelRect.height - current.mousePosition.y * pixelsPerPointY);
         }
 
         public bool Open()
