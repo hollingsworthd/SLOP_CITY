@@ -96,6 +96,7 @@ test('City Forge grids its bounded strategic window and retains one safe cross-c
   assert.match(strategicGrid, /SlopCityCityForge\.CellSizeMeters/, 'strategic grid lines must use the same cell geometry as placement');
   assert.doesNotMatch(overlay, /BuildEditorGrid\(/, 'the selected draft must not add a second grid box over the shared strategic grid');
   assert.doesNotMatch(runtime, /PlanSurface|PlanBorder|private void BuildEditorGrid/, 'direct placement must not show a dark selected-chunk slab or border');
+  assert.match(strategic, /if \(!coordinate\.Equals\(center\)\)\s*\{\s*if \(acceptedPlans[\s\S]*?BuildStrategicAcceptedImpostor[\s\S]*?else if \(strategicSummaries[\s\S]*?BuildStrategicSummaryImpostor/, 'the selected draft block must not fall through to a distant-summary mass or road bar');
 
   assert.doesNotMatch(click, /if \(view == View\.Ground\)[\s\S]*?Click inside the highlighted block/, 'Ground must not discard a click merely because it lands outside the previously selected block');
   assert.match(click, /QueueMapAction\(coordinate, x, z\);/, 'an outside visible-cell click must retain its target while the destination loads');
@@ -135,7 +136,7 @@ test('City Forge map ground meets the fixed Old City core without duplicate laye
   assert.match(layout, /CityForgeCoreGroundRect = Rect\.MinMaxRect\([\s\S]*CoreMinimum\.x \* SlopCityCityForge\.ChunkSizeMeters[\s\S]*CoreMaximum\.z \+ 1\) \* SlopCityCityForge\.ChunkSizeMeters/, 'the fixed pavement must use the protected core’s exact world limits');
   assert.match(layout, /OuterGroundRect = CityForgeCoreGroundRect;/, 'the Old City support apron must not use asymmetric hand-tuned bounds');
   assert.match(humanScale, /CityForgeCoreGroundRect\.xMin \+ 5\.85f/, 'the west transit spine must remain within the protected core instead of crossing into a starter cell');
-  assert.match(strategic, /!coordinate\.Equals\(center\) && acceptedPlans/, 'the selected chunk must not draw both accepted-map and draft ground');
+  assert.match(strategic, /if \(!coordinate\.Equals\(center\)\)\s*\{[\s\S]*?BuildStrategicAcceptedImpostor[\s\S]*?BuildStrategicSummaryImpostor/, 'the selected chunk must not draw either accepted-map or distant-summary geometry over its draft ground');
   assert.match(acceptedGround, /new Vector3\(SlopCityCityForge\.CellSizeMeters, \.04f, SlopCityCityForge\.CellSizeMeters\)/, 'accepted map ground must fill its complete cell');
   assert.match(editorGround, /new Vector3\(SlopCityCityForge\.CellSizeMeters, \.04f, SlopCityCityForge\.CellSizeMeters\)/, 'draft map ground must fill the same complete cell');
   assert.match(runtime, /const float gridHeight = \.52f;/, 'the shared grid must remain visible over full-cell map ground');

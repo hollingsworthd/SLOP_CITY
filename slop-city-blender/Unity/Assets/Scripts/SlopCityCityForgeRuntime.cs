@@ -263,10 +263,17 @@ namespace SlopCity
                     tile.transform.SetParent(strategicMap.transform, false);
                     tile.transform.localPosition = ChunkOrigin(coordinate) + new Vector3(36f, 0f, 36f);
                     BuildStrategicChunkOutline(tile.transform, SkylineColor(baseChunk.skylineId));
-                    if (!coordinate.Equals(center) && acceptedPlans != null && acceptedPlans.TryGetValue(coordinate, out CityForgeChunkPlan acceptedPlan) && acceptedPlan != null)
-                        BuildStrategicAcceptedImpostor(tile.transform, acceptedPlan);
-                    else if (strategicSummaries != null && strategicSummaries.TryGetValue(coordinate, out CityForgeStrategicChunkSummary summary) && summary != null)
-                        BuildStrategicSummaryImpostor(tile.transform, summary);
+                    // The selected block already has an exact cell-for-cell
+                    // draft overlay. Both accepted-detail and distant-summary
+                    // impostors belong only to the other visible blocks;
+                    // otherwise summary bars and masses cover its grid.
+                    if (!coordinate.Equals(center))
+                    {
+                        if (acceptedPlans != null && acceptedPlans.TryGetValue(coordinate, out CityForgeChunkPlan acceptedPlan) && acceptedPlan != null)
+                            BuildStrategicAcceptedImpostor(tile.transform, acceptedPlan);
+                        else if (strategicSummaries != null && strategicSummaries.TryGetValue(coordinate, out CityForgeStrategicChunkSummary summary) && summary != null)
+                            BuildStrategicSummaryImpostor(tile.transform, summary);
+                    }
                 }
         }
 
