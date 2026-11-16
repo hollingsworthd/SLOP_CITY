@@ -120,6 +120,26 @@ test('City Forge physical ground has no artificial seams and the Sky Sprawl uses
   assert.match(skyVista, /SetDistantGroundSuppressed\(SlopCityCityForgeTravel\.IsSkySprawlPosition\(followTarget\.position\)\);/, 'removing fake clouds must not restore the authored distant floor in the Sky Sprawl');
 });
 
+test('City Forge map ground meets the fixed Old City core without duplicate layers', () => {
+  const runtime = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeRuntime.cs', import.meta.url), 'utf8');
+  const layout = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityDenseLayout.cs', import.meta.url), 'utf8');
+  const travel = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeTravel.cs', import.meta.url), 'utf8');
+  const strategic = runtime.slice(
+    runtime.indexOf('public void ShowCityForgeStrategicMap(CityForgeWorldHead head, CityForgeCoord center, int radius,'),
+    runtime.indexOf('public void ClearCityForgeStrategicMap()'),
+  );
+  const acceptedGround = runtime.slice(runtime.indexOf('private static void BuildStrategicAcceptedImpostor'), runtime.indexOf('private static void BuildStrategicChunkOutline'));
+  const editorGround = runtime.slice(runtime.indexOf('private void BuildEditorGround('), runtime.indexOf('private void BuildRoads('));
+
+  assert.match(layout, /CityForgeCoreGroundRect = Rect\.MinMaxRect\([\s\S]*CoreMinimum\.x \* SlopCityCityForge\.ChunkSizeMeters[\s\S]*CoreMaximum\.z \+ 1\) \* SlopCityCityForge\.ChunkSizeMeters/, 'the fixed pavement must use the protected core’s exact world limits');
+  assert.match(layout, /OuterGroundRect = CityForgeCoreGroundRect;/, 'the Old City support apron must not use asymmetric hand-tuned bounds');
+  assert.match(strategic, /!coordinate\.Equals\(center\) && acceptedPlans/, 'the selected chunk must not draw both accepted-map and draft ground');
+  assert.match(acceptedGround, /new Vector3\(SlopCityCityForge\.CellSizeMeters, \.04f, SlopCityCityForge\.CellSizeMeters\)/, 'accepted map ground must fill its complete cell');
+  assert.match(editorGround, /new Vector3\(SlopCityCityForge\.CellSizeMeters, \.04f, SlopCityCityForge\.CellSizeMeters\)/, 'draft map ground must fill the same complete cell');
+  assert.match(runtime, /const float gridHeight = \.52f;/, 'the shared grid must remain visible over full-cell map ground');
+  assert.doesNotMatch(travel, /OpenSkyGangway|CityForge_StarterSprawlBridge|EnsureBridge\(/, 'the fixed core apron replaces the overlapping generated entry bridge');
+});
+
 test('protected core and all-sides starter ring have exact coordinate semantics', () => {
   assert.equal(isOldCityCoordinate(-2, -2), true);
   assert.equal(isOldCityCoordinate(1, 1), true);

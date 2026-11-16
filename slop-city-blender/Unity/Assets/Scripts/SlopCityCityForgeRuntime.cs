@@ -256,13 +256,14 @@ namespace SlopCity
                     CityForgeBaseChunk baseChunk = generator.Generate(head, coordinate);
                     // The strategic view is also sky-island based: an empty
                     // block gets a faint address outline, never a filled
-                    // default-ground tile. Accepted ground and structures
-                    // are rendered exactly at their authored grid locations.
+                    // default-ground tile. The selected block is rendered
+                    // once by its draft overlay; other accepted blocks render
+                    // exactly at their authored grid locations here.
                     GameObject tile = new GameObject("Skyline_" + baseChunk.skylineId);
                     tile.transform.SetParent(strategicMap.transform, false);
                     tile.transform.localPosition = ChunkOrigin(coordinate) + new Vector3(36f, 0f, 36f);
                     BuildStrategicChunkOutline(tile.transform, SkylineColor(baseChunk.skylineId));
-                    if (acceptedPlans != null && acceptedPlans.TryGetValue(coordinate, out CityForgeChunkPlan acceptedPlan) && acceptedPlan != null)
+                    if (!coordinate.Equals(center) && acceptedPlans != null && acceptedPlans.TryGetValue(coordinate, out CityForgeChunkPlan acceptedPlan) && acceptedPlan != null)
                         BuildStrategicAcceptedImpostor(tile.transform, acceptedPlan);
                     else if (strategicSummaries != null && strategicSummaries.TryGetValue(coordinate, out CityForgeStrategicChunkSummary summary) && summary != null)
                         BuildStrategicSummaryImpostor(tile.transform, summary);
@@ -488,7 +489,7 @@ namespace SlopCity
                 int x = item % SlopCityCityForge.GridSize, z = item / SlopCityCityForge.GridSize;
                 GameObject ground = Primitive("AcceptedGroundMap_" + item, PrimitiveType.Cube, tile,
                     new Vector3((x + .5f) * SlopCityCityForge.CellSizeMeters - 36f, .09f, (z + .5f) * SlopCityCityForge.CellSizeMeters - 36f),
-                    new Vector3(SlopCityCityForge.CellSizeMeters - .45f, .04f, SlopCityCityForge.CellSizeMeters - .45f));
+                    new Vector3(SlopCityCityForge.CellSizeMeters, .04f, SlopCityCityForge.CellSizeMeters));
                 Collider collider = ground.GetComponent<Collider>(); if (collider) collider.enabled = false;
                 SetRendererColor(ground.GetComponent<Renderer>(), new Color(.54f, .67f, .48f));
             }
@@ -581,7 +582,9 @@ namespace SlopCity
             List<int> triangles = new List<int>();
             float chunk = SlopCityCityForge.ChunkSizeMeters;
             float cell = SlopCityCityForge.CellSizeMeters;
-            const float gridHeight = .014f;
+            // Draw above map terrain so every cell remains legible after a
+            // player lays ground, rather than relying on inset tile seams.
+            const float gridHeight = .52f;
             const float lineWidth = .055f;
             for (int x = -radius; x <= radius; x++)
                 for (int z = -radius; z <= radius; z++)
@@ -720,7 +723,7 @@ namespace SlopCity
                 int x = item % SlopCityCityForge.GridSize, z = item / SlopCityCityForge.GridSize;
                 EditorPrimitive("DraftGround_" + item, PrimitiveType.Cube, root,
                     new Vector3((x + .5f) * SlopCityCityForge.CellSizeMeters, .305f, (z + .5f) * SlopCityCityForge.CellSizeMeters),
-                    new Vector3(SlopCityCityForge.CellSizeMeters - .36f, .04f, SlopCityCityForge.CellSizeMeters - .36f), new Color(.62f, .68f, .58f));
+                    new Vector3(SlopCityCityForge.CellSizeMeters, .04f, SlopCityCityForge.CellSizeMeters), new Color(.62f, .68f, .58f));
             }
         }
 

@@ -10,7 +10,7 @@ namespace SlopCity
     public sealed class SlopCityBuildingWorld : MonoBehaviour
     {
         public const float CoreHalfExtent = SlopCityDenseLayout.ColumnPitch + SlopCityDenseLayout.PavementHalfWidth;
-        public const float OuterHalfExtent = 141f;
+        public const float OuterHalfExtent = SlopCityCityForge.ChunkSizeMeters * 2f;
         private static readonly Rect CoreRect = SlopCityDenseLayout.CoreGroundRect;
         private static readonly Rect OuterRect = SlopCityDenseLayout.OuterGroundRect;
         public const int MaximumActiveTowerElevators = 2;

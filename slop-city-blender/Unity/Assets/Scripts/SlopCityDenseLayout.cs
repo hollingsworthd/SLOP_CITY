@@ -31,8 +31,16 @@ namespace SlopCity
         public const float TravelGap = 3f;
         public static readonly Rect CoreGroundRect = Rect.MinMaxRect(-ColumnPitch - PavementHalfWidth,
             -RowPitch + PavementSouth - 3, ColumnPitch + PavementHalfWidth, RowPitch + PavementNorth + 3);
-        public static readonly Rect OuterGroundRect = Rect.MinMaxRect(-141 - SkylineExpansionX,
-            -102 - SkylineExpansionZ, 132 + SkylineExpansionX, 138 + SkylineExpansionZ);
+        // City Forge reserves the Old City as an exact 4 × 4 chunk core. Its
+        // fixed pavement must end on that same grid boundary: a hand-tuned
+        // asymmetric outer rectangle leaked 3.7m into the western starter
+        // cell while leaving a 38.2m no-build void along the south edge.
+        public static readonly Rect CityForgeCoreGroundRect = Rect.MinMaxRect(
+            SlopCityCityForge.CoreMinimum.x * SlopCityCityForge.ChunkSizeMeters,
+            SlopCityCityForge.CoreMinimum.z * SlopCityCityForge.ChunkSizeMeters,
+            (SlopCityCityForge.CoreMaximum.x + 1) * SlopCityCityForge.ChunkSizeMeters,
+            (SlopCityCityForge.CoreMaximum.z + 1) * SlopCityCityForge.ChunkSizeMeters);
+        public static readonly Rect OuterGroundRect = CityForgeCoreGroundRect;
         public static Bounds GroundBounds => new Bounds(new Vector3(OuterGroundRect.center.x, 0, OuterGroundRect.center.y),
             new Vector3(OuterGroundRect.width, 2, OuterGroundRect.height));
         public static Vector3 CitadelPoint => new Vector3(-109.75f - SkylineExpansionX, 0, 112 + SkylineExpansionZ);
