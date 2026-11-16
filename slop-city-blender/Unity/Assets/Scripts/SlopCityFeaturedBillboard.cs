@@ -8,7 +8,7 @@ namespace SlopCity
     {
         public const string RootName = "SlopCity_Home_Featured_Billboard";
         public const string Creator = "1984drh";
-        public const string PostId = "7696938454575238430";
+        public const string PostId = "7689316402477436191";
         public const float HoldAtSeconds = -1f, HoldSeconds = 0f;
         public const float Width = 5.4f, Height = 9.6f;
         private Material frameMaterial;

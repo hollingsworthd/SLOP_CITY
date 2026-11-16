@@ -40,7 +40,7 @@ class Hunt:Object {
  class Progress{public int contacts,meals;}
  private Progress progress=new Progress();private HashSet<int> found=new HashSet<int>();
  private SlopCitySandbox instructionSandbox;private object instructionAssignment;
- private bool ready=true,showingJobRoute;private float signalUntil,fedUntil,nextRoute,nextPresentation;
+ private bool ready=true,showingJobRoute;private float signalUntil,mealTrailUntil,nextRoute,nextPresentation;
  private SlopCitySignalBeams beams=new SlopCitySignalBeams();public Player player=new Player();
  private void ChooseContact(){}private void Save(){}private void ReleaseDinnerGate(){}private void EnsureTarget(){}
  private static int Increment(int i)=>i+1;
@@ -78,17 +78,15 @@ static class Check {
   Time.time=Time.unscaledTime=30;box.Interact(1);Assert(view.Text.Contains("KNOWN CONTACT")&&hunt.Hint(false),"Known Lady reactivates window and dialogue");Assert(!hunt.Hint(true),"Pause still hides hint");
   box.SystemMessage("After NPC");Near(view.Until,34.5f,"NPC scope never lengthens later system feedback");
   box.throwUnique=true;try{box.Interact(0);}catch(InvalidOperationException){}box.throwUnique=false;box.SystemMessage("After failure");Near(view.Until,34.5f,"Exception unwinds NPC feedback scope");
-  Time.time=0;Near(hunt.MealSpeedMultiplier,1,"New session is unboosted");Near(box.SpeedMultiplier,1,"New walking/running baseline");
-  box.Drive(1,100);Near(box.vehicleSpeed,13,"Unboosted forward speed");box.Drive(-1,100);Near(box.vehicleSpeed,-5,"Unboosted reverse speed");
-  Time.time=10;hunt.OnSteakEaten(null);Near(hunt.MealSpeedMultiplier,2,"Meal doubles unboosted movement");Near(box.SpeedMultiplier,2,"Both walking/running multiplier doubles");
-  box.Rest();Near(box.SpeedMultiplier,2,"Rest boost does not stack on meal");
-  box.vehicleSpeed=0;box.Drive(1,1);Near(box.vehicleSpeed,18,"Meal doubles forward acceleration");box.Drive(1,100);Near(box.vehicleSpeed,26,"Meal doubles forward cap");
-  box.vehicleSpeed=0;box.Drive(-1,.1f);Near(box.vehicleSpeed,-1.8f,"Meal doubles reverse acceleration");box.Drive(-1,100);Near(box.vehicleSpeed,-10,"Meal doubles reverse cap");
-  box.vehicleSpeed=10;box.Drive(0,.5f);Near(box.vehicleSpeed,4,"Meal braking scales with speed");
-  Time.time=100;hunt.OnSteakEaten(null);Near(hunt.MealSpeedMultiplier,2,"Repeated meal refreshes without stacking");
-  Time.time=219.999f;Near(hunt.MealSpeedMultiplier,2,"Meal active until refreshed120 seconds");Time.time=220;Near(hunt.MealSpeedMultiplier,1,"Meal expires exactly at120 seconds");Near(box.SpeedMultiplier,1,"Walk/run expire to baseline");box.Drive(1,100);Near(box.vehicleSpeed,13,"Driving cap returns to baseline");
-  var fresh=new Hunt();Near(fresh.MealSpeedMultiplier,1,"Fresh game never inherits meal boost");
-  Console.WriteLine(checks+" checks: actual NPC routing/duration, full signal hint window, nonstacking120sec2x walk/run/car and car acceleration pass.");
+  Time.time=0;Assert(!hunt.MealTrailVisible,"New session has no steak trail");Near(box.SpeedMultiplier,1,"New walking/running baseline");
+  box.Drive(1,100);Near(box.vehicleSpeed,14,"Forward driving cap");box.Drive(-1,100);Near(box.vehicleSpeed,-5,"Unboosted reverse speed");
+  Time.time=10;hunt.OnSteakEaten(null);Assert(hunt.MealTrailVisible,"Meal lights the orange mission trail");Near(box.SpeedMultiplier,1,"Meal no longer multiplies movement");
+  box.Rest();Near(box.SpeedMultiplier,1.3f,"Bench rest still supplies its separate recovery boost");
+  box.vehicleSpeed=0;box.Drive(1,100);Near(box.vehicleSpeed,14,"Driving cap stays independent of meals");
+  Time.time=69.999f;Assert(hunt.MealTrailVisible,"Meal trail lasts 60 seconds");Time.time=70;Assert(!hunt.MealTrailVisible,"Meal trail expires exactly at 60 seconds");
+  Time.time=100;hunt.OnSteakEaten(null);Assert(hunt.MealTrailVisible,"Repeated meal refreshes the trail");
+  var fresh=new Hunt();Assert(!fresh.MealTrailVisible,"Fresh game never inherits meal trail");
+  Console.WriteLine(checks+" checks: actual NPC routing/duration, full signal hint window, 60sec steak trail and car speed cap pass.");
  }
 }
 '''
@@ -110,16 +108,16 @@ def main():
     hud = (SCRIPTS / 'SlopCityHud.cs').read_text()
     code = re.search(r'private const float FeedbackDuration[^;]+;', first)[0] + '\n' + '\n'.join(block(first, s) for s in ['public void ShowFeedback(', 'public void ShowNpcDialogue(', 'private void ShowFeedbackFor('])
     source = HARNESS.replace('__FIRST__', code)
-    source = source.replace('__HUNT__', 'public bool SignalVisible => ' + expression(hunt, 'SignalVisible') + '; public float MealSpeedMultiplier => ' + expression(hunt, 'MealSpeedMultiplier') + ';\n' + block(hunt, 'public bool JobInstructionsVisible') + block(hunt, 'public bool TryContact(') + block(hunt, 'public string OnSteakEaten('))
+    source = source.replace('__HUNT__', 'public bool SignalVisible => ' + expression(hunt, 'SignalVisible') + '; public bool MealTrailVisible => ' + expression(hunt, 'MealTrailVisible') + ';\n' + block(hunt, 'public bool JobInstructionsVisible') + block(hunt, 'public bool TryContact(') + block(hunt, 'public string OnSteakEaten('))
     source = source.replace('__NPC__', block(block(sandbox, 'public bool Interact('), 'if (target.isNpc && SlopCityCrowd.Instance)'))
-    source = source.replace('__SANDBOX__', block(sandbox, 'private void Say(') + '\nprivate float MealSpeedMultiplier => ' + expression(sandbox, 'MealSpeedMultiplier') + '; public float SpeedMultiplier => ' + expression(sandbox, 'SpeedMultiplier') + ';')
-    drive = sandbox[sandbox.index('            float mealSpeed = MealSpeedMultiplier;'):sandbox.index('            Transform car =', sandbox.index('            float mealSpeed = MealSpeedMultiplier;'))]
+    source = source.replace('__SANDBOX__', block(sandbox, 'private void Say(') + '\npublic float SpeedMultiplier => ' + expression(sandbox, 'SpeedMultiplier') + ';')
+    drive = sandbox[sandbox.index('            float targetSpeed = '):sandbox.index('            Transform car =', sandbox.index('            float targetSpeed = '))]
     source = source.replace('__DRIVE__', drive).replace('__HINT__', re.search(r'transmission.enabled = ([^;]+);', hud)[1])
     assert 'sandbox.Initialize(transform, ShowFeedback, ShowNpcDialogue);' in first
     assert 'if (onNpcDialogue != null) npcDialogue = onNpcDialogue;' in block(sandbox, 'public void Initialize(')
     assert 'feedback = onFeedback; npcDialogue = onNpcDialogue;' in sandbox
     assert 'direction * (playerInput.ReadSprint() ? sprintingSpeed : walkingSpeed) * (sandbox ? sandbox.SpeedMultiplier : 1f)' in first
-    assert 'MealSpeedMultiplier' not in (SCRIPTS / 'SlopCityMetroWorld.cs').read_text()
+    assert 'MealSpeedMultiplier' not in sandbox and 'MealSpeedMultiplier' not in (SCRIPTS / 'SlopCityMetroWorld.cs').read_text()
     with tempfile.TemporaryDirectory(prefix='slop-dialogue-meal-') as temp:
         path = Path(temp) / 'Check.cs'
         path.write_text(source)

@@ -188,8 +188,8 @@ namespace SlopCity.Editor
             Require(hunt.Stage == SlopCityMatrixHunt.SearchStage.Intercept && hunt.TargetIndex != red && crowd.IsRedContact(hunt.TargetIndex),
                 "Finishing dinner chooses another real red contact and returns to interception.");
             Require(hunt.TryContact(red, out _) && hunt.ContactsFound == contacts + 1, "A known contact cannot be rediscovered after the next search begins.");
-            Require(hunt.MealSpeedMultiplier > 1 && sandbox.SpeedMultiplier >= hunt.MealSpeedMultiplier,
-                "Completed dinner supplies the actual movement pace effect.");
+            Require(hunt.MealTrailVisible && Mathf.Approximately(sandbox.SpeedMultiplier, 1f),
+                "Completed dinner lights the orange mission trail without changing movement speed.");
             Require(sandbox.Credits == 321 && sandbox.Experience == 654 && sandbox.Salvage == 7 && sandbox.CompletedContracts == 9
                 && sandbox.WaterSupply == 3 && sandbox.Recycling == 2 && sandbox.FieldReadings == 4 && sandbox.RareFindCount == 1,
                 "Search and free meals preserve all legacy resource balances and job counts.");

@@ -21,7 +21,7 @@ namespace SlopCity
         private SlopCityFirstPerson player;
         private SlopCitySignalBeams beams;
         private readonly List<SlopCityInteractable> levelAccess = new List<SlopCityInteractable>();
-        private float nextRoute, nextPresentation, fedUntil, signalUntil;
+        private float nextRoute, nextPresentation, mealTrailUntil, signalUntil;
         private Vector3 routeDestination;
         private Transform routeDestinationRoot;
         private bool saveAvailable = true, ready, showingJobRoute;
@@ -50,9 +50,9 @@ namespace SlopCity
         public int ContactsFound => progress.contacts;
         public int MealsEaten => progress.meals;
         public int CircuitsCompleted => progress.circuits;
-        public float MealSpeedMultiplier => Time.time < fedUntil ? 2f : 1f;
+        public bool MealTrailVisible => Time.time < mealTrailUntil;
         public string ProgressText => progress.contacts + " CONTACTS FOUND  /  " + progress.meals + " STEAKS"
-            + (Time.time < fedUntil ? "  /  WELL FED" : "");
+            + (MealTrailVisible ? "  /  ORANGE TRAIL" : "");
         public string ObjectiveText => Stage == SearchStage.FindContact
             ? "OPTIONAL CONTACT\nFind a woman in red and use her contact for dispatch help."
             : "OPTIONAL CONTACT\nUse a woman in red for city dispatch help and a brief signal.";
@@ -316,22 +316,26 @@ namespace SlopCity
 
         public string OnSteakEaten(SlopCitySteakTable table)
         {
-            progress.meals = Increment(progress.meals); fedUntil = Time.time + 120f;
+            progress.meals = Increment(progress.meals); mealTrailUntil = Time.time + 60f;
             ReleaseDinnerGate();
             EnsureTarget();
             Save();
-            return "STEAK FINISHED / Well fed: double walking, running and driving speed for two minutes. Continue your city work whenever you're ready.";
+            return "STEAK FINISHED / A glowing orange mission trail lights your route for 60 seconds. Tap the district map to jump across the city.";
         }
 
         /// <summary>The job and optional contact search share one bounded beam pool.</summary>
         public void PresentJobRoute(IReadOnlyList<Vector3> points, int startIndex)
         {
             SlopCitySandbox sandbox = player ? player.Sandbox : null;
-            if (!SignalVisible || !JobInstructionsVisible || !isActiveAndEnabled || !beams || !sandbox || !sandbox.HasWaypoint || player.IsPaused || player.IsSeated
+            bool guides = MealTrailVisible || (SignalVisible && JobInstructionsVisible);
+            if (!guides || !isActiveAndEnabled || !beams || !sandbox || !sandbox.HasWaypoint || player.IsPaused || player.IsSeated
                 || sandbox.IsDriving || sandbox.IsResting || sandbox.IsTravelling)
             { ClearJobGuidance(); return; }
             showingJobRoute = true;
-            beams.SetPath(points, startIndex, true, new Color(.52f, .81f, 1f, .20f));
+            Color tint = MealTrailVisible
+                ? new Color(1f, .50f, .08f, .34f)
+                : new Color(.52f, .81f, 1f, .20f);
+            beams.SetPath(points, startIndex, true, tint);
         }
 
         public void ClearJobGuidance()

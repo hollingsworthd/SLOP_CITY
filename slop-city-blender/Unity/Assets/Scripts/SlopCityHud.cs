@@ -34,6 +34,10 @@ namespace SlopCity
         private SlopCityRabbitTrail rabbitTrail;
         private Text cityMediaStatus;
         private RectTransform mapPointer;
+        private RectTransform cityMapContent;
+        private SlopCityCityMapNavigator cityMapNavigator;
+        private Image teleportBurst;
+        private float teleportBurstUntil;
         private GameObject menu;
         private GameObject gameplayLayer;
         private RectTransform menuCard;
@@ -110,8 +114,17 @@ namespace SlopCity
             if (!modalVisible && UnityEngine.InputSystem.Keyboard.current != null
                 && UnityEngine.InputSystem.Keyboard.current.hKey.wasPressedThisFrame) immersiveView = !immersiveView;
 #endif
+            if (teleportBurst && teleportBurstUntil > Time.unscaledTime)
+            {
+                teleportBurst.gameObject.SetActive(true);
+                float fade = (teleportBurstUntil - Time.unscaledTime) / .45f;
+                teleportBurst.color = new Color(.28f, .76f, .95f, .55f * Mathf.Clamp01(fade));
+            }
+            else if (teleportBurst && teleportBurst.gameObject.activeSelf) teleportBurst.gameObject.SetActive(false);
             ApplyModalVisibility();
         }
+
+        public void PlayTeleportEffect() => teleportBurstUntil = Time.unscaledTime + .45f;
 
         private bool ApplyModalVisibility()
         {
@@ -382,25 +395,40 @@ namespace SlopCity
             RectTransform map = Panel(gameplayLayer.transform, "CityMap", new Vector2(166,194), new Color(.024f,.043f,.055f,.48f));
             map.anchorMin = map.anchorMax = map.pivot = Vector2.zero;
             map.anchoredPosition = new Vector2(32,82);
-            map.GetComponent<Image>().raycastTarget = false;
-            Label(map, "MapTitle", "DISTRICT GRID    N ↑", 9, TextAnchor.UpperLeft,
-                new Vector2(0,1), new Vector2(0,1), new Vector2(12,-10), new Vector2(148,18), Muted);
+            map.GetComponent<Image>().raycastTarget = true;
+            Label(map, "MapTitle", "DRAG MAP  ·  TAP TO JUMP    N ↑", 8, TextAnchor.UpperLeft,
+                new Vector2(0,1), new Vector2(0,1), new Vector2(8,-8), new Vector2(152,22), Muted);
+            GameObject viewport = new GameObject("MapViewport", typeof(RectTransform), typeof(RectMask2D));
+            ParentUi(viewport, map);
+            RectTransform viewRect = viewport.GetComponent<RectTransform>();
+            viewRect.anchorMin = Vector2.zero;
+            viewRect.anchorMax = Vector2.one;
+            viewRect.offsetMin = new Vector2(6, 30);
+            viewRect.offsetMax = new Vector2(-6, -26);
+            cityMapContent = Panel(viewport.transform, "MapContent", new Vector2(248, 248), new Color(0, 0, 0, 0));
+            cityMapContent.GetComponent<Image>().raycastTarget = false;
             districtCells = new Image[9];
             for (int row = 0; row < 3; row++) for (int col = 0; col < 3; col++)
             {
                 int index = row * 3 + col;
-                RectTransform cell = Panel(map, "Block_" + index, new Vector2(38,38), new Color(.1f,.16f,.19f,.55f));
+                RectTransform cell = Panel(cityMapContent, "Block_" + index, new Vector2(38,38), new Color(.1f,.16f,.19f,.55f));
                 cell.anchoredPosition = new Vector2((col-1)*44,(row-1)*44);
                 districtCells[index] = cell.GetComponent<Image>();
                 districtCells[index].raycastTarget = false;
                 Label(cell, "Label", index == 4 ? "HOME" : (index+1).ToString("00"), 8, TextAnchor.MiddleCenter,
                     new Vector2(.5f,.5f), new Vector2(.5f,.5f), Vector2.zero, new Vector2(input.UseTouchControls ? 38 : 48,25), Muted);
             }
-            Text pointer = Label(map, "PlayerPosition", "▲", 13, TextAnchor.MiddleCenter,
+            Text pointer = Label(cityMapContent, "PlayerPosition", "▲", 13, TextAnchor.MiddleCenter,
                 new Vector2(.5f,.5f), new Vector2(.5f,.5f), Vector2.zero, new Vector2(20,20), Cream);
             mapPointer = pointer.rectTransform;
             cityProgress = Label(map, "DistrictProgress", "0 / 9 BLOCKS EXPLORED", 8, TextAnchor.LowerCenter,
                 new Vector2(.5f,0), new Vector2(.5f,0), new Vector2(0,10), new Vector2(155,18), Muted);
+            cityMapNavigator = map.gameObject.AddComponent<SlopCityCityMapNavigator>();
+            cityMapNavigator.Configure(viewRect, cityMapContent, mapPointer, owner);
+            teleportBurst = Panel(gameplayLayer.transform, "TeleportBurst", Vector2.zero, Color.clear).GetComponent<Image>();
+            Stretch(teleportBurst.rectTransform);
+            teleportBurst.raycastTarget = false;
+            teleportBurst.gameObject.SetActive(false);
             districtName = Label(gameplayLayer.transform, "DistrictName", "HOME BLOCK", 10, TextAnchor.LowerLeft,
                 Vector2.zero, Vector2.zero, new Vector2(32,285), new Vector2(280,20), Cream);
             homeDistance = Label(gameplayLayer.transform, "HomeDistance", "", 9, TextAnchor.UpperLeft,
@@ -420,8 +448,7 @@ namespace SlopCity
                 districtCells[index].color = current ? new Color(.26f,.40f,.45f,.8f)
                     : player.HasVisited(index) ? new Color(.13f,.25f,.29f,.6f) : new Color(.1f,.16f,.19f,.55f);
             }
-            mapPointer.anchoredPosition = new Vector2(Mathf.Clamp(position.x,-111,111)*.535f,Mathf.Clamp(position.z-8,-75,75)*.792f);
-            mapPointer.localRotation = Quaternion.Euler(0,0,-player.transform.eulerAngles.y);
+            if (cityMapNavigator) cityMapNavigator.SyncPlayer(position, player.transform.eulerAngles.y);
             string progress = player.VisitedBlockCount + " / 9 BLOCKS EXPLORED";
             if (cityProgress.text != progress) cityProgress.text = progress;
             string blockName = player.CurrentDistrictName;
@@ -1013,6 +1040,92 @@ namespace SlopCity
             text.verticalOverflow = VerticalWrapMode.Overflow;
             text.raycastTarget = false;
             return text;
+        }
+    }
+
+    /// <summary>Pans the district map and teleports the player when tapped.</summary>
+    internal sealed class SlopCityCityMapNavigator : MonoBehaviour, IPointerDownHandler, IPointerUpHandler, IDragHandler
+    {
+        private const float WorldMinX = -111f, WorldMaxX = 111f, MapOriginZ = 8f;
+        private const float WorldMinZ = -67f, WorldMaxZ = 83f;
+        private const float MapScaleX = .535f, MapScaleZ = .792f;
+        private const float DragThresholdPixels = 14f;
+
+        private SlopCityFirstPerson player;
+        private RectTransform viewport, content, pointer;
+        private Vector2 pan, pressScreen;
+        private bool dragging, userPanning;
+        private float releaseFollowAt;
+
+        public void Configure(RectTransform view, RectTransform mapContent, RectTransform playerMarker, SlopCityFirstPerson owner)
+        {
+            viewport = view;
+            content = mapContent;
+            pointer = playerMarker;
+            player = owner;
+        }
+
+        public void SyncPlayer(Vector3 world, float heading)
+        {
+            if (!content || !pointer || !viewport) return;
+            Vector2 local = WorldToLocal(world);
+            pointer.anchoredPosition = local;
+            pointer.localRotation = Quaternion.Euler(0, 0, -heading);
+            if (userPanning && Time.unscaledTime >= releaseFollowAt) userPanning = false;
+            if (!userPanning)
+            {
+                pan = ClampPan(-local);
+                content.anchoredPosition = pan;
+            }
+        }
+
+        public void OnPointerDown(PointerEventData e)
+        {
+            if (e.button != PointerEventData.InputButton.Left) return;
+            pressScreen = e.position;
+            dragging = false;
+            userPanning = true;
+            releaseFollowAt = float.PositiveInfinity;
+        }
+
+        public void OnDrag(PointerEventData e)
+        {
+            if ((e.position - pressScreen).sqrMagnitude > DragThresholdPixels * DragThresholdPixels) dragging = true;
+            pan += e.delta;
+            pan = ClampPan(pan);
+            content.anchoredPosition = pan;
+        }
+
+        public void OnPointerUp(PointerEventData e)
+        {
+            if (e.button != PointerEventData.InputButton.Left) return;
+            if (!dragging) TryTeleport(e);
+            releaseFollowAt = Time.unscaledTime + 4f;
+        }
+
+        private void TryTeleport(PointerEventData e)
+        {
+            if (!player || player.IsPaused || player.IsSeated) return;
+            SlopCitySandbox sandbox = player.Sandbox;
+            if (sandbox && (sandbox.IsDriving || sandbox.IsResting || sandbox.IsTravelling)) return;
+            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(content, e.position, e.pressEventCamera, out Vector2 local)) return;
+            float worldX = Mathf.Clamp(local.x / MapScaleX, WorldMinX, WorldMaxX);
+            float worldZ = Mathf.Clamp(local.y / MapScaleZ + MapOriginZ, WorldMinZ, WorldMaxZ);
+            Vector3 probe = new Vector3(worldX, 260f, worldZ);
+            if (!Physics.Raycast(probe, Vector3.down, out RaycastHit hit, 320f, ~0, QueryTriggerInteraction.Ignore)
+                || hit.normal.y <= .5f) return;
+            player.TeleportWithEffect(hit.point, player.transform.eulerAngles.y);
+        }
+
+        private static Vector2 WorldToLocal(Vector3 world) =>
+            new Vector2(world.x * MapScaleX, (world.z - MapOriginZ) * MapScaleZ);
+
+        private Vector2 ClampPan(Vector2 value)
+        {
+            Vector2 extent = (content.sizeDelta - viewport.rect.size) * .5f;
+            extent.x = Mathf.Max(0f, extent.x);
+            extent.y = Mathf.Max(0f, extent.y);
+            return new Vector2(Mathf.Clamp(value.x, -extent.x, extent.x), Mathf.Clamp(value.y, -extent.y, extent.y));
         }
     }
 

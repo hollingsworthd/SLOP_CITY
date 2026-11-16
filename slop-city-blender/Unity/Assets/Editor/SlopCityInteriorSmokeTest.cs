@@ -632,7 +632,7 @@ namespace SlopCity.Editor
             }
 
             SlopCityFeaturedBillboard featured = Object.FindFirstObjectByType<SlopCityFeaturedBillboard>();
-            Check(featured && featured.Screen && featured.Screen.FeaturedClipKey == "1984drh/7696938454575238430"
+            Check(featured && featured.Screen && featured.Screen.FeaturedClipKey == "1984drh/7689316402477436191"
                 && featured.Screen.FeaturedHoldAtSeconds < 0 && featured.Screen.FeaturedHoldSeconds == 0,
                 "Home enclosure preserves the exact continuously looping featured post.");
             Check(Mathf.Abs(featured.transform.position.x - SlopCityDenseLayout.HomeFeaturedMount) < .025f

@@ -84,7 +84,8 @@ namespace SlopCity.Editor
                 foreach (SlopCitySteakTable table in tables) Meal(table);
                 Check(hunt.MealsEaten == 4 && hunt.ContactsFound == 4 && hunt.Stage != SlopCityMatrixHunt.SearchStage.Dine,
                     "Both optional three-bite meals count once without adding contacts or reinstating a dinner gate.");
-                Check(hunt.MealSpeedMultiplier > 1 && sandbox.SpeedMultiplier >= hunt.MealSpeedMultiplier, "Completed steak supplies its real bounded movement recovery effect.");
+                Check(hunt.MealTrailVisible, "Completed steak lights the orange mission trail instead of granting movement speed.");
+                Check(Mathf.Approximately(sandbox.SpeedMultiplier, 1f), "Steak no longer multiplies walking or running speed.");
                 Check(sandbox.CurrentJobId == job && sandbox.ObjectiveTarget == recipient && Stage() == 1 && sandbox.CargoLabel == "SEALED PARCEL"
                     && sandbox.Credits == 231 && sandbox.Experience == 478 && sandbox.Salvage == 5 && sandbox.CompletedContracts == 12
                     && sandbox.WaterSupply == 2 && sandbox.Recycling == 2 && sandbox.FieldReadings == 4 && sandbox.RareFindCount == 1,

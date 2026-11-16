@@ -22,7 +22,7 @@ namespace SlopCity
         [SerializeField] private SlopCityDistrict[] districts = new SlopCityDistrict[0];
         [Header("Movement")]
         [SerializeField] private float walkingSpeed = 3.2f;
-        [SerializeField] private float sprintingSpeed = 5.5f;
+        [SerializeField] private float sprintingSpeed = 12f;
         [SerializeField] private float standingEyeHeight = 1.62f;
         [SerializeField] private float mouseSensitivity = 1.8f;
         [SerializeField] private float gravity = -18f;
@@ -498,6 +498,13 @@ namespace SlopCity
                 InvalidateNearbyActionCache();
             }
             if (sandbox) sandbox.RefreshWorldGeometry();
+        }
+
+        /// <summary>Transit arrival, map jump, or vehicle exit with a brief arrival flash.</summary>
+        public void TeleportWithEffect(Vector3 position, float heading = 0f)
+        {
+            if (hud) hud.PlayTeleportEffect();
+            TeleportTo(position, heading);
         }
 
         /// <summary>Transit arrival/vehicle exit. Callers supply a capsule-clear, ground-supported destination.</summary>

@@ -7,7 +7,7 @@ from bundle_tiktok import apply_featured_billboard, parse_featured_post
 
 
 class FeaturedPostTest(unittest.TestCase):
-    key = ("1984drh", "7696938454575238430")
+    key = ("1984drh", "7689316402477436191")
     previous = {"featuredCreator": key[0], "featuredPostId": key[1]}
 
     def catalog(self):
@@ -40,7 +40,7 @@ class FeaturedPostTest(unittest.TestCase):
 
     def test_invalid_identity_pairs_fail_before_mutation(self):
         for requested in [("other", self.key[1]), (self.key[0], "../clip"),
-                          (self.key[0], 7696938454575238430), (None, self.key[1]),
+                          (self.key[0], 7689316402477436191), (None, self.key[1]),
                           (self.key[0], ""), self.key[0], self.key + ("extra",)]:
             with self.subTest(requested=requested):
                 catalog = self.catalog()

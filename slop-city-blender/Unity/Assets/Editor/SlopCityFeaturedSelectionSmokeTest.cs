@@ -16,7 +16,7 @@ namespace SlopCity.Editor
     {
         private const BindingFlags Fields = BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic;
         private const string PreviousCreator = "machine_publishers", PreviousId = "7696449957347331358";
-        private const string RequestedCreator = "1984drh", RequestedId = "7696938454575238430";
+        private const string RequestedCreator = "1984drh", RequestedId = "7689316402477436191";
         private static int checks;
         private static void Check(bool value, string message)
         { if (!value) throw new InvalidOperationException(message); checks++; }
@@ -116,7 +116,7 @@ namespace SlopCity.Editor
                     Catalog("unknown_creator", RequestedId, videos),
                     Catalog(PreviousCreator, RequestedId, videos),
                     Catalog(RequestedCreator, "not-a-post-id", videos),
-                    Catalog(RequestedCreator, "../7696938454575238430", videos),
+                    Catalog(RequestedCreator, "../7689316402477436191", videos),
                     Catalog(RequestedCreator, "", videos), Catalog("", RequestedId, videos),
                     Catalog(RequestedCreator, "7696938454575238431", videos),
                     Catalog(RequestedCreator, RequestedId, previous),

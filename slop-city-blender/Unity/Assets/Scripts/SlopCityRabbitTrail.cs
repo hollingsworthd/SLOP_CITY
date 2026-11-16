@@ -48,7 +48,10 @@ namespace SlopCity
         private void Update()
         {
             if (paused || !sandbox || !player || !view || !sandbox.HasWaypoint) { HideTrail(); return; }
-            if (!signalOwner || !signalOwner.JobInstructionsVisible) { HideTrail(); return; }
+            if (!signalOwner) { HideTrail(); return; }
+            bool mealGuides = signalOwner.MealTrailVisible;
+            bool signalGuides = signalOwner.JobInstructionsVisible && signalOwner.SignalVisible;
+            if (!mealGuides && !signalGuides) { HideTrail(); return; }
             RefreshObjective();
             Vector3 feet = player.transform.position;
             if (player.IsSeated || sandbox.IsDriving || sandbox.IsResting || sandbox.IsTravelling)
@@ -59,7 +62,15 @@ namespace SlopCity
                 nextTransmissionAt = 0f;
                 return;
             }
-            if (!signalOwner.SignalVisible)
+            if (!signalGuides && mealGuides)
+            {
+                if (!instructionBeamActive)
+                {
+                    instructionBeamActive = true;
+                    nextRouteAt = nextTransmissionAt = nextRouteStepAt = 0f;
+                }
+            }
+            else if (!signalOwner.SignalVisible)
             {
                 // Keep the job instruction after the physical signal expires,
                 // without continuing route searches or submitting expired beams.

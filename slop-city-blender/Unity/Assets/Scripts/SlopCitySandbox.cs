@@ -124,8 +124,7 @@ namespace SlopCity
         public string LastJobOutcome => lastJobOutcome ?? "";
         public int Rank => 1 + progress.experience / 300;
         public SlopCityInteractable ObjectiveTarget => HasWaypoint ? steps[stepIndex].site : null;
-        private float MealSpeedMultiplier => MatrixHunt ? MatrixHunt.MealSpeedMultiplier : 1f;
-        public float SpeedMultiplier => Mathf.Max(Time.time < boostUntil ? 1.3f : 1f,MealSpeedMultiplier);
+        public float SpeedMultiplier => Time.time < boostUntil ? 1.3f : 1f;
         public bool HasWaypoint => steps.Count > stepIndex && steps[stepIndex].site;
         public Vector3 WaypointPosition => TryUniqueResidentWaypoint(out Vector3 residentPosition, out _) ? residentPosition : HasWaypoint ? steps[stepIndex].site.InteractionPoint : user ? user.position : Vector3.zero;
         public string WaypointLabel => TryUniqueResidentWaypoint(out _, out string residentLabel) ? residentLabel : HasWaypoint ? steps[stepIndex].site.DisplayName : "Use the city and check a dispatch terminal";
@@ -1533,9 +1532,8 @@ namespace SlopCity
             if (!vehicle || input == null) return;
             dt = Mathf.Min(dt, .05f);
             Vector2 axes = CanDriveJobVehicle(vehicle.transform) ? input.ReadMovement() : Vector2.zero;
-            float mealSpeed = MealSpeedMultiplier;
-            float targetSpeed = (axes.y >= 0f ? axes.y * 13f : axes.y * 5f) * mealSpeed;
-            vehicleSpeed = Mathf.MoveTowards(vehicleSpeed, targetSpeed, (axes.y == 0f ? 6f : 9f) * mealSpeed * dt);
+            float targetSpeed = axes.y >= 0f ? axes.y * 14f : axes.y * 5f;
+            vehicleSpeed = Mathf.MoveTowards(vehicleSpeed, targetSpeed, (axes.y == 0f ? 6f : 9f) * dt);
             Transform car = vehicle.transform;
             float steering = axes.x * Mathf.Clamp(vehicleSpeed / 3f, -1f, 1f) * 58f * dt;
             Quaternion rotation = car.rotation * Quaternion.Euler(0f, steering, 0f);

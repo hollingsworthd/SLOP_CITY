@@ -21,7 +21,7 @@ namespace SlopCity.Editor
         private const string Backup = "SlopCity.FeaturedSmoke.Playback", Existed = "SlopCity.FeaturedSmoke.Existed";
         private const string ReportPath = "Builds/Reports/featured-billboard-check.json";
         private const string IsolatedCompany = "SlopCityValidation-v0116";
-        private const string ExpectedFeaturedKey = "1984drh/7696938454575238430";
+        private const string ExpectedFeaturedKey = "1984drh/7689316402477436191";
         private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public;
         private static readonly Stack<IEnumerator> Work = new Stack<IEnumerator>();
         private static Receipt report;
