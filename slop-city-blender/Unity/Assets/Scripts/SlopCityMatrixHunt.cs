@@ -82,7 +82,7 @@ namespace SlopCity
         {
             try
             {
-                string data = PlayerPrefs.GetString(SaveKey, "");
+                string data = SlopCityProgressStorage.GetString(SaveKey, "");
                 if (data.Length == 0) return;
                 if (data.Length > 65536 || !data.TrimStart().StartsWith("{", StringComparison.Ordinal))
                     throw new FormatException("Invalid search save.");
@@ -119,7 +119,7 @@ namespace SlopCity
             {
                 progress.found = new int[found.Count]; found.CopyTo(progress.found);
                 Array.Sort(progress.found);
-                PlayerPrefs.SetString(SaveKey, JsonUtility.ToJson(progress)); PlayerPrefs.Save();
+                SlopCityProgressStorage.SetString(SaveKey, JsonUtility.ToJson(progress)); SlopCityProgressStorage.Save();
             }
             catch (Exception error)
             {
