@@ -2,19 +2,11 @@ using UnityEngine;
 
 namespace SlopCity
 {
-    /// <summary>Soft cloud layers and mist below the Sky Sprawl buildable frontier.</summary>
+    /// <summary>Keeps the authored Sky Sprawl sky unobstructed by generated scenery.</summary>
     [DisallowMultipleComponent]
     public sealed class SlopCityCityForgeSkyVista : MonoBehaviour
     {
         private Transform followTarget;
-        private GameObject cloudRoot;
-        private SlopCityCityForgeController controller;
-        private bool buildModeActive;
-        private bool savedFog;
-        private bool fogOverrideActive;
-        private Color savedFogColor;
-        private float savedFogDensity;
-        private FogMode savedFogMode;
         // The authored scene includes this huge distant visual mesh. It has no
         // collider, so it never stopped a fall, but it made the Sky Sprawl
         // look like it still had an infinite floor. Keep the authored city
@@ -32,150 +24,17 @@ namespace SlopCity
         public void Configure(Transform target)
         {
             followTarget = target;
-            AttachController();
-            EnsureClouds();
-        }
-
-        private void AttachController()
-        {
-            SlopCityCityForgeController next = GetComponent<SlopCityCityForgeController>() ?? FindFirstObjectByType<SlopCityCityForgeController>();
-            if (controller == next) return;
-            if (controller) controller.BuildModeChanged -= HandleBuildModeChanged;
-            controller = next;
-            if (controller)
-            {
-                controller.BuildModeChanged += HandleBuildModeChanged;
-                buildModeActive = controller.IsBuildMode;
-            }
-        }
-
-        private void HandleBuildModeChanged(bool active)
-        {
-            buildModeActive = active;
-        }
-
-        private void EnsureClouds()
-        {
-            if (cloudRoot) return;
-            cloudRoot = new GameObject("CityForgeSkyVista_Clouds");
-            cloudRoot.transform.SetParent(transform, false);
-            Material cloudMaterial = new Material(Shader.Find("Standard"))
-            {
-                color = new Color(.96f, .98f, 1f, .58f),
-                hideFlags = HideFlags.DontSave
-            };
-            cloudMaterial.SetFloat("_Mode", 3f);
-            cloudMaterial.SetInt("_SrcBlend", (int)UnityEngine.Rendering.BlendMode.SrcAlpha);
-            cloudMaterial.SetInt("_DstBlend", (int)UnityEngine.Rendering.BlendMode.OneMinusSrcAlpha);
-            cloudMaterial.SetInt("_ZWrite", 0);
-            cloudMaterial.DisableKeyword("_ALPHATEST_ON");
-            cloudMaterial.EnableKeyword("_ALPHABLEND_ON");
-            cloudMaterial.renderQueue = 3000;
-            // Leave a clear drop immediately beneath every island: a near,
-            // very flat cloud bank read as a second ground plane. The first
-            // billows begin well below the lip, followed by several deeper
-            // banks, so falling is a visible descent through clouds rather
-            // than an instant reset or a blue empty void.
-            float[] depths = { -40f, -86f, -140f, -202f };
-            float[] spans = { 105f, 165f, 235f, 310f };
-            for (int index = 0; index < depths.Length; index++)
-            {
-                // Solid transparent quads read as an endless ground plane,
-                // especially on a shallow first-person camera.  Use a loose
-                // bank of collider-free cloud puffs instead, so the player
-                // sees open air between layers while falling through them.
-                int puffCount = 10 + index * 4;
-                for (int puff = 0; puff < puffCount; puff++)
-                {
-                    float seed = puff * 2.3999632f + index * .71f;
-                    float radius = spans[index] * (.10f + .66f * ((puff * 37 + index * 19) % 100) / 100f);
-                    // Rounder, smaller billows read as cloud volume from an
-                    // island and during a descent, rather than as broad flat
-                    // greenish slabs under the player.
-                    float width = 15f + ((puff * 17 + index * 11) % 13) * 1.6f;
-                    float height = 12f + ((puff * 29 + index * 7) % 9) * 1.45f;
-                    GameObject cloud = GameObject.CreatePrimitive(PrimitiveType.Sphere);
-                    cloud.name = "SkyCloud_" + index + "_" + puff;
-                    cloud.transform.SetParent(cloudRoot.transform, false);
-                    cloud.transform.localPosition = new Vector3(Mathf.Cos(seed) * radius,
-                        depths[index] + ((puff % 5) - 2) * 2.2f, Mathf.Sin(seed) * radius);
-                    cloud.transform.localScale = new Vector3(width, height, width * (.82f + (puff % 4) * .06f));
-                    Collider collider = cloud.GetComponent<Collider>();
-                    if (collider) { collider.enabled = false; Destroy(collider); }
-                    Renderer renderer = cloud.GetComponent<Renderer>();
-                    if (renderer)
-                    {
-                        renderer.sharedMaterial = cloudMaterial;
-                        renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-                        renderer.receiveShadows = false;
-                    }
-                }
-            }
-            cloudRoot.SetActive(false);
         }
 
         private void LateUpdate()
         {
             if (!followTarget) return;
-            // The real cloud banks belong to the first-person Sky Sprawl.
-            // Build Mode has its own dark planning surface and must not use a
-            // top-down view of those clouds as its map background.
-            AttachController();
-            Vector3 position = followTarget.position;
-            // Keep the cloud field active over the public entry deck as well
-            // as editable chunks; the deck physically straddles the core seam.
-            bool sprawl = SlopCityCityForgeTravel.IsSkySprawlPosition(position);
-            bool showWorldClouds = sprawl && !buildModeActive;
-            if (showWorldClouds && !fogOverrideActive)
-            {
-                savedFog = RenderSettings.fog;
-                savedFogColor = RenderSettings.fogColor;
-                savedFogDensity = RenderSettings.fogDensity;
-                savedFogMode = RenderSettings.fogMode;
-                RenderSettings.fog = true;
-                RenderSettings.fogMode = FogMode.Exponential;
-                RenderSettings.fogColor = new Color(.78f, .84f, .92f);
-                RenderSettings.fogDensity = .0065f;
-                fogOverrideActive = true;
-            }
-            else if (!showWorldClouds && fogOverrideActive)
-            {
-                RenderSettings.fog = savedFog;
-                RenderSettings.fogColor = savedFogColor;
-                RenderSettings.fogDensity = savedFogDensity;
-                RenderSettings.fogMode = savedFogMode;
-                fogOverrideActive = false;
-            }
-
-            SetDistantGroundSuppressed(sprawl);
-
-            if (cloudRoot && cloudRoot.activeSelf != showWorldClouds) cloudRoot.SetActive(showWorldClouds);
-            if (cloudRoot && showWorldClouds)
-            {
-                cloudRoot.transform.position = new Vector3(position.x, 0f, position.z);
-            }
-
-            if (showWorldClouds && fogOverrideActive)
-            {
-                float depth = Mathf.Clamp01((24f - position.y) / 120f);
-                RenderSettings.fogDensity = Mathf.Lerp(.0065f, .022f, depth);
-            }
+            SetDistantGroundSuppressed(SlopCityCityForgeTravel.IsSkySprawlPosition(followTarget.position));
         }
 
         private void OnDisable()
         {
-            if (controller) controller.BuildModeChanged -= HandleBuildModeChanged;
-            controller = null;
             SetDistantGroundSuppressed(false);
-            if (fogOverrideActive)
-            {
-                RenderSettings.fog = savedFog;
-                RenderSettings.fogColor = savedFogColor;
-                RenderSettings.fogDensity = savedFogDensity;
-                RenderSettings.fogMode = savedFogMode;
-                fogOverrideActive = false;
-            }
-            if (cloudRoot) cloudRoot.SetActive(false);
         }
 
         private void SetDistantGroundSuppressed(bool suppress)

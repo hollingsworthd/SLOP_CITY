@@ -694,13 +694,13 @@ namespace SlopCity
             foreach (int item in cells.Where(value => value >= 0 && value < SlopCityCityForge.GridSize * SlopCityCityForge.GridSize).Distinct().OrderBy(value => value))
             {
                 int x = item % SlopCityCityForge.GridSize, z = item / SlopCityCityForge.GridSize;
-                // A player-authored ground cell must read as one finite island,
-                // not as a piece of an implied default terrain plane. Keep its
-                // walkable top exactly at y=0 and give it a visibly inset rock
-                // underside so open sky remains obvious on every side.
+                // A player-authored ground cell must meet every neighbouring
+                // ground cell flush.  The inset belongs only to the rock
+                // underside, so a contiguous parcel has no artificial seam
+                // or apparent no-build gap around its sites.
                 Vector3 center = new Vector3((x + .5f) * cell, 0f, (z + .5f) * cell);
                 GameObject top = Primitive("IslandTop_" + item, PrimitiveType.Cube, instance.root.transform,
-                    center + Vector3.down * .16f, new Vector3(cell - .20f, .32f, cell - .20f));
+                    center + Vector3.down * .16f, new Vector3(cell, .32f, cell));
                 Renderer topRenderer = top.GetComponent<Renderer>();
                 if (topRenderer) SetRendererColor(topRenderer, new Color(.31f, .52f, .34f));
                 DisableShadow(top);

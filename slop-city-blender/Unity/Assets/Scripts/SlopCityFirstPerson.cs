@@ -59,7 +59,7 @@ namespace SlopCity
         private bool externalMovement;
         // A fall can begin from the small public entry deck, whose west edge
         // overlaps the protected Old City coordinate range. Latch the origin
-        // until landing so the player still crosses the cloud layers and
+        // until landing so the player remains in the open Sky Sprawl and
         // returns to the Sprawl instead of instantly respawning on the couch.
         private bool skySprawlFallLatched;
 #if UNITY_WEBGL && !UNITY_EDITOR
@@ -305,8 +305,8 @@ namespace SlopCity
                         if (skySprawlFallLatched)
                         {
                             // Sky Sprawl is deliberately all open air except
-                            // for player-laid islands. Let the player pass the
-                            // layered clouds for a while before returning to
+                            // for player-laid islands. Let the player fall
+                            // through open sky for a while before returning to
                             // the small public entry deck, never the Old City
                             // couch.
                             if (transform.position.y < -240f)
@@ -314,7 +314,7 @@ namespace SlopCity
                                 TeleportTo(SlopCityCityForgeTravel.StarterEntryPosition, transform.eulerAngles.y);
                                 verticalSpeed = 0f;
                                 skySprawlFallLatched = false;
-                                ShowFeedback("The clouds carried you back to the Sky Sprawl.");
+                                ShowFeedback("Returned to the Sky Sprawl entry.");
                             }
                         }
                         else

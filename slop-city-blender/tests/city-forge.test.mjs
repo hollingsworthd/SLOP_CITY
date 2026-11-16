@@ -108,6 +108,18 @@ test('City Forge grids its bounded strategic window and retains one safe cross-c
   assert.match(toolChanges, /CancelPendingMapAction\(\); roadClass =/, 'tool changes must cancel, not reinterpret, a queued action');
 });
 
+test('City Forge physical ground has no artificial seams and the Sky Sprawl uses its authored sky', () => {
+  const runtime = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeRuntime.cs', import.meta.url), 'utf8');
+  const ground = runtime.slice(runtime.indexOf('private void BuildGround('), runtime.indexOf('private void BuildEditorGround('));
+  const skyVista = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeSkyVista.cs', import.meta.url), 'utf8');
+
+  assert.match(ground, /new Vector3\(cell, \.32f, cell\)/, 'the physical top must fill its complete 8m grid cell');
+  assert.doesNotMatch(ground, /cell - \.20f/, 'valid neighbouring ground cells must not leave a visual no-build slit');
+  assert.match(ground, /new Vector3\(cell - \.92f, \.88f, cell - \.92f\)/, 'only the island underside remains inset at a true exterior edge');
+  assert.doesNotMatch(skyVista, /CityForgeSkyVista_Clouds|SkyCloud_|CreatePrimitive\(PrimitiveType\.Sphere\)|RenderSettings\.fog/, 'the runtime must not generate cloud puffs or cloud fog');
+  assert.match(skyVista, /SetDistantGroundSuppressed\(SlopCityCityForgeTravel\.IsSkySprawlPosition\(followTarget\.position\)\);/, 'removing fake clouds must not restore the authored distant floor in the Sky Sprawl');
+});
+
 test('protected core and all-sides starter ring have exact coordinate semantics', () => {
   assert.equal(isOldCityCoordinate(-2, -2), true);
   assert.equal(isOldCityCoordinate(1, 1), true);
