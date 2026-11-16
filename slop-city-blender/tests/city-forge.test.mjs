@@ -123,6 +123,7 @@ test('City Forge physical ground has no artificial seams and the Sky Sprawl uses
 test('City Forge map ground meets the fixed Old City core without duplicate layers', () => {
   const runtime = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeRuntime.cs', import.meta.url), 'utf8');
   const layout = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityDenseLayout.cs', import.meta.url), 'utf8');
+  const humanScale = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityHumanScale.cs', import.meta.url), 'utf8');
   const travel = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeTravel.cs', import.meta.url), 'utf8');
   const strategic = runtime.slice(
     runtime.indexOf('public void ShowCityForgeStrategicMap(CityForgeWorldHead head, CityForgeCoord center, int radius,'),
@@ -133,6 +134,7 @@ test('City Forge map ground meets the fixed Old City core without duplicate laye
 
   assert.match(layout, /CityForgeCoreGroundRect = Rect\.MinMaxRect\([\s\S]*CoreMinimum\.x \* SlopCityCityForge\.ChunkSizeMeters[\s\S]*CoreMaximum\.z \+ 1\) \* SlopCityCityForge\.ChunkSizeMeters/, 'the fixed pavement must use the protected core’s exact world limits');
   assert.match(layout, /OuterGroundRect = CityForgeCoreGroundRect;/, 'the Old City support apron must not use asymmetric hand-tuned bounds');
+  assert.match(humanScale, /CityForgeCoreGroundRect\.xMin \+ 5\.85f/, 'the west transit spine must remain within the protected core instead of crossing into a starter cell');
   assert.match(strategic, /!coordinate\.Equals\(center\) && acceptedPlans/, 'the selected chunk must not draw both accepted-map and draft ground');
   assert.match(acceptedGround, /new Vector3\(SlopCityCityForge\.CellSizeMeters, \.04f, SlopCityCityForge\.CellSizeMeters\)/, 'accepted map ground must fill its complete cell');
   assert.match(editorGround, /new Vector3\(SlopCityCityForge\.CellSizeMeters, \.04f, SlopCityCityForge\.CellSizeMeters\)/, 'draft map ground must fill the same complete cell');

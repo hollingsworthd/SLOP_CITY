@@ -323,7 +323,11 @@ namespace SlopCity
                 {
                     MoveLocal(fixture, fixture.name == "MilitarySF_North_TransitSpine"
                         ? new Vector3(0, 0, 111 + SlopCityDenseLayout.SkylineExpansionZ)
-                        : new Vector3(-132.75f - SlopCityDenseLayout.SkylineExpansionX, 0, SlopCityDenseLayout.CoreGroundRect.center.y), undo);
+                        // The widest transverse west-spine mesh reaches 5.6m beyond its
+                        // rotated root. Keep that artwork inside the protected core rather
+                        // than hanging it into the first City Forge cell.
+                        : new Vector3(SlopCityDenseLayout.CityForgeCoreGroundRect.xMin + 5.85f, 0,
+                            SlopCityDenseLayout.CoreGroundRect.center.y), undo);
                     Transform existing = fixture.Find("Dense_Transit_Pier_Colliders");
                     Transform piers = SlopCityDenseLayout.EnsureTransitPierColliders(fixture);
                     if (!existing && piers) undo.Add(() => { if (piers) Dispose(piers.gameObject); });
