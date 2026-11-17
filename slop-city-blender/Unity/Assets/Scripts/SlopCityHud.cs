@@ -516,8 +516,34 @@ namespace SlopCity
 
         private void HandleCityMapWindowChanged(CityForgeCoord center)
         {
+            RefreshAerialCityMap();
+        }
+
+        private void RefreshAerialCityMap()
+        {
+            if (!cityMapContent) return;
             CreateAerialCityMap();
             if (mapPointer) mapPointer.SetAsLastSibling();
+        }
+
+        private bool TryBindCityForgeMap()
+        {
+            if (cityForge) return false;
+            cityForge = FindFirstObjectByType<SlopCityCityForgeController>();
+            if (!cityForge) return false;
+            cityForge.AcceptedPresentationChanged += HandleCityForgeMapPlansChanged;
+            cityForge.StrategicMapChanged += HandleCityForgeStrategicMapChanged;
+            return true;
+        }
+
+        private void HandleCityForgeMapPlansChanged(System.Collections.Generic.IReadOnlyList<CityForgeCoord> changed)
+        {
+            RefreshAerialCityMap();
+        }
+
+        private void HandleCityForgeStrategicMapChanged()
+        {
+            RefreshAerialCityMap();
         }
 
         /// <summary>Keep the protected core as detailed roof plans and streets.</summary>
@@ -560,7 +586,7 @@ namespace SlopCity
         private void DrawAerialSprawl()
         {
             CityForgeCoord centre = cityMapNavigator ? cityMapNavigator.WindowCenter : new CityForgeCoord(0, 0);
-            if (!cityForge) cityForge = FindFirstObjectByType<SlopCityCityForgeController>();
+            TryBindCityForgeMap();
             CityForgeWorldHead head = cityForge ? cityForge.WorldHead : null;
             string worldSeed = head == null ? string.Empty : head.worldSeed;
             int radius = SlopCityCityMapNavigator.AerialWindowRadius;
@@ -737,6 +763,7 @@ namespace SlopCity
         public void RenderCity(SlopCityFirstPerson player)
         {
             if (!initialized || districtBuildings == null) return;
+            if (TryBindCityForgeMap()) RefreshAerialCityMap();
             Vector3 position = player.transform.position;
             foreach (SlopCityDistrict district in player.Districts)
             {
@@ -1243,6 +1270,12 @@ namespace SlopCity
 
         private void OnDestroy()
         {
+            if (cityForge)
+            {
+                cityForge.AcceptedPresentationChanged -= HandleCityForgeMapPlansChanged;
+                cityForge.StrategicMapChanged -= HandleCityForgeStrategicMapChanged;
+                cityForge = null;
+            }
             if (sourceBrowser)
             {
                 try { sourceBrowser.Hide(); }

@@ -729,11 +729,9 @@ namespace SlopCity
             BuildScenicAvenue(cityscape.transform, "ScenicAvenue_Centre_NS", new Vector3(chunkSize * .5f, -.29f, chunkSize * .5f), chunkSize, true, avenue);
             BuildScenicAvenue(cityscape.transform, "ScenicAvenue_Centre_EW", new Vector3(chunkSize * .5f, -.29f, chunkSize * .5f), chunkSize, false, avenue);
             // Boundary avenues meet the adjoining generated coordinate at the
-            // exact chunk edge. This creates a continuous urban street grid
-            // without depending on streaming order or player state.
-            BuildScenicAvenue(cityscape.transform, "ScenicAvenue_West", new Vector3(0f, -.29f, chunkSize * .5f), chunkSize, true, avenue);
+            // exact chunk edge. East/north ownership means a shared boundary
+            // is emitted once, not twice by its two streamed neighbours.
             BuildScenicAvenue(cityscape.transform, "ScenicAvenue_East", new Vector3(chunkSize, -.29f, chunkSize * .5f), chunkSize, true, avenue);
-            BuildScenicAvenue(cityscape.transform, "ScenicAvenue_South", new Vector3(chunkSize * .5f, -.29f, 0f), chunkSize, false, avenue);
             BuildScenicAvenue(cityscape.transform, "ScenicAvenue_North", new Vector3(chunkSize * .5f, -.29f, chunkSize), chunkSize, false, avenue);
 
             uint seed = StableHash(baseChunk.baseHash + "|scenic-city");
@@ -765,7 +763,7 @@ namespace SlopCity
 
         private static void BuildScenicBuilding(Transform parent, CityForgeBaseChunk baseChunk, int index, Vector3 position)
         {
-            uint seed = StableHash(baseChunk.baseHash + "|building|" + index.ToString(CultureInfo.InvariantCulture));
+            uint seed = StableHash(baseChunk.baseHash + "|building|" + index.ToString(System.Globalization.CultureInfo.InvariantCulture));
             float span = 24f - (float)(seed % 4u) * .7f;
             float height = ScenicBuildingHeight(baseChunk.skylineId, seed, index);
             GameObject shell = new GameObject("ScenicBuilding_" + index);
