@@ -21,6 +21,11 @@ namespace SlopCity
         public const int MaximumLandingRiderMarkers = 8;
         private const float NearbyRadiusMeters = 112f;
         private const float RefreshSeconds = .10f;
+        // Keep visual commuter cars aligned with the player-facing vehicle/run
+        // hierarchy. They traverse their verified road route faster than a
+        // pedestrian samples an equivalent sidewalk route, then remain parked
+        // at the destination for the rest of the logical commute window.
+        private const float CarVisualProgressMultiplier = 1.85f;
         // The census reports one normalized trip progress value. These fixed,
         // deterministic windows reserve the middle of a subway journey for its
         // authoritative logical ride stage rather than inventing a train.
@@ -161,7 +166,7 @@ namespace SlopCity
                 if (stage != null && stage.kind == SlopCitySprawlRouteStageKind.DriveStreet && stage.sidewalkPoints != null && stage.sidewalkPoints.Length >= 2)
                 { drive = stage; break; }
             if (drive == null || !GroundedPolyline(drive.sidewalkPoints)) return false;
-            return SamplePolyline(drive.sidewalkPoints, commute.progress01, out position, out rotation);
+            return SamplePolyline(drive.sidewalkPoints, Mathf.Clamp01(commute.progress01 * CarVisualProgressMultiplier), out position, out rotation);
         }
 
         private bool TryLandingRiderPose(SlopCitySprawlCommute commute, out Vector3 position, out Quaternion rotation)

@@ -24,8 +24,10 @@ namespace SlopCity
         [SerializeField] private SlopCityMediaPlayer media;
         [SerializeField] private SlopCityDistrict[] districts = new SlopCityDistrict[0];
         [Header("Movement")]
-        [SerializeField] private float walkingSpeed = 2.4f;
-        [SerializeField] private float sprintingSpeed = 4.25f;
+        // A brisk game-walk, a fast but human-scale sprint, then vehicles.
+        // Keep the hierarchy explicit: walking < sprinting < car travel.
+        [SerializeField] private float walkingSpeed = 3.6f;
+        [SerializeField] private float sprintingSpeed = 5.4f;
         [SerializeField] private float standingEyeHeight = 1.62f;
         [SerializeField] private float mouseSensitivity = 1.8f;
         [SerializeField] private float gravity = -18f;

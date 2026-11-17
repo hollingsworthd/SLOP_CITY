@@ -65,6 +65,10 @@ namespace SlopCity
         private string transitLabel;
         private Vector3 savedCameraOffset;
         private float vehicleSpeed;
+        // Dense streets need a quick but controllable city-car pace. At 10 m/s
+        // (36 km/h), a car remains distinctly faster than the 5.4 m/s sprint.
+        private const float VehicleForwardSpeed = 10f;
+        private const float VehicleReverseSpeed = 4f;
         private Vector3 vehicleLocalCenter;
         private Vector3 vehicleHalfExtents;
         private Vector3 vehicleEntryPosition;
@@ -1532,7 +1536,7 @@ namespace SlopCity
             if (!vehicle || input == null) return;
             dt = Mathf.Min(dt, .05f);
             Vector2 axes = CanDriveJobVehicle(vehicle.transform) ? input.ReadMovement() : Vector2.zero;
-            float targetSpeed = axes.y >= 0f ? axes.y * 14f : axes.y * 5f;
+            float targetSpeed = axes.y >= 0f ? axes.y * VehicleForwardSpeed : axes.y * VehicleReverseSpeed;
             vehicleSpeed = Mathf.MoveTowards(vehicleSpeed, targetSpeed, (axes.y == 0f ? 6f : 9f) * dt);
             Transform car = vehicle.transform;
             float steering = axes.x * Mathf.Clamp(vehicleSpeed / 3f, -1f, 1f) * 58f * dt;

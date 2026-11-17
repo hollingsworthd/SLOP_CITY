@@ -770185,8 +770185,8 @@ MonoBehaviour:
   - {fileID: 1092616758}
   - {fileID: 726625485}
   - {fileID: 943396096}
-  walkingSpeed: 2.4
-  sprintingSpeed: 4.25
+  walkingSpeed: 3.6
+  sprintingSpeed: 5.4
   standingEyeHeight: 1.62
   mouseSensitivity: 1.8
   gravity: -18
