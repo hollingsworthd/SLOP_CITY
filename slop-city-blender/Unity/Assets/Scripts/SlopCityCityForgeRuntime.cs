@@ -724,6 +724,12 @@ namespace SlopCity
             ScenicPrimitive("ScenicTerrain", PrimitiveType.Cube, cityscape.transform,
                 new Vector3(chunkSize * .5f, -.46f, chunkSize * .5f), new Vector3(chunkSize, .16f, chunkSize),
                 ScenicTerrainColor(baseChunk.terrainId));
+            // A streamed scenic block needs an actual, bounded walking surface
+            // for map travel. This collider is deterministic presentation only:
+            // it is neither a saved ChunkPlan nor a substitute for player-laid
+            // ground, roads, or building collision, and it is released with the
+            // normal nearby-chunk window.
+            BuildScenicTravelSurface(cityscape.transform, chunkSize);
 
             CityForgeRoadClass avenue = ScenicRoadClass(baseChunk);
             BuildScenicAvenue(cityscape.transform, "ScenicAvenue_Centre_NS", new Vector3(chunkSize * .5f, -.29f, chunkSize * .5f), chunkSize, true, avenue);
@@ -816,6 +822,15 @@ namespace SlopCity
             Renderer renderer = value.GetComponent<Renderer>(); if (renderer) SetRendererColor(renderer, color);
             if (disableShadow) DisableShadow(value);
             return value;
+        }
+
+        private static void BuildScenicTravelSurface(Transform parent, float chunkSize)
+        {
+            GameObject surface = new GameObject("ScenicTravelSurface", typeof(BoxCollider));
+            surface.transform.SetParent(parent, false);
+            surface.transform.localPosition = new Vector3(chunkSize * .5f, -.16f, chunkSize * .5f);
+            BoxCollider collider = surface.GetComponent<BoxCollider>();
+            collider.size = new Vector3(chunkSize, .32f, chunkSize);
         }
 
         private static void DisableScenicColliders(Transform root)

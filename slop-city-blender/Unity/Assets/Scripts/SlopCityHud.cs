@@ -481,7 +481,9 @@ namespace SlopCity
             // A 13 by 13 City Forge window fits inside this content surface.
             // The navigator rebases that window as the player or a map drag
             // crosses it, rather than pretending the Sprawl has a map edge.
-            cityMapContent = Panel(viewport.transform, "MapContent", new Vector2(576, 576), new Color(.023f,.037f,.043f,.96f));
+            // Keep the frontier grid as a quiet orientation cue rather than a
+            // high-contrast checkerboard behind the aerial streets and roofs.
+            cityMapContent = Panel(viewport.transform, "MapContent", new Vector2(576, 576), new Color(.047f,.071f,.077f,.96f));
             cityMapContent.GetComponent<Image>().raycastTarget = false;
             Text pointer = Label(cityMapContent, "PlayerPosition", "▲", 13, TextAnchor.MiddleCenter,
                 new Vector2(.5f,.5f), new Vector2(.5f,.5f), Vector2.zero, new Vector2(20,20), Cream);
@@ -616,10 +618,10 @@ namespace SlopCity
             bool starter = SlopCityCityForge.IsStarterRing(coordinate);
             int variant = AerialSprawlVariant(coordinate, worldSeed);
             Color ground = starter
-                ? new Color(.095f, .18f, .18f, .98f)
-                : new Color(.055f + (variant % 3) * .008f, .092f + (variant % 4) * .006f, .10f + (variant % 2) * .01f, .96f);
+                ? new Color(.076f, .128f, .128f, .98f)
+                : new Color(.052f + (variant % 3) * .003f, .081f + (variant % 4) * .002f, .087f + (variant % 2) * .003f, .96f);
             AddAerialFeature("AerialSprawlParcel_" + coordinate.x + "_" + coordinate.z, centre,
-                Vector2.one * (chunk - .8f), ground);
+                Vector2.one * (chunk - .18f), ground);
             Color road = starter ? new Color(.21f, .34f, .34f, 1f) : new Color(.12f, .18f, .19f, 1f);
             float lane = starter ? 3.0f : 2.45f;
             AddAerialFeature("AerialSprawlAvenueEW_" + coordinate.x + "_" + coordinate.z, centre,
@@ -1453,11 +1455,19 @@ namespace SlopCity
             pressScreen = e.position;
             dragging = false;
             userPanning = true;
+            // WebGL defers pointer lock to the end of this trusted pointer
+            // gesture. Arm it now so a successful map travel can resume with
+            // mouse look rather than leaving control with the browser.
+            if (player) player.ArmPointerLookForMapTap();
         }
 
         public void OnDrag(PointerEventData e)
         {
-            if ((e.position - pressScreen).sqrMagnitude > DragThresholdPixels * DragThresholdPixels) dragging = true;
+            if ((e.position - pressScreen).sqrMagnitude > DragThresholdPixels * DragThresholdPixels && !dragging)
+            {
+                dragging = true;
+                if (player) player.CancelPointerLookForMapDrag();
+            }
             pan += e.delta;
             pan = ClampPan(pan);
             content.anchoredPosition = pan;
@@ -1467,7 +1477,11 @@ namespace SlopCity
         public void OnPointerUp(PointerEventData e)
         {
             if (e.button != PointerEventData.InputButton.Left) return;
-            if (!dragging && !TryTeleport(e)) FollowPlayer();
+            if (!dragging && !TryTeleport(e))
+            {
+                if (player) player.CancelPointerLookForMapDrag();
+                FollowPlayer();
+            }
         }
 
         private bool TryTeleport(PointerEventData e)
@@ -1478,6 +1492,7 @@ namespace SlopCity
             if (sandbox && (sandbox.IsDriving || sandbox.IsResting || sandbox.IsTravelling)) return false;
             if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(content, e.position, e.pressEventCamera, out Vector2 local)) return false;
             Vector3 mapped = LocalToWorld(local);
+            if (!PrepareSprawlTravel(mapped)) return false;
             Vector3 probe = new Vector3(mapped.x, 260f, mapped.z);
             if (!Physics.Raycast(probe, Vector3.down, out RaycastHit hit, 320f, ~0, QueryTriggerInteraction.Ignore)
                 || hit.normal.y <= .5f) return false;
@@ -1488,6 +1503,30 @@ namespace SlopCity
             // immediately instead of leaving a touch player behind the modal.
             if (resumeAfterTravel) player.PlayOrResume();
             return true;
+        }
+
+        /// <summary>
+        /// A map tap may target a deterministic Sprawl block outside the
+        /// currently streamed neighborhood. Stream only that normal bounded
+        /// neighborhood before probing it; the runtime provides a transient
+        /// scenic walking surface without writing a player plan.
+        /// </summary>
+        private static bool PrepareSprawlTravel(Vector3 mapped)
+        {
+            CityForgeCoord coordinate = WorldToChunk(mapped);
+            if (!SlopCityCityForge.IsBuildable(coordinate)) return true;
+            SlopCityCityForgeController controller = UnityEngine.Object.FindFirstObjectByType<SlopCityCityForgeController>();
+            if (!controller || !controller.IsInitialized) return false;
+            try
+            {
+                controller.StreamAt(coordinate);
+                Physics.SyncTransforms();
+                return true;
+            }
+            catch (System.Exception)
+            {
+                return false;
+            }
         }
 
         internal Vector2 WorldToLocal(Vector3 world)

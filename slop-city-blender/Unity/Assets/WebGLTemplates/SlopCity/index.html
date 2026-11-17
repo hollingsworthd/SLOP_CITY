@@ -284,6 +284,10 @@
     // Fine-pointer activity, unlike capability, is a deliberate current input
     // mode. This lets a hybrid player switch between touch and trackpad safely.
     window.slopCityFinePointerActive = false;
+    // Unity updates this through the small WebGL bridge. Keeping it in the
+    // shell lets an Escape-key resume request pointer lock while that trusted
+    // key gesture is still active, rather than a frame too late.
+    window.slopCityGameplayPaused = true;
     document.documentElement.classList.toggle("touch-ui", inputCapabilities.touch);
     document.documentElement.classList.toggle("desktop-ui", !inputCapabilities.touch);
     if (window.slopCityTouchControls && desktopGameBrowser) {
@@ -434,6 +438,7 @@
       }
       document.removeEventListener("fullscreenchange", scheduleViewportGeometry);
       document.removeEventListener("pointerlockchange", onPointerLockChange);
+      document.removeEventListener("keydown", capturePausedGamePointerLock, true);
     }
 
     function releaseCanvasBacking() {
@@ -886,11 +891,26 @@
         if (result && typeof result.catch === "function") result.catch(unavailable);
       } catch (error) { unavailable(); }
     });
+    function capturePausedGamePointerLock(event) {
+      if (!event || event.key !== "Escape" || event.repeat
+        || window.slopCityGameplayPaused !== true
+        || window.slopCityMediaHelpModalOpen === true
+        || !unityInstance || graphicsLost || sessionFailed
+        || !window.slopCityFinePointerActive
+        || document.pointerLockElement === canvas) return;
+      // Browser pointer capture must be requested during the actual key event.
+      // Unity's normal request is deferred, which is too late after Escape.
+      try {
+        const result = canvas.requestPointerLock();
+        if (result && typeof result.catch === "function") result.catch(function () {});
+      } catch (_) {}
+    }
     function onPointerLockChange() {
       if (graphicsLost || sessionFailed) return;
       if (unityInstance && window.slopCityFinePointerActive) status.textContent = document.pointerLockElement === canvas ? "CITY CONNECTED" : "CITY CONNECTED / MOUSE RELEASED";
     }
     document.addEventListener("pointerlockchange", onPointerLockChange);
+    document.addEventListener("keydown", capturePausedGamePointerLock, true);
     canvas.addEventListener("pointerdown", function (event) {
       const finePointer = event && (event.pointerType === "mouse" || event.pointerType === "pen");
       if (finePointer) window.slopCityFinePointerActive = true;

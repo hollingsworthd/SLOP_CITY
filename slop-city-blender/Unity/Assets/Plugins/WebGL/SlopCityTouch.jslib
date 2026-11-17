@@ -16,5 +16,8 @@ mergeInto(LibraryManager.library, {
   },
   SlopCityMediaHelpModalOpen: function () {
     return window.slopCityMediaHelpModalOpen === true ? 1 : 0;
+  },
+  SlopCitySetGameplayPaused: function (paused) {
+    window.slopCityGameplayPaused = paused !== 0;
   }
 });

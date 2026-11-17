@@ -1,5 +1,8 @@
 using UnityEngine;
 using UnityEngine.EventSystems;
+#if UNITY_WEBGL && !UNITY_EDITOR
+using System.Runtime.InteropServices;
+#endif
 
 namespace SlopCity
 {
@@ -64,7 +67,11 @@ namespace SlopCity
         private bool skySprawlFallLatched;
 #if UNITY_WEBGL && !UNITY_EDITOR
         private bool browserCursorLocked;
+        private bool browserPointerLockPending;
+        private float browserPointerLockDeadline;
+        private const float BrowserPointerLockGraceSeconds = .25f;
         private float nextBrowserHudRefresh;
+        [DllImport("__Internal")] private static extern void SlopCitySetGameplayPaused(int paused);
 #endif
         private readonly bool[] visitedBlocks = new bool[9];
         private Bounds homeBounds;
@@ -229,29 +236,40 @@ namespace SlopCity
             {
                 bool locked = Cursor.lockState == CursorLockMode.Locked;
                 bool wantsPointerLook = playerInput.WantsPointerLook;
-                if (browserCursorLocked && !locked && wantsPointerLook)
+                if (wantsPointerLook && locked)
                 {
-                    SetPaused(true);
-                    RefreshHud();
-                    return;
+                    browserCursorLocked = true;
+                    browserPointerLockPending = false;
                 }
-                browserCursorLocked = locked && wantsPointerLook;
+                else if (wantsPointerLook)
+                {
+                    bool lostPointerLock = browserCursorLocked;
+                    bool requestTimedOut = browserPointerLockPending && Time.unscaledTime >= browserPointerLockDeadline;
+                    browserCursorLocked = false;
+                    // Never leave a resumed desktop session live while the
+                    // browser owns the mouse. A missed trusted-gesture request
+                    // returns to the pause card, whose next PLAY/tap supplies
+                    // a fresh capture gesture.
+                    if (lostPointerLock || requestTimedOut)
+                    {
+                        SetPaused(true);
+                        RefreshHud();
+                        return;
+                    }
 #if ENABLE_LEGACY_INPUT_MANAGER
-                // A touch screen can keep its controls visible; lock only after a
-                // fine pointer explicitly chose look on a hybrid device.
-                if (wantsPointerLook && !locked && Input.GetMouseButtonDown(0))
-                {
-                    Cursor.lockState = CursorLockMode.Locked;
-                    Cursor.visible = false;
-                }
+                    // A touch screen can keep its controls visible; lock only after a
+                    // fine pointer explicitly chose look on a hybrid device.
+                    if (!locked && Input.GetMouseButtonDown(0)) RequestBrowserPointerLock();
 #elif ENABLE_INPUT_SYSTEM
-                var mouse = UnityEngine.InputSystem.Mouse.current;
-                if (wantsPointerLook && !locked && mouse != null && mouse.leftButton.wasPressedThisFrame)
-                {
-                    Cursor.lockState = CursorLockMode.Locked;
-                    Cursor.visible = false;
-                }
+                    var mouse = UnityEngine.InputSystem.Mouse.current;
+                    if (!locked && mouse != null && mouse.leftButton.wasPressedThisFrame) RequestBrowserPointerLock();
 #endif
+                }
+                else
+                {
+                    browserCursorLocked = false;
+                    browserPointerLockPending = false;
+                }
             }
 #endif
             if (playerInput.ConsumePause())
@@ -385,19 +403,88 @@ namespace SlopCity
         }
 
 
+        /// <summary>
+        /// Arms WebGL pointer capture while a map tap is still a trusted
+        /// pointer-down gesture. Unity completes that request on pointer-up,
+        /// after the map has safely resolved its travel destination.
+        /// </summary>
+        public void ArmPointerLookForMapTap()
+        {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            if (!started || !paused || playerInput == null || !playerInput.WantsPointerLook) return;
+            RequestBrowserPointerLock();
+#endif
+        }
+
+        /// <summary>Cancels a map-tap capture request once the gesture becomes a drag.</summary>
+        public void CancelPointerLookForMapDrag()
+        {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            if (!paused) return;
+            browserCursorLocked = false;
+            browserPointerLockPending = false;
+            browserPointerLockDeadline = 0f;
+            UnlockCursor();
+#endif
+        }
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+        private void RequestBrowserPointerLock()
+        {
+            if (playerInput == null || !playerInput.WantsPointerLook)
+            {
+                browserPointerLockPending = false;
+                UnlockCursor();
+                return;
+            }
+            browserPointerLockPending = true;
+            browserPointerLockDeadline = Time.unscaledTime + BrowserPointerLockGraceSeconds;
+            Cursor.lockState = CursorLockMode.Locked;
+            Cursor.visible = false;
+        }
+
+        private static void SetBrowserGameplayPaused(bool value)
+        {
+            try { SlopCitySetGameplayPaused(value ? 1 : 0); }
+            catch (System.EntryPointNotFoundException) { }
+            catch (System.DllNotFoundException) { }
+        }
+#endif
+
         private void SetPaused(bool value)
         {
             if (!value && !initializationComplete) return;
             paused = value;
 #if UNITY_WEBGL && !UNITY_EDITOR
             browserCursorLocked = false;
+            if (value)
+            {
+                browserPointerLockPending = false;
+                browserPointerLockDeadline = 0f;
+            }
             nextBrowserHudRefresh = 0;
+            SetBrowserGameplayPaused(value);
 #endif
             RefreshMediaSuspension();
             Time.timeScale = value ? 0f : 1f;
             playerInput.SetGameplayEnabled(!value);
             if (value || !playerInput.WantsPointerLook) UnlockCursor();
-            else { Cursor.lockState = CursorLockMode.Locked; Cursor.visible = false; }
+            else
+            {
+#if UNITY_WEBGL && !UNITY_EDITOR
+                // A map pointer-down may already have armed capture. Do not
+                // replace that timely request from its later pointer-up callback.
+                if (browserPointerLockPending)
+                {
+                    browserPointerLockDeadline = Time.unscaledTime + BrowserPointerLockGraceSeconds;
+                    Cursor.visible = false;
+                }
+                else RequestBrowserPointerLock();
+#else
+                Cursor.lockState = CursorLockMode.Locked;
+                Cursor.visible = false;
+#endif
+            }
             if (hud) hud.SetMenu(value, started);
             if (!value && EventSystem.current) EventSystem.current.SetSelectedGameObject(null);
         }
