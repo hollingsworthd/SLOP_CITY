@@ -21,6 +21,11 @@ namespace SlopCity
         private static readonly List<ScreenState> retiredScreenResources = new List<ScreenState>();
         private static bool warnedRetiredScreenAbandon;
         private const int MaximumScreenLoop = 5;
+        // Offscreen fixtures retain no decoder, but each one still owns an
+        // independent broadcast clock. Keep that simulation cheap and bounded.
+        private const double DefaultVirtualClipSeconds = 30d;
+        private const double SlideSeconds = 5d;
+        private const int MaximumVirtualTransitionsPerTick = 32;
         private const float PrepareTimeout = 25f;
         private const float ResolveTimeout = 120f;
         private const float ProgressSaveInterval = 5f;
@@ -324,12 +329,14 @@ namespace SlopCity
         {
             if (!screen || !displayLookup.TryGetValue(screen, out ScreenState display)) return;
             if (display.paused == paused) return;
+            SnapshotScreenClock(display, Time.unscaledTime);
             display.paused = paused;
             if (paused)
             {
                 CapturePausedVideo(display);
                 if (display.slot != null) ReleaseSlot(display.slot);
             }
+            else display.virtualUpdatedAt = Time.unscaledTime;
             nextScreenUpdate = 0f;
         }
 
@@ -339,6 +346,7 @@ namespace SlopCity
         {
             if (!screen || !displayLookup.TryGetValue(screen, out ScreenState display)) return;
             ClearPausedVideo(display);
+            ResetVirtualPlayback(display);
             display.paused = true;
             if (display.slot != null) ReleaseSlot(display.slot);
             nextScreenUpdate = 0f;
@@ -702,6 +710,7 @@ namespace SlopCity
 
         public void TogglePaused()
         {
+            if (initialized) UpdateScreenClocks();
 #if UNITY_WEBGL && !UNITY_EDITOR
             RefreshMobilePreparationClocks();
 #endif
@@ -709,12 +718,14 @@ namespace SlopCity
 #if UNITY_WEBGL && !UNITY_EDITOR
             RefreshMobilePreparationClocks();
 #endif
+            AnchorScreenClocks();
             featuredTickAt = Time.unscaledTime;
             ApplyPlayback();
         }
 
         public void SetSuspended(bool suspended)
         {
+            if (initialized) UpdateScreenClocks();
 #if UNITY_WEBGL && !UNITY_EDITOR
             RefreshMobilePreparationClocks();
 #endif
@@ -722,6 +733,7 @@ namespace SlopCity
 #if UNITY_WEBGL && !UNITY_EDITOR
             RefreshMobilePreparationClocks();
 #endif
+            AnchorScreenClocks();
             featuredTickAt = Time.unscaledTime;
             ApplyPlayback();
         }
@@ -748,6 +760,7 @@ namespace SlopCity
                     registrationRetryPending = false;
                     SlopCityCityScreen.RegisterActiveScreens(this);
                 }
+                UpdateScreenClocks();
                 RefreshScreenInterest();
                 foreach (Channel signal in channels)
                 {
@@ -806,6 +819,144 @@ namespace SlopCity
             if (MobileWebBudget && (Suspended || manuallyPaused || DeferMobileAdmissionsForViewport)) return 0f;
 #endif
             return Time.unscaledTime - signal.startedAt;
+        }
+
+        private static bool ValidVirtualSeconds(double value)
+            => !double.IsNaN(value) && !double.IsInfinity(value) && value >= 0d && value <= 3600d;
+
+        private static double VirtualDuration(SlopCityTikTokVideo video)
+        {
+            if (video == null) return 0d;
+            if (video.kind == "slideshow")
+                return Math.Max(SlideSeconds, (video.imageUrls?.Length ?? 0) * SlideSeconds);
+            return video.duration > 0 ? Math.Max(1d, video.duration) : DefaultVirtualClipSeconds;
+        }
+
+        private static string VirtualVideoKey(ScreenState display)
+            => display?.post != null ? VideoKey(display.post) : "";
+
+        /// <summary>Begin a newly assigned clip without allocating a decoder for it.</summary>
+        private void ResetVirtualPlayback(ScreenState display, double carriedSeconds = 0d)
+        {
+            if (display == null) return;
+            display.virtualVideoKey = VirtualVideoKey(display);
+            display.virtualDuration = VirtualDuration(display.post);
+            display.virtualSeconds = display.virtualDuration > 0d && ValidVirtualSeconds(carriedSeconds)
+                ? carriedSeconds : 0d;
+            display.virtualUpdatedAt = Time.unscaledTime;
+        }
+
+        private void AnchorScreenClocks()
+        {
+            float now = Time.unscaledTime;
+            foreach (ScreenState display in displays) display.virtualUpdatedAt = now;
+        }
+
+        /// <summary>
+        /// Advance every physical screen's inexpensive logical broadcast timer.
+        /// A live pooled decoder is authoritative while it exists; an evicted
+        /// fixture advances only this timer and seeks to it when reacquired.
+        /// </summary>
+        private void UpdateScreenClocks()
+        {
+            float now = Time.unscaledTime;
+            foreach (ScreenState display in displays) SnapshotScreenClock(display, now);
+        }
+
+        private void SnapshotScreenClock(ScreenState display, float now)
+        {
+            if (display == null) return;
+            string key = VirtualVideoKey(display);
+            if (key != display.virtualVideoKey) ResetVirtualPlayback(display);
+            Channel signal = display.slot;
+            bool ownsCurrent = signal != null && signal.owner == display && signal.ready && !signal.loading
+                && !signal.resolving && !signal.advance && signal.currentVideo == display.post;
+            if (ownsCurrent)
+            {
+                if (signal.slideshow)
+                {
+                    display.virtualDuration = VirtualDuration(display.post);
+                    display.virtualSeconds = Mathf.Max(0, signal.imageIndex) * SlideSeconds
+                        + Math.Max(0f, signal.imageElapsed);
+                }
+                else if (signal.player && signal.player.isPrepared)
+                {
+                    double duration = signal.player.length;
+                    if (ValidPlaybackSeconds(duration)) display.virtualDuration = duration;
+                    double time = signal.player.time;
+                    if (ValidVirtualSeconds(time)) display.virtualSeconds = time;
+                }
+                display.virtualUpdatedAt = now;
+                return;
+            }
+            if (Suspended || manuallyPaused || display.paused || display.post == null)
+            {
+                display.virtualUpdatedAt = now;
+                return;
+            }
+            if (display.virtualUpdatedAt < 0f)
+            {
+                display.virtualUpdatedAt = now;
+                return;
+            }
+            double elapsed = Math.Max(0d, now - display.virtualUpdatedAt);
+            display.virtualUpdatedAt = now;
+            if (elapsed > 0d) AdvanceVirtualScreen(display, elapsed);
+        }
+
+        private void AdvanceVirtualScreen(ScreenState display, double elapsed)
+        {
+            display.virtualSeconds += elapsed;
+            for (int transition = 0; transition < MaximumVirtualTransitionsPerTick; transition++)
+            {
+                double duration = display.virtualDuration > 0d ? display.virtualDuration : VirtualDuration(display.post);
+                if (duration <= 0d || display.virtualSeconds + .0001d < duration) return;
+                display.virtualSeconds -= duration;
+                display.virtualClipCompletions++;
+                if (display.screen != null && display.screen.IsFeatured)
+                {
+                    display.virtualSeconds %= duration;
+                    return;
+                }
+                double carry = display.virtualSeconds;
+                AssignNextPost(display, carry);
+                if (display.post == null) return;
+            }
+            // A pathological long frame must not turn one inexpensive display
+            // into unbounded selection work. Preserve a valid phase instead.
+            double finalDuration = display.virtualDuration > 0d ? display.virtualDuration : VirtualDuration(display.post);
+            if (finalDuration > 0d) display.virtualSeconds %= finalDuration;
+        }
+
+        private void RestoreVirtualPlayback(Channel signal, VideoPlayer source)
+        {
+            ScreenState display = signal?.owner;
+            if (display == null || display.slot != signal || !source || !source.isPrepared || signal.slideshow
+                || signal.currentVideo != display.post || !source.canSetTime) return;
+            string key = VirtualVideoKey(display);
+            if (string.IsNullOrEmpty(key) || key != display.virtualVideoKey) return;
+            double duration = source.length;
+            if (!ValidPlaybackSeconds(duration)) return;
+            display.virtualDuration = duration;
+            double position = ValidVirtualSeconds(display.virtualSeconds) ? display.virtualSeconds : 0d;
+            if (position >= duration - .05d) position %= duration;
+            if (position > 0d && position < duration - .05d) source.time = position;
+            display.virtualSeconds = position;
+            display.virtualUpdatedAt = Time.unscaledTime;
+        }
+
+        private static int VirtualSlideIndex(ScreenState display)
+        {
+            int count = display?.post?.imageUrls?.Length ?? 0;
+            if (count <= 0) return 0;
+            double seconds = ValidVirtualSeconds(display.virtualSeconds) ? display.virtualSeconds : 0d;
+            return Mathf.Clamp((int)(seconds / SlideSeconds) % count, 0, count - 1);
+        }
+
+        private static float VirtualSlideElapsed(ScreenState display)
+        {
+            if (display == null || !ValidVirtualSeconds(display.virtualSeconds)) return 0f;
+            return (float)Math.Min(SlideSeconds - .001d, display.virtualSeconds % SlideSeconds);
         }
 
 #if UNITY_WEBGL && !UNITY_EDITOR
@@ -1035,11 +1186,16 @@ namespace SlopCity
             // Destroy retires the previous decoder at the end of this frame;
             // let that finish before preparing a replacement on a phone.
             signal.nextAttempt = MobileWebBudget ? Time.unscaledTime + .25f : 0f;
+            // Native/desktop admission already owns a free bounded decoder. Start
+            // its resolver and Prepare work in this interest pass rather than
+            // waiting for the next 0.2-second polling tick.
+            if (!MobileWebBudget && !Suspended && !manuallyPaused) StartChannel(signal);
         }
 
         private void ReleaseSlot(Channel signal)
         {
             ScreenState previous = signal.owner;
+            if (previous != null) SnapshotScreenClock(previous, Time.unscaledTime);
             try { StopPlayback(signal); }
             finally
             {
@@ -1071,8 +1227,20 @@ namespace SlopCity
 
         private void AdvanceScreen(Channel signal)
         {
+            ScreenState display = signal.owner;
+            if (display != null)
+            {
+                SnapshotScreenClock(display, Time.unscaledTime);
+                display.virtualClipCompletions++;
+                display.virtualSeconds = 0d;
+                display.virtualUpdatedAt = Time.unscaledTime;
+            }
             StopPlayback(signal);
-            if (signal.owner != null && !signal.owner.screen.IsFeatured) AssignNextPost(signal.owner);
+            if (display != null)
+            {
+                if (!display.screen.IsFeatured) AssignNextPost(display);
+                else ResetVirtualPlayback(display);
+            }
             signal.advance = true;
         }
 
@@ -1323,7 +1491,7 @@ namespace SlopCity
             foreach (ScreenState display in displays) if (display.post == null) AssignNextPost(display);
         }
 
-        private void AssignNextPost(ScreenState display)
+        private void AssignNextPost(ScreenState display, double carriedSeconds = 0d)
         {
             if (!display.screen || channels[2] == null) return;
             ClearPausedVideo(display);
@@ -1339,6 +1507,7 @@ namespace SlopCity
                 display.needsThumbnail = !display.screen.AudioOnly && display.post != null;
                 AssignScreenClip(display, display.screen.FeaturedClipKey,
                     display.post != null ? PostTitle(display.post) : "FEATURED CREATOR BROADCAST");
+                ResetVirtualPlayback(display, carriedSeconds);
                 return;
             }
             if (display.program == null || display.programChannel != display.screen.Channel)
@@ -1370,6 +1539,7 @@ namespace SlopCity
             display.needsThumbnail = !display.screen.AudioOnly && selected != null;
             AssignScreenClip(display, selected != null ? VideoKey(selected) : "archive/" + display.fallback.localFile,
                 selected != null ? PostTitle(selected) : "BUNDLED / " + display.fallback.title);
+            ResetVirtualPlayback(display, carriedSeconds);
         }
 
         private static List<SlopCityTikTokVideo> BuildScreenLoop(List<SlopCityTikTokVideo> available,
@@ -1723,6 +1893,7 @@ namespace SlopCity
                     signal.remote = signal.pendingRemote;
                     signal.currentVideo = signal.pendingVideo;
                     RestorePausedVideo(signal, source);
+                    RestoreVirtualPlayback(signal, source);
 #if UNITY_WEBGL && !UNITY_EDITOR
                     // Track metadata is not valid before Prepare completes. Begin
                     // muted so autoplay can start; Update applies nearby audio.
@@ -1773,7 +1944,7 @@ namespace SlopCity
                 StopPlayback(signal);
                 signal.slideshow = true;
                 signal.photoGeneration++;
-                StartImage(signal, 0);
+                StartImage(signal, VirtualSlideIndex(signal.owner));
             }
             catch (Exception error) { FailChannel(signal, error.Message); }
         }
@@ -1852,7 +2023,7 @@ namespace SlopCity
                     // The device RenderTexture now owns the displayed picture. Keep
                     // no second full-resolution GPU image between slideshow frames.
                     signal.imageIndex = index;
-                    signal.imageElapsed = 0;
+                    signal.imageElapsed = VirtualSlideElapsed(signal.owner);
                     signal.ready = true;
                     signal.loading = false;
                     signal.media = signal.pendingMedia;
@@ -2483,6 +2654,7 @@ namespace SlopCity
 
         private void OnApplicationFocus(bool focused)
         {
+            if (initialized) UpdateScreenClocks();
 #if UNITY_WEBGL && !UNITY_EDITOR
             RefreshMobilePreparationClocks();
 #endif
@@ -2490,12 +2662,14 @@ namespace SlopCity
 #if UNITY_WEBGL && !UNITY_EDITOR
             RefreshMobilePreparationClocks();
 #endif
+            AnchorScreenClocks();
             featuredTickAt = Time.unscaledTime;
             ApplyPlayback();
         }
 
         private void OnApplicationPause(bool suspended)
         {
+            if (initialized) UpdateScreenClocks();
 #if UNITY_WEBGL && !UNITY_EDITOR
             RefreshMobilePreparationClocks();
 #endif
@@ -2503,6 +2677,7 @@ namespace SlopCity
 #if UNITY_WEBGL && !UNITY_EDITOR
             RefreshMobilePreparationClocks();
 #endif
+            AnchorScreenClocks();
             featuredTickAt = Time.unscaledTime;
             ApplyPlayback();
         }
@@ -2513,6 +2688,7 @@ namespace SlopCity
             RefreshMobilePreparationClocks();
 #endif
             if (initialized) SlopCityCityScreen.RegisterActiveScreens(this);
+            AnchorScreenClocks();
             featuredTickAt = Time.unscaledTime;
             ApplyPlayback();
         }
@@ -2642,6 +2818,12 @@ namespace SlopCity
             public bool aimed;
             public bool needsThumbnail, paused;
             public int retiredReleaseAttempts;
+            // Retained independently of a pooled decoder, so each physical
+            // fixture keeps looping while no player can currently see it.
+            public string virtualVideoKey;
+            public double virtualSeconds, virtualDuration;
+            public long virtualClipCompletions;
+            public float virtualUpdatedAt = -1f;
             public string pausedVideoKey;
             public double pausedVideoTime;
             public int pausedVideoGeneration = -1;

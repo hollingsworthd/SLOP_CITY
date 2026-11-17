@@ -90,7 +90,7 @@ class Harness {
   media=Setup(false,out controller,out city,out screen);media.SetMobileCityPriority(true);
   Check(Live()==1&&media.IsPlaying&&!(bool)Field(media,"webCityPriority"),"Desktop retains playing decoder when mobile priority requested");
   city.Aim(true);Check(Live()==1&&media.IsPlaying,"Desktop city path preserves previous allocation policy");
-  Time.unscaledTime=10;Check(city.BindAdmission()==0,"Actual desktop BindSlot keeps previous immediate admission policy");
+  Time.unscaledTime=10;Check(city.BindAdmission()==0&&city.BindStartsImmediately(),"Desktop BindSlot begins preparation in the current interest pass");
   VideoPlayer.DelayPrepare=true;media=Setup(true,out controller,out city,out screen);
   GeometryUtility.Visible=false;Camera.main.transform.forward=Vector3.back;
   var pending=UnityEngine.Object.All.OfType<VideoPlayer>().Single(v=>v);

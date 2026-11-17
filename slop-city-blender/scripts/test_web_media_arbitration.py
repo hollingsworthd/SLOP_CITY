@@ -31,7 +31,7 @@ PAUSE_HARNESS = r'''
 using System; using System.Collections.Generic; using UnityEngine; using UnityEngine.Video;
 namespace UnityEngine {
  public static class Mathf {public static int Min(int left,int right)=>Math.Min(left,right);}
- public static class Time {public static int frameCount;}
+ public static class Time {public static int frameCount;public static float unscaledTime;}
  public static class Debug {public static void LogWarning(string message){}}
  public class Texture {
   public bool released,destroyed;
@@ -56,6 +56,7 @@ public class Harness {
   public SlopCityCityScreen screen=new SlopCityCityScreen();public SlopCityTikTokVideo post;public Channel slot;public int generation=7;
   public bool paused;public string pausedVideoKey;public double pausedVideoTime;
   public int pausedVideoGeneration=-1;
+  public string virtualVideoKey;public double virtualSeconds,virtualDuration;public long virtualClipCompletions;public float virtualUpdatedAt=-1f;
   public Material material=new Material();public RenderTexture texture;public bool needsThumbnail;
  }
  private sealed class Channel {
@@ -71,6 +72,8 @@ public class Harness {
  private static bool TryMediaCleanup(Action action){try{action();return true;}catch{return false;}}
  private bool EnsureScreenTexture(ScreenState display){if(!display.texture)display.texture=new RenderTexture();return true;}
  private float nextScreenUpdate;private int releases;
+ private void SnapshotScreenClock(ScreenState display,float now){display.virtualUpdatedAt=now;}
+ private void ResetVirtualPlayback(ScreenState display){display.virtualSeconds=0d;display.virtualUpdatedAt=Time.unscaledTime;}
  // Decoder retirement substitute: production ReleaseSlot/StopPlayback are checked
  // separately by the source integration assertions below. No player survives it.
  private void ReleaseSlot(Channel channel){releases++;channel.player.time=0;channel.player=null;channel.owner.slot=null;channel.owner=null;}
@@ -206,12 +209,14 @@ def verify_pause_and_decode_budgets(city, catalog, mono, work):
         start = city.index('private static ' + result_type + ' ' + name + '(')
         expressions[name] = city[city.index('=>', start):city.index(';', start) + 1]
     pause = extract_method(city, 'public void SetScreenPaused(')
-    assert pause.index('CapturePausedVideo(display)') < pause.index('ReleaseSlot(display.slot)')
+    assert pause.index('SnapshotScreenClock(display, Time.unscaledTime)') < pause.index('CapturePausedVideo(display)') < pause.index('ReleaseSlot(display.slot)')
     prepare = extract_method(city, 'private void PrepareChannel(')
     assert prepare.index('operation != signal.operation') < prepare.index('RestorePausedVideo(signal, source)')
     assert prepare.index('signal.currentVideo = signal.pendingVideo') < prepare.index('RestorePausedVideo(signal, source)') < prepare.index('ApplyPlayback();')
     assert 'ClearPausedVideo(display);' in extract_method(city, 'private void AssignNextPost(')
-    assert 'AssignNextPost(signal.owner)' in extract_method(city, 'private void AdvanceScreen(')
+    advance = extract_method(city, 'private void AdvanceScreen(')
+    assert 'SnapshotScreenClock(display, Time.unscaledTime);' in advance and 'AssignNextPost(display)' in advance
+    assert 'ResetVirtualPlayback(display);' in extract_method(city, 'public void ResetScreenPlayback(')
     retire = extract_method(city, 'private void ReleaseSlot(')
     assert 'StopPlayback(signal);' in retire and 'if (MobileWebBudget) ReleasePlayback(signal);' in retire
     assert 'new VideoPlayer' not in methods and 'new RenderTexture' not in methods
@@ -284,6 +289,7 @@ public class SlopCityCityScreen {public bool AudioOnly;}
 public static SlopCityCityMedia Instance; private Transform viewer; private SlopCityMediaPlayer loungeMedia;
 public bool MobileWebBudget; private ScreenState desiredAudioOwner; private Channel[] channels=new Channel[1];
 private bool DeferMobileAdmissionsForViewport { get { return false; } }
+private bool Suspended { get { return false; } } private bool manuallyPaused;
 private bool mobileLoungePriority,mobileLoungePriorityRequest; private float mobileLoungePrioritySince;
 public void SetViewer(Transform v){viewer=v;}
 public static void DrawImage(Texture source,RenderTexture destination){}
@@ -294,11 +300,13 @@ public void SampleAim(bool v){RefreshMobileLoungePriority(v);}
 public void CancelPriority(){CANCEL_PRIORITY}
 public void AddCityDecoder(){var session=new GameObject("CityDecoder");channels[0]=new Channel{owner=new ScreenState(),session=session,player=session.AddComponent<VideoPlayer>()};}
 private class ScreenState {public SlopCityCityScreen screen=new SlopCityCityScreen();public Channel slot;public RenderTexture texture=null;public Material material=null;}
-private class Channel {public ScreenState owner;public RenderTexture texture;public Material material;public bool hasScreen,advance,failed;public float nextAttempt;public GameObject session;public VideoPlayer player;}
+private class Channel {public ScreenState owner;public RenderTexture texture;public Material material;public bool hasScreen,advance,failed,started;public float nextAttempt;public GameObject session;public VideoPlayer player;}
 private void ReleaseSlot(Channel channel){if(channel.session)Destroy(channel.session);channel.session=null;channel.player=null;channel.owner=null;}
 private void ReleasePlayback(Channel channel){ReleaseSlot(channel);}
 private bool EnsureScreenTexture(ScreenState display){return true;}
+private void StartChannel(Channel channel){channel.started=true;}
 public float BindAdmission(){var channel=new Channel();BindSlot(channel,new ScreenState());return channel.nextAttempt;}
+public bool BindStartsImmediately(){var channel=new Channel();BindSlot(channel,new ScreenState());return channel.started;}
 ''' .replace('CANCEL_PRIORITY', cancel_priority) + methods + '\n}}'
     compiler = args.mono.parents[1] / 'lib/mono/4.5/mcs.exe'
     with tempfile.TemporaryDirectory(prefix='slop-media-arbitration-') as directory:

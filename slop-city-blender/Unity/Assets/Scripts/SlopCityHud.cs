@@ -25,17 +25,22 @@ namespace SlopCity
         private Text mediaPlayLabel;
         private Text mediaVolumeLabel;
         private Text nowPlaying;
-        private Image[] districtCells;
+        private Image[][] districtBuildings;
         private Text cityProgress;
+        private Text cityMapTitle;
         private Text districtName;
         private Text homeDistance;
         private Text reputation;
         private Text transmission;
         private SlopCityRabbitTrail rabbitTrail;
         private Text cityMediaStatus;
+        private RectTransform cityMap;
         private RectTransform mapPointer;
         private RectTransform cityMapContent;
+        private RectTransform aerialMapWorld;
         private SlopCityCityMapNavigator cityMapNavigator;
+        private SlopCityCityForgeController cityForge;
+        private bool cityMapPausedPresentation;
         private Image teleportBurst;
         private float teleportBurstUntil;
         private GameObject menu;
@@ -315,6 +320,74 @@ namespace SlopCity
                 + "\n" + (input.UseTouchControls ? "Tap USE at the exit door to explore the city" : "E at the exit door to explore the city");
         }
 
+        /// <summary>
+        /// The running HUD keeps its compact lower-left map.  A paused touch
+        /// session cannot safely aim at that control, so the exact same map is
+        /// lifted above the pause card and centered until the player resumes.
+        /// </summary>
+        private void SetCityMapPausePresentation(bool paused)
+        {
+            if (!cityMap || !gameplayLayer || !menu) return;
+            if (cityMapPausedPresentation == paused)
+            {
+                LayoutCityMapPresentation();
+                return;
+            }
+            cityMapPausedPresentation = paused;
+            if (paused)
+            {
+                cityMap.SetParent(menu.transform, false);
+                cityMap.SetAsLastSibling();
+                cityMap.gameObject.SetActive(true);
+                // Opening the pause map deliberately starts at the player,
+                // while a drag thereafter may browse the frontier indefinitely.
+                if (cityMapNavigator) cityMapNavigator.FollowPlayer();
+            }
+            else
+            {
+                cityMap.SetParent(gameplayLayer.transform, false);
+                cityMap.anchorMin = cityMap.anchorMax = cityMap.pivot = Vector2.zero;
+                cityMap.anchoredPosition = new Vector2(32,82);
+                cityMap.sizeDelta = new Vector2(166,194);
+                cityMapContent.localScale = Vector3.one;
+                if (cityMapNavigator) cityMapNavigator.RefreshPresentation();
+                cityMap.GetComponent<Image>().color = new Color(.024f,.043f,.055f,.48f);
+                if (cityMapTitle)
+                {
+                    cityMapTitle.text = "AERIAL MAP  ·  DRAG TO EXPLORE  ·  N ↑";
+                    cityMapTitle.fontSize = 7;
+                    cityMapTitle.rectTransform.sizeDelta = new Vector2(152,22);
+                }
+                if (cityProgress) cityProgress.rectTransform.sizeDelta = new Vector2(155,18);
+                cityMap.gameObject.SetActive(!input || !input.UseTouchControls);
+            }
+            LayoutCityMapPresentation();
+        }
+
+        private void LayoutCityMapPresentation()
+        {
+            if (!cityMap || !cityMapPausedPresentation || !(transform is RectTransform canvas)) return;
+            Rect safe = CanvasSafeFrame(canvas.rect.size);
+            const float mapAspect = 166f / 194f;
+            float width = Mathf.Min(safe.width - 24f, (safe.height - 24f) * mapAspect);
+            width = Mathf.Clamp(width, 150f, input != null && input.UseTouchControls ? 420f : 460f);
+            float height = width / mapAspect;
+            cityMap.anchorMin = cityMap.anchorMax = cityMap.pivot = new Vector2(.5f,.5f);
+            cityMap.anchoredPosition = new Vector2(safe.center.x - canvas.rect.width * .5f,
+                safe.center.y - canvas.rect.height * .5f);
+            cityMap.sizeDelta = new Vector2(width,height);
+            cityMap.GetComponent<Image>().color = new Color(.012f,.027f,.035f,.96f);
+            cityMapContent.localScale = Vector3.one * Mathf.Clamp(width / 166f, 1.15f, 1.75f);
+            if (cityMapNavigator) cityMapNavigator.RefreshPresentation();
+            if (cityMapTitle)
+            {
+                cityMapTitle.text = "AERIAL CITY + SPRAWL  ·  DRAG TO EXPLORE  ·  TAP A STREET TO TRAVEL  ·  N ↑";
+                cityMapTitle.fontSize = input != null && input.UseTouchControls ? 10 : 9;
+                cityMapTitle.rectTransform.sizeDelta = new Vector2(width - 16f,24f);
+            }
+            if (cityProgress) cityProgress.rectTransform.sizeDelta = new Vector2(width - 12f,20f);
+        }
+
         private void StyleGameplayLayer()
         {
             gameplayLayer = new GameObject("VisorTelemetry", typeof(RectTransform));
@@ -392,39 +465,34 @@ namespace SlopCity
 
         private void CreateCityMap()
         {
-            RectTransform map = Panel(gameplayLayer.transform, "CityMap", new Vector2(166,194), new Color(.024f,.043f,.055f,.48f));
-            map.anchorMin = map.anchorMax = map.pivot = Vector2.zero;
-            map.anchoredPosition = new Vector2(32,82);
-            map.GetComponent<Image>().raycastTarget = true;
-            Label(map, "MapTitle", "DRAG MAP  ·  TAP TO JUMP    N ↑", 8, TextAnchor.UpperLeft,
+            cityMap = Panel(gameplayLayer.transform, "CityMap", new Vector2(166,194), new Color(.024f,.043f,.055f,.48f));
+            cityMap.anchorMin = cityMap.anchorMax = cityMap.pivot = Vector2.zero;
+            cityMap.anchoredPosition = new Vector2(32,82);
+            cityMap.GetComponent<Image>().raycastTarget = true;
+            cityMapTitle = Label(cityMap, "MapTitle", "AERIAL MAP  ·  DRAG TO EXPLORE  ·  N ↑", 7, TextAnchor.UpperLeft,
                 new Vector2(0,1), new Vector2(0,1), new Vector2(8,-8), new Vector2(152,22), Muted);
             GameObject viewport = new GameObject("MapViewport", typeof(RectTransform), typeof(RectMask2D));
-            ParentUi(viewport, map);
+            ParentUi(viewport, cityMap);
             RectTransform viewRect = viewport.GetComponent<RectTransform>();
             viewRect.anchorMin = Vector2.zero;
             viewRect.anchorMax = Vector2.one;
             viewRect.offsetMin = new Vector2(6, 30);
             viewRect.offsetMax = new Vector2(-6, -26);
-            cityMapContent = Panel(viewport.transform, "MapContent", new Vector2(248, 248), new Color(0, 0, 0, 0));
+            // A 13 by 13 City Forge window fits inside this content surface.
+            // The navigator rebases that window as the player or a map drag
+            // crosses it, rather than pretending the Sprawl has a map edge.
+            cityMapContent = Panel(viewport.transform, "MapContent", new Vector2(576, 576), new Color(.023f,.037f,.043f,.96f));
             cityMapContent.GetComponent<Image>().raycastTarget = false;
-            districtCells = new Image[9];
-            for (int row = 0; row < 3; row++) for (int col = 0; col < 3; col++)
-            {
-                int index = row * 3 + col;
-                RectTransform cell = Panel(cityMapContent, "Block_" + index, new Vector2(38,38), new Color(.1f,.16f,.19f,.55f));
-                cell.anchoredPosition = new Vector2((col-1)*44,(row-1)*44);
-                districtCells[index] = cell.GetComponent<Image>();
-                districtCells[index].raycastTarget = false;
-                Label(cell, "Label", index == 4 ? "HOME" : (index+1).ToString("00"), 8, TextAnchor.MiddleCenter,
-                    new Vector2(.5f,.5f), new Vector2(.5f,.5f), Vector2.zero, new Vector2(input.UseTouchControls ? 38 : 48,25), Muted);
-            }
             Text pointer = Label(cityMapContent, "PlayerPosition", "▲", 13, TextAnchor.MiddleCenter,
                 new Vector2(.5f,.5f), new Vector2(.5f,.5f), Vector2.zero, new Vector2(20,20), Cream);
             mapPointer = pointer.rectTransform;
-            cityProgress = Label(map, "DistrictProgress", "0 / 9 BLOCKS EXPLORED", 8, TextAnchor.LowerCenter,
-                new Vector2(.5f,0), new Vector2(.5f,0), new Vector2(0,10), new Vector2(155,18), Muted);
-            cityMapNavigator = map.gameObject.AddComponent<SlopCityCityMapNavigator>();
+            cityMapNavigator = cityMap.gameObject.AddComponent<SlopCityCityMapNavigator>();
+            cityMapNavigator.WindowChanged += HandleCityMapWindowChanged;
             cityMapNavigator.Configure(viewRect, cityMapContent, mapPointer, owner);
+            CreateAerialCityMap();
+            mapPointer.SetAsLastSibling();
+            cityProgress = Label(cityMap, "DistrictProgress", "0 / 9 OLD CITY AREAS  ·  SPRAWL", 7, TextAnchor.LowerCenter,
+                new Vector2(.5f,0), new Vector2(.5f,0), new Vector2(0,10), new Vector2(155,18), Muted);
             teleportBurst = Panel(gameplayLayer.transform, "TeleportBurst", Vector2.zero, Color.clear).GetComponent<Image>();
             Stretch(teleportBurst.rectTransform);
             teleportBurst.raycastTarget = false;
@@ -435,21 +503,254 @@ namespace SlopCity
                 Vector2.zero, new Vector2(0,1), new Vector2(32,72), new Vector2(310,34), Muted);
         }
 
+        /// <summary>Draw a rebased aerial window of Old City and the City Forge Sprawl.</summary>
+        private void CreateAerialCityMap()
+        {
+            if (!cityMapContent) return;
+            if (aerialMapWorld) RetireUi(aerialMapWorld.gameObject);
+            aerialMapWorld = Panel(cityMapContent, "AerialCityFabric", cityMapContent.sizeDelta, Color.clear);
+            aerialMapWorld.GetComponent<Image>().raycastTarget = false;
+            DrawAerialSprawl();
+            DrawAerialOldCity();
+        }
+
+        private void HandleCityMapWindowChanged(CityForgeCoord center)
+        {
+            CreateAerialCityMap();
+            if (mapPointer) mapPointer.SetAsLastSibling();
+        }
+
+        /// <summary>Keep the protected core as detailed roof plans and streets.</summary>
+        private void DrawAerialOldCity()
+        {
+            districtBuildings = new Image[9][];
+            if (cityMapNavigator && !cityMapNavigator.WindowContains(new CityForgeCoord(0, 0))) return;
+            Color road = new Color(.055f,.079f,.087f,1f);
+            float[] verticalRoads = { -104.55f, -34.85f, 34.85f, 104.55f };
+            foreach (float worldX in verticalRoads)
+                AddAerialFeature("AerialRoadV_" + worldX, AerialMapPoint(worldX, 8f), new Vector2(4.5f, 78f), road);
+            float[] horizontalRoads = { -70.5f, -23.5f, 23.5f, 70.5f };
+            foreach (float worldZ in horizontalRoads)
+                AddAerialFeature("AerialRoadH_" + worldZ, AerialMapPoint(0f, worldZ), new Vector2(114f, 4.5f), road);
+
+            for (int row = 0; row < 3; row++) for (int column = 0; column < 3; column++)
+            {
+                int index = row * 3 + column;
+                Vector2 centre = AerialDistrictPoint(index, column, row);
+                var roofs = new System.Collections.Generic.List<Image>(4);
+                float leftWidth = 12f + (index % 3) * 1.4f;
+                float rightWidth = 11f + ((index + 1) % 3) * 1.2f;
+                float northWidth = 12f + (index % 2) * 2.2f;
+                roofs.Add(AddAerialBuilding(index, "WestTower", centre + new Vector2(-13f, -5f), new Vector2(leftWidth, 25f)));
+                roofs.Add(AddAerialBuilding(index, "EastTower", centre + new Vector2(13f, -5f), new Vector2(rightWidth, 23f)));
+                roofs.Add(AddAerialBuilding(index, "NorthTower", centre + new Vector2(0f, 13f), new Vector2(northWidth, 13f)));
+                // The retained court/forecourt reads as a real break between
+                // towers rather than a ninth anonymous coloured square.
+                AddAerialFeature("AerialCourt_" + index, centre + new Vector2(0f, -5f), new Vector2(8f, 14f),
+                    new Color(.075f,.117f,.116f,.95f));
+                districtBuildings[index] = roofs.ToArray();
+            }
+        }
+
+        /// <summary>
+        /// The HUD owns only a bounded visual window.  Its chunk coordinates
+        /// rebase during panning, so this never allocates frontier geometry or
+        /// makes a distant map look like a physical streamed chunk.
+        /// </summary>
+        private void DrawAerialSprawl()
+        {
+            CityForgeCoord centre = cityMapNavigator ? cityMapNavigator.WindowCenter : new CityForgeCoord(0, 0);
+            if (!cityForge) cityForge = FindFirstObjectByType<SlopCityCityForgeController>();
+            CityForgeWorldHead head = cityForge ? cityForge.WorldHead : null;
+            string worldSeed = head == null ? string.Empty : head.worldSeed;
+            int radius = SlopCityCityMapNavigator.AerialWindowRadius;
+            for (int x = centre.x - radius; x <= centre.x + radius; x++)
+                for (int z = centre.z - radius; z <= centre.z + radius; z++)
+                {
+                    CityForgeCoord coordinate = new CityForgeCoord(x, z);
+                    if (!SlopCityCityForge.IsBuildable(coordinate)) continue;
+                    CityForgeChunkPlan accepted = null;
+                    CityForgeStrategicChunkSummary summary = null;
+                    if (cityForge)
+                    {
+                        cityForge.AcceptedChunks.TryGetValue(coordinate, out accepted);
+                        cityForge.StrategicChunks.TryGetValue(coordinate, out summary);
+                    }
+                    AddAerialSprawlBlock(coordinate, accepted, summary, worldSeed,
+                        Mathf.Max(Mathf.Abs(x - centre.x), Mathf.Abs(z - centre.z)) > 3);
+                }
+        }
+
+        private void AddAerialSprawlBlock(CityForgeCoord coordinate, CityForgeChunkPlan accepted,
+            CityForgeStrategicChunkSummary summary, string worldSeed, bool distant)
+        {
+            float chunk = SlopCityCityMapNavigator.ChunkLocalSize;
+            float worldChunk = SlopCityCityForge.ChunkSizeMeters;
+            Vector2 centre = AerialMapPoint((coordinate.x + .5f) * worldChunk, (coordinate.z + .5f) * worldChunk);
+            bool starter = SlopCityCityForge.IsStarterRing(coordinate);
+            int variant = AerialSprawlVariant(coordinate, worldSeed);
+            Color ground = starter
+                ? new Color(.095f, .18f, .18f, .98f)
+                : new Color(.055f + (variant % 3) * .008f, .092f + (variant % 4) * .006f, .10f + (variant % 2) * .01f, .96f);
+            AddAerialFeature("AerialSprawlParcel_" + coordinate.x + "_" + coordinate.z, centre,
+                Vector2.one * (chunk - .8f), ground);
+            Color road = starter ? new Color(.21f, .34f, .34f, 1f) : new Color(.12f, .18f, .19f, 1f);
+            float lane = starter ? 3.0f : 2.45f;
+            AddAerialFeature("AerialSprawlAvenueEW_" + coordinate.x + "_" + coordinate.z, centre,
+                new Vector2(chunk - 1.3f, lane), road);
+            AddAerialFeature("AerialSprawlAvenueNS_" + coordinate.x + "_" + coordinate.z, centre,
+                new Vector2(lane, chunk - 1.3f), road);
+
+            int massCount = distant ? 1 : 4;
+            if (summary != null && summary.buildingCount > 0) massCount = Mathf.Clamp(summary.buildingCount, 1, distant ? 2 : 4);
+            for (int index = 0; index < massCount; index++)
+            {
+                Vector2 offset = AerialSprawlRoofOffset(index, chunk);
+                float width = chunk * (.18f + ((variant + index * 5) % 4) * .018f);
+                float depth = chunk * (.21f + ((variant / 3 + index * 7) % 4) * .017f);
+                Color roof = AerialSprawlRoofColor(variant + index, starter, false);
+                AddAerialFeature("AerialSprawlBuilding_" + coordinate.x + "_" + coordinate.z + "_" + index,
+                    centre + offset, new Vector2(width, depth), roof);
+            }
+            if (accepted != null) DrawAcceptedAerialDetails(coordinate, accepted, variant);
+        }
+
+        private void DrawAcceptedAerialDetails(CityForgeCoord coordinate, CityForgeChunkPlan plan, int variant)
+        {
+            if (plan == null) return;
+            float worldChunk = SlopCityCityForge.ChunkSizeMeters;
+            float cell = SlopCityCityForge.CellSizeMeters;
+            int roads = 0;
+            foreach (CityForgeRoad road in plan.roads ?? new System.Collections.Generic.List<CityForgeRoad>())
+            {
+                if (road == null || roads++ >= 18 || !SlopCityCityForge.RoadHasIslandGround(plan, road)) continue;
+                float x = coordinate.x * worldChunk + (road.cellX + .5f) * cell;
+                float z = coordinate.z * worldChunk + (road.cellZ + .5f) * cell;
+                bool horizontal = road.direction == CityForgeDirection.North || road.direction == CityForgeDirection.South;
+                if (road.direction == CityForgeDirection.North) z += cell * .5f;
+                else if (road.direction == CityForgeDirection.South) z -= cell * .5f;
+                else if (road.direction == CityForgeDirection.East) x += cell * .5f;
+                else x -= cell * .5f;
+                AddAerialFeature("AerialAcceptedStreet_" + coordinate.x + "_" + coordinate.z + "_" + roads,
+                    AerialMapPoint(x, z), horizontal ? new Vector2(cell * .5f, 1.7f) : new Vector2(1.7f, cell * .5f),
+                    new Color(.42f, .58f, .55f, .95f));
+            }
+            int buildings = 0;
+            foreach (CityForgeBuilding building in plan.buildings ?? new System.Collections.Generic.List<CityForgeBuilding>())
+            {
+                if (building == null || buildings >= 12) continue;
+                CityForgeParcel parcel = null;
+                foreach (CityForgeParcel candidate in plan.parcels ?? new System.Collections.Generic.List<CityForgeParcel>())
+                    if (candidate != null && candidate.id == building.parcelId) { parcel = candidate; break; }
+                if (parcel == null || parcel.cells == null || parcel.cells.Count == 0) continue;
+                float sumX = 0f, sumZ = 0f;
+                foreach (int item in parcel.cells)
+                {
+                    if (item < 0 || item >= SlopCityCityForge.GridSize * SlopCityCityForge.GridSize) continue;
+                    sumX += item % SlopCityCityForge.GridSize + .5f;
+                    sumZ += item / SlopCityCityForge.GridSize + .5f;
+                }
+                float count = parcel.cells.Count;
+                if (count < 1f) continue;
+                float span = Mathf.Clamp(Mathf.Sqrt(count) * cell * .75f * SlopCityCityMapNavigator.MapScale, 2.6f, 10.5f);
+                AddAerialFeature("AerialAcceptedBuilding_" + coordinate.x + "_" + coordinate.z + "_" + buildings++,
+                    AerialMapPoint(coordinate.x * worldChunk + sumX / count * cell,
+                        coordinate.z * worldChunk + sumZ / count * cell), new Vector2(span, span),
+                    AerialSprawlRoofColor(variant + buildings, SlopCityCityForge.IsStarterRing(coordinate), true));
+            }
+        }
+
+        private static Vector2 AerialSprawlRoofOffset(int index, float chunk)
+        {
+            float offset = chunk * .245f;
+            switch (index % 4)
+            {
+                case 0: return new Vector2(-offset, offset);
+                case 1: return new Vector2(offset, offset);
+                case 2: return new Vector2(-offset, -offset);
+                default: return new Vector2(offset, -offset);
+            }
+        }
+
+        private static int AerialSprawlVariant(CityForgeCoord coordinate, string seed)
+        {
+            unchecked
+            {
+                int hash = coordinate.x * 73856093 ^ coordinate.z * 19349663;
+                if (!string.IsNullOrEmpty(seed))
+                    for (int index = 0; index < seed.Length; index++) hash = hash * 31 + seed[index];
+                return hash & int.MaxValue;
+            }
+        }
+
+        private static Color AerialSprawlRoofColor(int variant, bool starter, bool accepted)
+        {
+            Color roof = new Color(.14f + (variant % 4) * .018f, .20f + (variant % 3) * .014f,
+                .21f + (variant % 5) * .01f, .98f);
+            if (starter) roof = Color.Lerp(roof, new Color(.29f, .53f, .50f, 1f), .36f);
+            if (accepted) roof = Color.Lerp(roof, new Color(.46f, .77f, .70f, 1f), .62f);
+            return roof;
+        }
+
+        private Vector2 AerialDistrictPoint(int index, int column, int row)
+        {
+            if (owner != null)
+                foreach (SlopCityDistrict district in owner.Districts)
+                    if (district && district.Index == index)
+                        return cityMapNavigator ? cityMapNavigator.WorldToLocal(district.Center) : AerialMapPoint(district.Center.x, district.Center.z);
+            return AerialMapPoint((column - 1) * SlopCityDenseLayout.ColumnPitch,
+                (row - 1) * SlopCityDenseLayout.RowPitch);
+        }
+
+        private Vector2 AerialMapPoint(float worldX, float worldZ)
+            => cityMapNavigator ? cityMapNavigator.WorldToLocal(new Vector3(worldX, 0f, worldZ))
+                : new Vector2(worldX * SlopCityCityMapNavigator.MapScale, worldZ * SlopCityCityMapNavigator.MapScale);
+
+        private Image AddAerialFeature(string name, Vector2 position, Vector2 size, Color color)
+        {
+            RectTransform feature = Panel(aerialMapWorld ? aerialMapWorld : cityMapContent, name, size, color);
+            feature.anchoredPosition = position;
+            Image image = feature.GetComponent<Image>();
+            image.raycastTarget = false;
+            return image;
+        }
+
+        private Image AddAerialBuilding(int district, string name, Vector2 position, Vector2 size)
+        {
+            Image roof = AddAerialFeature("AerialBuilding_" + district + "_" + name, position, size,
+                AerialRoofColor(district, false, false));
+            RectTransform rooftop = Panel(roof.transform, "RooftopPlant", new Vector2(Mathf.Max(2f,size.x - 3f), 2f),
+                new Color(.20f,.29f,.30f,.78f));
+            rooftop.anchoredPosition = new Vector2(0f, size.y * .18f);
+            rooftop.GetComponent<Image>().raycastTarget = false;
+            return roof;
+        }
+
+        private static Color AerialRoofColor(int index, bool visited, bool current)
+        {
+            Color roof = new Color(.105f + (index % 3) * .012f, .145f + (index % 2) * .012f, .155f + (index % 3) * .01f, .98f);
+            if (visited) roof = Color.Lerp(roof, new Color(.18f,.34f,.35f,1f), .45f);
+            if (current) roof = Color.Lerp(roof, new Color(.40f,.72f,.74f,1f), .78f);
+            return roof;
+        }
+
         public void RenderCity(SlopCityFirstPerson player)
         {
-            if (!initialized || districtCells == null) return;
+            if (!initialized || districtBuildings == null) return;
             Vector3 position = player.transform.position;
             foreach (SlopCityDistrict district in player.Districts)
             {
                 if (!district) continue;
                 int index = district.Row * 3 + district.Column;
-                if (index < 0 || index >= districtCells.Length) continue;
+                if (index < 0 || index >= districtBuildings.Length) continue;
                 bool current = district.ContainsStreetPoint(position);
-                districtCells[index].color = current ? new Color(.26f,.40f,.45f,.8f)
-                    : player.HasVisited(index) ? new Color(.13f,.25f,.29f,.6f) : new Color(.1f,.16f,.19f,.55f);
+                Image[] roofs = districtBuildings[index];
+                if (roofs != null)
+                    foreach (Image roof in roofs)
+                        if (roof) roof.color = AerialRoofColor(index, player.HasVisited(index), current);
             }
             if (cityMapNavigator) cityMapNavigator.SyncPlayer(position, player.transform.eulerAngles.y);
-            string progress = player.VisitedBlockCount + " / 9 BLOCKS EXPLORED";
+            string progress = player.VisitedBlockCount + " / 9 OLD CITY AREAS  ·  SPRAWL";
             if (cityProgress.text != progress) cityProgress.text = progress;
             string blockName = player.CurrentDistrictName;
             if (districtName.text != blockName) districtName.text = blockName;
@@ -467,6 +768,7 @@ namespace SlopCity
             if (!initialized) return;
             sourceBrowser.Hide();
             menuStarted = hasStarted;
+            SetCityMapPausePresentation(visible && hasStarted);
             menu.SetActive(visible);
             sourceCard.SetActive(false);
             menuHeading.text = hasStarted ? "CONNECTION PAUSED" : "WELCOME HOME, DANIEL";
@@ -653,6 +955,7 @@ namespace SlopCity
                 lastCanvasSize = desktopSize;
                 lastSafeArea = safeArea;
                 LayoutDesktopCards(desktopSize);
+                LayoutCityMapPresentation();
                 return;
             }
             bool portrait = Screen.height > Screen.width;
@@ -681,6 +984,7 @@ namespace SlopCity
             LayoutMobileGuidance();
             LayoutMobileMenu(safeFrame,portrait);
             LayoutMobileSource(safeFrame);
+            LayoutCityMapPresentation();
             if (touchControls && touchControls.TryGetComponent(out SlopCityMobileControls mobileControls))
                 mobileControls.RelayoutFromHud();
         }
@@ -1046,16 +1350,22 @@ namespace SlopCity
     /// <summary>Pans the district map and teleports the player when tapped.</summary>
     internal sealed class SlopCityCityMapNavigator : MonoBehaviour, IPointerDownHandler, IPointerUpHandler, IDragHandler
     {
-        private const float WorldMinX = -111f, WorldMaxX = 111f, MapOriginZ = 8f;
-        private const float WorldMinZ = -67f, WorldMaxZ = 83f;
-        private const float MapScaleX = .535f, MapScaleZ = .792f;
+        /// <summary>A bounded visual window that rebases instead of ending the frontier.</summary>
+        internal const int AerialWindowRadius = 6;
+        internal const float MapScale = .5f;
+        internal const float ChunkLocalSize = SlopCityCityForge.ChunkSizeMeters * MapScale;
         private const float DragThresholdPixels = 14f;
+        private const int RebaseAtChunkDistance = 3;
 
         private SlopCityFirstPerson player;
         private RectTransform viewport, content, pointer;
         private Vector2 pan, pressScreen;
         private bool dragging, userPanning;
-        private float releaseFollowAt;
+        private float presentationScale = 1f;
+        private CityForgeCoord windowCenter = new CityForgeCoord(0, 0);
+
+        internal event System.Action<CityForgeCoord> WindowChanged;
+        internal CityForgeCoord WindowCenter { get { return windowCenter; } }
 
         public void Configure(RectTransform view, RectTransform mapContent, RectTransform playerMarker, SlopCityFirstPerson owner)
         {
@@ -1063,20 +1373,45 @@ namespace SlopCity
             content = mapContent;
             pointer = playerMarker;
             player = owner;
+            presentationScale = ContentScale;
         }
 
         public void SyncPlayer(Vector3 world, float heading)
         {
             if (!content || !pointer || !viewport) return;
+            if (!userPanning)
+            {
+                SetWindowCenter(WorldToChunk(world));
+                Vector2 follow = WorldToLocal(world);
+                pan = ClampPan(-follow * ContentScale);
+                content.anchoredPosition = pan;
+            }
             Vector2 local = WorldToLocal(world);
             pointer.anchoredPosition = local;
             pointer.localRotation = Quaternion.Euler(0, 0, -heading);
-            if (userPanning && Time.unscaledTime >= releaseFollowAt) userPanning = false;
-            if (!userPanning)
-            {
-                pan = ClampPan(-local);
-                content.anchoredPosition = pan;
-            }
+        }
+
+        /// <summary>Opening the pause map recentres it; a subsequent drag remains player-controlled.</summary>
+        public void FollowPlayer()
+        {
+            if (!player || !content) return;
+            userPanning = false;
+            SetWindowCenter(WorldToChunk(player.transform.position));
+            Vector2 local = WorldToLocal(player.transform.position);
+            pan = ClampPan(-local * ContentScale);
+            content.anchoredPosition = pan;
+        }
+
+        /// <summary>Preserve the visible world point when the pause presentation changes scale.</summary>
+        public void RefreshPresentation()
+        {
+            if (!content) return;
+            float scale = ContentScale;
+            if (userPanning && presentationScale > .001f) pan *= scale / presentationScale;
+            presentationScale = scale;
+            if (!userPanning) { FollowPlayer(); return; }
+            pan = ClampPan(pan);
+            content.anchoredPosition = pan;
         }
 
         public void OnPointerDown(PointerEventData e)
@@ -1085,7 +1420,6 @@ namespace SlopCity
             pressScreen = e.position;
             dragging = false;
             userPanning = true;
-            releaseFollowAt = float.PositiveInfinity;
         }
 
         public void OnDrag(PointerEventData e)
@@ -1094,35 +1428,106 @@ namespace SlopCity
             pan += e.delta;
             pan = ClampPan(pan);
             content.anchoredPosition = pan;
+            RebaseForPan();
         }
 
         public void OnPointerUp(PointerEventData e)
         {
             if (e.button != PointerEventData.InputButton.Left) return;
-            if (!dragging) TryTeleport(e);
-            releaseFollowAt = Time.unscaledTime + 4f;
+            if (!dragging && !TryTeleport(e)) FollowPlayer();
         }
 
-        private void TryTeleport(PointerEventData e)
+        private bool TryTeleport(PointerEventData e)
         {
-            if (!player || player.IsPaused || player.IsSeated) return;
+            if (!player || player.IsSeated || !viewport
+                || !RectTransformUtility.RectangleContainsScreenPoint(viewport, e.position, e.pressEventCamera)) return false;
             SlopCitySandbox sandbox = player.Sandbox;
-            if (sandbox && (sandbox.IsDriving || sandbox.IsResting || sandbox.IsTravelling)) return;
-            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(content, e.position, e.pressEventCamera, out Vector2 local)) return;
-            float worldX = Mathf.Clamp(local.x / MapScaleX, WorldMinX, WorldMaxX);
-            float worldZ = Mathf.Clamp(local.y / MapScaleZ + MapOriginZ, WorldMinZ, WorldMaxZ);
-            Vector3 probe = new Vector3(worldX, 260f, worldZ);
+            if (sandbox && (sandbox.IsDriving || sandbox.IsResting || sandbox.IsTravelling)) return false;
+            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(content, e.position, e.pressEventCamera, out Vector2 local)) return false;
+            Vector3 mapped = LocalToWorld(local);
+            Vector3 probe = new Vector3(mapped.x, 260f, mapped.z);
             if (!Physics.Raycast(probe, Vector3.down, out RaycastHit hit, 320f, ~0, QueryTriggerInteraction.Ignore)
-                || hit.normal.y <= .5f) return;
+                || hit.normal.y <= .5f) return false;
+            bool resumeAfterTravel = player.IsPaused;
             player.TeleportWithEffect(hit.point, player.transform.eulerAngles.y);
+            // The centered pause map is the touch-safe travel control. A valid
+            // destination is an explicit travel action, so return to the game
+            // immediately instead of leaving a touch player behind the modal.
+            if (resumeAfterTravel) player.PlayOrResume();
+            return true;
         }
 
-        private static Vector2 WorldToLocal(Vector3 world) =>
-            new Vector2(world.x * MapScaleX, (world.z - MapOriginZ) * MapScaleZ);
+        internal Vector2 WorldToLocal(Vector3 world)
+        {
+            Vector2 origin = ChunkCentreWorld(windowCenter);
+            return new Vector2((world.x - origin.x) * MapScale, (world.z - origin.y) * MapScale);
+        }
+
+        internal bool WindowContains(CityForgeCoord coordinate)
+        {
+            return System.Math.Abs((long)coordinate.x - windowCenter.x) <= AerialWindowRadius
+                && System.Math.Abs((long)coordinate.z - windowCenter.z) <= AerialWindowRadius;
+        }
+
+        private void RebaseForPan()
+        {
+            if (!content) return;
+            Vector2 localCentre = -pan / ContentScale;
+            int shiftX = Mathf.RoundToInt(localCentre.x / ChunkLocalSize);
+            int shiftZ = Mathf.RoundToInt(localCentre.y / ChunkLocalSize);
+            if (Mathf.Abs(shiftX) < RebaseAtChunkDistance && Mathf.Abs(shiftZ) < RebaseAtChunkDistance) return;
+            CityForgeCoord before = windowCenter;
+            SetWindowCenter(new CityForgeCoord(ClampCoordinate((long)before.x + shiftX), ClampCoordinate((long)before.z + shiftZ)));
+            int movedX = windowCenter.x - before.x, movedZ = windowCenter.z - before.z;
+            if (movedX == 0 && movedZ == 0) return;
+            pan += new Vector2(movedX * ChunkLocalSize, movedZ * ChunkLocalSize) * ContentScale;
+            pan = ClampPan(pan);
+            content.anchoredPosition = pan;
+        }
+
+        private void SetWindowCenter(CityForgeCoord requested)
+        {
+            CityForgeCoord next = new CityForgeCoord(ClampCoordinate(requested.x), ClampCoordinate(requested.z));
+            if (next.Equals(windowCenter)) return;
+            windowCenter = next;
+            WindowChanged?.Invoke(windowCenter);
+        }
+
+        private static int ClampCoordinate(long value)
+        {
+            return (int)System.Math.Max(SlopCityCityForge.MinimumChunkCoordinate,
+                System.Math.Min(SlopCityCityForge.MaximumChunkCoordinate, value));
+        }
+
+        private static CityForgeCoord WorldToChunk(Vector3 world)
+        {
+            return new CityForgeCoord(Mathf.FloorToInt(world.x / SlopCityCityForge.ChunkSizeMeters),
+                Mathf.FloorToInt(world.z / SlopCityCityForge.ChunkSizeMeters));
+        }
+
+        private static Vector2 ChunkCentreWorld(CityForgeCoord coordinate)
+        {
+            float half = SlopCityCityForge.ChunkSizeMeters * .5f;
+            return new Vector2(coordinate.x * SlopCityCityForge.ChunkSizeMeters + half,
+                coordinate.z * SlopCityCityForge.ChunkSizeMeters + half);
+        }
+
+        private Vector3 LocalToWorld(Vector2 local)
+        {
+            Vector2 origin = ChunkCentreWorld(windowCenter);
+            return new Vector3(origin.x + local.x / MapScale, 0f, origin.y + local.y / MapScale);
+        }
+
+        private float ContentScale
+        {
+            get { return content ? Mathf.Max(.01f, Mathf.Abs(content.localScale.x)) : 1f; }
+        }
 
         private Vector2 ClampPan(Vector2 value)
         {
-            Vector2 extent = (content.sizeDelta - viewport.rect.size) * .5f;
+            Vector2 scaledContent = Vector2.Scale(content.rect.size,
+                new Vector2(Mathf.Abs(content.localScale.x), Mathf.Abs(content.localScale.y)));
+            Vector2 extent = (scaledContent - viewport.rect.size) * .5f;
             extent.x = Mathf.Max(0f, extent.x);
             extent.y = Mathf.Max(0f, extent.y);
             return new Vector2(Mathf.Clamp(value.x, -extent.x, extent.x), Mathf.Clamp(value.y, -extent.y, extent.y));
