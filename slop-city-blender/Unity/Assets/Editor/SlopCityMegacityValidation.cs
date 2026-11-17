@@ -319,10 +319,13 @@ namespace SlopCity.Editor
         private static void ValidateCrowd(Report report, SlopCityCrowd crowd, Scene scene)
         {
             report.population = crowd.PopulationCount;
+            // Saved-scene validation runs before gameplay advances the crowd
+            // simulation.  This transient diagnostic can therefore be zero on
+            // a clean batch build; RunSmoke owns the post-simulation movement
+            // assertion (including its elapsed-frame evidence).
             report.initialMoving = crowd.MovingCount;
             report.Check(crowd.enabled && crowd.gameObject.activeInHierarchy && report.population >= 400,
                 "The saved streets require at least 400 active residents in the shared population controller.");
-            report.Check(report.initialMoving >= report.population / 2, "At least half of the initial population must be moving through the city.");
             var roles = new HashSet<SlopCityNpcRole>();
             var districts = new HashSet<int>();
             for (int index = 0; index < report.population; index++)
