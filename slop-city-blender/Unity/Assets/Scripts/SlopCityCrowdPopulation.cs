@@ -32,6 +32,14 @@ namespace SlopCity
         private List<InteriorHome> interiorHomes=new List<InteriorHome>();
         private Dictionary<long,int> homeLookup=new Dictionary<long,int>();
         private readonly Collider[] populationOverlaps=new Collider[24];
+        // City Forge density is a sparse virtual census. It must never inflate
+        // the legacy Old City resident registry or its 5,000-record guard.
+        private SlopCitySprawlPopulationCensus sprawlCensus;
+        private readonly List<CityForgeChunkPlan> sprawlAcceptedPlans=new List<CityForgeChunkPlan>();
+        private readonly List<SlopCitySprawlTransitStop> sprawlTransitStops=new List<SlopCitySprawlTransitStop>();
+        private long sprawlCensusRevision=long.MinValue;
+        private int sprawlCensusPlanCount=-1;
+        private float sprawlRoutineHour=float.NaN;
         private int activeCount,coarseCursor,admissionCursor,presentationSerial;
         private bool expandedPopulation,localAgentsInitialized;
         private float nextPopulationDiscovery;
@@ -51,6 +59,48 @@ namespace SlopCity
         public int MaximumObservedNeighbourVisits {get;private set;}
         public int MaximumObservedNeighbourCandidates {get;private set;}
         public int WholePeopleDeferred {get;private set;}
+        public SlopCitySprawlPopulationCensus SprawlCensus=>sprawlCensus;
+        public long SprawlLogicalSmithCount=>sprawlCensus==null?0:sprawlCensus.LogicalSmithCount;
+        public long SprawlLogicalLadyInRedCount=>sprawlCensus==null?0:sprawlCensus.LogicalLadyInRedCount;
+        public long SprawlLogicalPopulationCount=>sprawlCensus==null?0:sprawlCensus.LogicalPopulationCount;
+
+        /// <summary>Accepts only a complete authoritative sparse-world snapshot, never a nearby stream page.</summary>
+        public void ConfigureSprawlPopulation(IEnumerable<CityForgeChunkPlan> acceptedPlans)
+        {
+            sprawlAcceptedPlans.Clear();
+            foreach(CityForgeChunkPlan plan in acceptedPlans??Array.Empty<CityForgeChunkPlan>())if(plan!=null)sprawlAcceptedPlans.Add(plan.Clone());
+            RebuildSprawlCensus();
+        }
+
+        /// <summary>Only a physical transit owner may submit verified built stops.</summary>
+        public void SetSprawlTransitStops(IEnumerable<SlopCitySprawlTransitStop> stops)
+        {
+            sprawlTransitStops.Clear();
+            foreach(SlopCitySprawlTransitStop stop in stops??Array.Empty<SlopCitySprawlTransitStop>())if(stop!=null)sprawlTransitStops.Add(stop.Clone());
+            if(sprawlAcceptedPlans.Count>0)RebuildSprawlCensus();
+        }
+
+        /// <summary>Day/night ownership may drive all routines with its in-game hour.</summary>
+        public void SetSprawlRoutineHour(float hour){sprawlRoutineHour=Mathf.Repeat(hour,24f);}
+
+        /// <summary>Returns a bounded presentational slice, not NPC GameObjects.</summary>
+        public void GetSprawlCommutesNear(Vector3 origin,float radius,int maximum,List<SlopCitySprawlCommute> output)
+        {
+            if(output==null)throw new ArgumentNullException(nameof(output));
+            if(sprawlCensus==null){output.Clear();return;}
+            sprawlCensus.GetCommutesNear(origin,radius,maximum,CurrentSprawlRoutineHour,output);
+        }
+
+        public bool TryGetSprawlRoutine(string virtualResidentId,out SlopCitySprawlRoutine routine)
+        {
+            routine=null;return sprawlCensus!=null&&sprawlCensus.TryGetRoutine(virtualResidentId,out routine);
+        }
+        public bool TryGetSprawlCurrentCommute(string virtualResidentId,out SlopCitySprawlCommute commute)
+        {
+            commute=null;return sprawlCensus!=null&&sprawlCensus.TryGetCurrentCommute(virtualResidentId,CurrentSprawlRoutineHour,out commute);
+        }
+        private float CurrentSprawlRoutineHour=>float.IsNaN(sprawlRoutineHour)?Mathf.Repeat(simulationTime/30f,24f):sprawlRoutineHour;
+        private void RebuildSprawlCensus(){sprawlCensus=SlopCitySprawlPopulationCensus.Build(sprawlAcceptedPlans,sprawlTransitStops);}
         public int GetResidentId(int index){EnsureAgents();return index>=0&&index<residents.Length?residents[index].seed.residentId:0;}
         public int FindResident(int stableId){EnsureAgents();return residentIds.TryGetValue(stableId,out int index)?index:-1;}
         public bool IsResidentDetailed(int index)=>ActiveResident(index)!=null;
@@ -66,6 +116,7 @@ namespace SlopCity
         {
             residents=Array.Empty<Resident>();residentSlots=Array.Empty<int>();presentationStamp=Array.Empty<int>();residentIds.Clear();
             interiorHomes.Clear();homeLookup.Clear();rememberedCooldowns.Clear();expandedPopulation=localAgentsInitialized=false;activeCount=0;simulationTime=0;populationDiscoveryFailures=0;nextPopulationDiscovery=0;
+            sprawlCensus=null;sprawlAcceptedPlans.Clear();sprawlTransitStops.Clear();sprawlCensusRevision=long.MinValue;sprawlCensusPlanCount=-1;sprawlRoutineHour=float.NaN;
         }
         private SlopCityNpcSeed NormalizedSeed(SlopCityNpcSeed seed,bool red)
         {
@@ -122,6 +173,7 @@ namespace SlopCity
         }
         private void TryPrepareExpandedPopulation()
         {
+            TryPrepareSprawlCensus();
             if(expandedPopulation||!Application.isPlaying||populationDiscoveryFailures>=MaximumPopulationDiscoveryAttempts||Time.unscaledTime<nextPopulationDiscovery)return;
             nextPopulationDiscovery=Time.unscaledTime+1;
             SlopCityBuildingWorld world=GetComponentInParent<SlopCityBuildingWorld>();
@@ -134,6 +186,18 @@ namespace SlopCity
                 // Keep the authored registry usable and stop retrying a permanently failed expansion.
                 Debug.LogWarning("Additional population unavailable (attempt "+populationDiscoveryFailures+"/"+MaximumPopulationDiscoveryAttempts+"): "+error.GetType().Name,this);
             }
+        }
+
+        private void TryPrepareSprawlCensus()
+        {
+            SlopCityCityForgeController controller=FindFirstObjectByType<SlopCityCityForgeController>();
+            CityForgeWorldHead head=controller==null?null:controller.WorldHead;
+            // Only an explicitly complete index may establish all-world counts.
+            // A hosted neighborhood page deliberately remains data-only here.
+            if(controller==null||head==null||!head.indexIsComplete||head.changedChunks==null||controller.AcceptedChunks.Count!=head.changedChunks.Count)return;
+            if(sprawlCensus!=null&&sprawlCensusRevision==head.activeWorldRevision&&sprawlCensusPlanCount==controller.AcceptedChunks.Count)return;
+            sprawlCensusRevision=head.activeWorldRevision;sprawlCensusPlanCount=controller.AcceptedChunks.Count;
+            ConfigureSprawlPopulation(controller.AcceptedChunks.Values);
         }
         /// <summary>One registry expansion; no extra meshes/materials/physics objects are allocated per resident.</summary>
         public void PreparePopulation(SlopCityBuildingWorld world)

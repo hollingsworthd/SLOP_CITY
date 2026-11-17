@@ -339,8 +339,8 @@ namespace SlopCity
                 cityMap.SetParent(menu.transform, false);
                 cityMap.SetAsLastSibling();
                 cityMap.gameObject.SetActive(true);
-                // Opening the pause map deliberately starts at the player,
-                // while a drag thereafter may browse the frontier indefinitely.
+                // Opening the pause map deliberately starts at the player;
+                // a drag may survey the growing island, never an endless city.
                 if (cityMapNavigator) cityMapNavigator.FollowPlayer();
             }
             else
@@ -354,7 +354,7 @@ namespace SlopCity
                 cityMap.GetComponent<Image>().color = new Color(.024f,.043f,.055f,.48f);
                 if (cityMapTitle)
                 {
-                    cityMapTitle.text = "AERIAL MAP  ·  DRAG TO EXPLORE  ·  N ↑";
+                    cityMapTitle.text = "AERIAL ISLAND CITY  ·  DRAG TO EXPLORE  ·  N ↑";
                     cityMapTitle.fontSize = 7;
                     cityMapTitle.rectTransform.sizeDelta = new Vector2(152,22);
                 }
@@ -381,7 +381,7 @@ namespace SlopCity
             if (cityMapNavigator) cityMapNavigator.RefreshPresentation();
             if (cityMapTitle)
             {
-                cityMapTitle.text = "AERIAL CITY + SPRAWL  ·  DRAG TO EXPLORE  ·  TAP A STREET TO TRAVEL  ·  N ↑";
+                cityMapTitle.text = "AERIAL ISLAND CITY  ·  DRAG TO EXPLORE  ·  TAP BUILT LAND  ·  N ↑";
                 cityMapTitle.fontSize = input != null && input.UseTouchControls ? 10 : 9;
                 cityMapTitle.rectTransform.sizeDelta = new Vector2(width - 16f,24f);
             }
@@ -469,7 +469,7 @@ namespace SlopCity
             cityMap.anchorMin = cityMap.anchorMax = cityMap.pivot = Vector2.zero;
             cityMap.anchoredPosition = new Vector2(32,82);
             cityMap.GetComponent<Image>().raycastTarget = true;
-            cityMapTitle = Label(cityMap, "MapTitle", "AERIAL MAP  ·  DRAG TO EXPLORE  ·  N ↑", 7, TextAnchor.UpperLeft,
+            cityMapTitle = Label(cityMap, "MapTitle", "AERIAL ISLAND CITY  ·  DRAG TO EXPLORE  ·  TAP BUILT LAND  ·  N ↑", 7, TextAnchor.UpperLeft,
                 new Vector2(0,1), new Vector2(0,1), new Vector2(8,-8), new Vector2(152,22), Muted);
             GameObject viewport = new GameObject("MapViewport", typeof(RectTransform), typeof(RectMask2D));
             ParentUi(viewport, cityMap);
@@ -479,10 +479,9 @@ namespace SlopCity
             viewRect.offsetMin = new Vector2(6, 30);
             viewRect.offsetMax = new Vector2(-6, -26);
             // A 13 by 13 City Forge window fits inside this content surface.
-            // The navigator rebases that window as the player or a map drag
-            // crosses it, rather than pretending the Sprawl has a map edge.
-            // Keep the frontier grid as a quiet orientation cue rather than a
-            // high-contrast checkerboard behind the aerial streets and roofs.
+            // The navigator can follow a growing island, but it clamps map
+            // exploration to the accepted coastline rather than implying an
+            // endless pre-built city beyond the water.
             cityMapContent = Panel(viewport.transform, "MapContent", new Vector2(576, 576), new Color(.047f,.071f,.077f,.96f));
             cityMapContent.GetComponent<Image>().raycastTarget = false;
             Text pointer = Label(cityMapContent, "PlayerPosition", "▲", 13, TextAnchor.MiddleCenter,
@@ -581,9 +580,8 @@ namespace SlopCity
         }
 
         /// <summary>
-        /// The HUD owns only a bounded visual window.  Its chunk coordinates
-        /// rebase during panning, so this never allocates frontier geometry or
-        /// makes a distant map look like a physical streamed chunk.
+        /// Draw only the accepted island inside the bounded display window.
+        /// Water stays empty until the player has actually reclaimed ground.
         /// </summary>
         private void DrawAerialSprawl()
         {
@@ -598,59 +596,55 @@ namespace SlopCity
                     CityForgeCoord coordinate = new CityForgeCoord(x, z);
                     if (!SlopCityCityForge.IsBuildable(coordinate)) continue;
                     CityForgeChunkPlan accepted = null;
-                    CityForgeStrategicChunkSummary summary = null;
                     if (cityForge)
                     {
                         cityForge.AcceptedChunks.TryGetValue(coordinate, out accepted);
-                        cityForge.StrategicChunks.TryGetValue(coordinate, out summary);
                     }
-                    AddAerialSprawlBlock(coordinate, accepted, summary, worldSeed,
-                        Mathf.Max(Mathf.Abs(x - centre.x), Mathf.Abs(z - centre.z)) > 3);
+                    bool hasGround = accepted != null && accepted.groundCells != null && accepted.groundCells.Count > 0;
+                    // Strategic summaries deliberately omit the exact reclaimed
+                    // cell footprint. Do not guess a full island parcel from a
+                    // count-only row: water stays water until the plan page is
+                    // available and can be drawn cell-for-cell.
+                    if (!hasGround) continue;
+                    AddAerialSprawlBlock(coordinate, accepted, worldSeed);
                 }
         }
 
-        private void AddAerialSprawlBlock(CityForgeCoord coordinate, CityForgeChunkPlan accepted,
-            CityForgeStrategicChunkSummary summary, string worldSeed, bool distant)
+        private void AddAerialSprawlBlock(CityForgeCoord coordinate, CityForgeChunkPlan accepted, string worldSeed)
         {
-            float chunk = SlopCityCityMapNavigator.ChunkLocalSize;
-            float worldChunk = SlopCityCityForge.ChunkSizeMeters;
-            Vector2 centre = AerialMapPoint((coordinate.x + .5f) * worldChunk, (coordinate.z + .5f) * worldChunk);
             bool starter = SlopCityCityForge.IsStarterRing(coordinate);
             int variant = AerialSprawlVariant(coordinate, worldSeed);
-            Color ground = starter
-                ? new Color(.076f, .128f, .128f, .98f)
-                : new Color(.052f + (variant % 3) * .003f, .081f + (variant % 4) * .002f, .087f + (variant % 2) * .003f, .96f);
-            AddAerialFeature("AerialSprawlParcel_" + coordinate.x + "_" + coordinate.z, centre,
-                Vector2.one * (chunk - .18f), ground);
-            // Parcel seams alone collapse below a display pixel at pause-map
-            // scale. Draw the chunk boundary deliberately, but keep it behind
-            // streets and roofs so this reads as a quiet city-plan grid rather
-            // than a background checkerboard.
-            const float gridLine = .9f;
-            Color grid = starter ? new Color(.16f, .27f, .27f, .76f) : new Color(.10f, .17f, .18f, .76f);
-            AddAerialFeature("AerialSprawlGridE_" + coordinate.x + "_" + coordinate.z,
-                centre + new Vector2((chunk - gridLine) * .5f, 0f), new Vector2(gridLine, chunk), grid);
-            AddAerialFeature("AerialSprawlGridN_" + coordinate.x + "_" + coordinate.z,
-                centre + new Vector2(0f, (chunk - gridLine) * .5f), new Vector2(chunk, gridLine), grid);
-            Color road = starter ? new Color(.21f, .34f, .34f, 1f) : new Color(.12f, .18f, .19f, 1f);
-            float lane = starter ? 3.0f : 2.45f;
-            AddAerialFeature("AerialSprawlAvenueEW_" + coordinate.x + "_" + coordinate.z, centre,
-                new Vector2(chunk - 1.3f, lane), road);
-            AddAerialFeature("AerialSprawlAvenueNS_" + coordinate.x + "_" + coordinate.z, centre,
-                new Vector2(lane, chunk - 1.3f), road);
+            if (accepted == null || accepted.groundCells == null || accepted.groundCells.Count == 0) return;
+            DrawAcceptedAerialGround(coordinate, accepted, starter, variant);
+            DrawAcceptedAerialDetails(coordinate, accepted, variant);
+        }
 
-            int massCount = distant ? 1 : 4;
-            if (summary != null && summary.buildingCount > 0) massCount = Mathf.Clamp(summary.buildingCount, 1, distant ? 2 : 4);
-            for (int index = 0; index < massCount; index++)
+        private void DrawAcceptedAerialGround(CityForgeCoord coordinate, CityForgeChunkPlan plan, bool starter, int variant)
+        {
+            float worldChunk = SlopCityCityForge.ChunkSizeMeters;
+            float cell = SlopCityCityForge.CellSizeMeters;
+            float localCell = cell * SlopCityCityMapNavigator.MapScale;
+            Color ground = starter
+                ? new Color(.095f, .175f, .169f, .98f)
+                : new Color(.061f + (variant % 3) * .004f, .104f + (variant % 4) * .003f, .107f + (variant % 2) * .004f, .98f);
+            Color grid = starter ? new Color(.25f, .42f, .39f, .50f) : new Color(.16f, .30f, .29f, .44f);
+            const float gridLine = .38f;
+            foreach (int cellIndex in plan.groundCells)
             {
-                Vector2 offset = AerialSprawlRoofOffset(index, chunk);
-                float width = chunk * (.18f + ((variant + index * 5) % 4) * .018f);
-                float depth = chunk * (.21f + ((variant / 3 + index * 7) % 4) * .017f);
-                Color roof = AerialSprawlRoofColor(variant + index, starter, false);
-                AddAerialFeature("AerialSprawlBuilding_" + coordinate.x + "_" + coordinate.z + "_" + index,
-                    centre + offset, new Vector2(width, depth), roof);
+                if (cellIndex < 0 || cellIndex >= SlopCityCityForge.GridSize * SlopCityCityForge.GridSize) continue;
+                int x = cellIndex % SlopCityCityForge.GridSize;
+                int z = cellIndex / SlopCityCityForge.GridSize;
+                Vector2 cellCentre = AerialMapPoint(coordinate.x * worldChunk + (x + .5f) * cell,
+                    coordinate.z * worldChunk + (z + .5f) * cell);
+                AddAerialFeature("AerialIslandGround_" + coordinate.x + "_" + coordinate.z + "_" + cellIndex,
+                    cellCentre, Vector2.one * (localCell - .12f), ground);
+                // The grid belongs to reclaimed island cells only. There is no
+                // background grid over water or unbuilt shoreline.
+                AddAerialFeature("AerialIslandGridE_" + coordinate.x + "_" + coordinate.z + "_" + cellIndex,
+                    cellCentre + new Vector2((localCell - gridLine) * .5f, 0f), new Vector2(gridLine, localCell), grid);
+                AddAerialFeature("AerialIslandGridN_" + coordinate.x + "_" + coordinate.z + "_" + cellIndex,
+                    cellCentre + new Vector2(0f, (localCell - gridLine) * .5f), new Vector2(localCell, gridLine), grid);
             }
-            if (accepted != null) DrawAcceptedAerialDetails(coordinate, accepted, variant);
         }
 
         private void DrawAcceptedAerialDetails(CityForgeCoord coordinate, CityForgeChunkPlan plan, int variant)
@@ -695,18 +689,6 @@ namespace SlopCity
                     AerialMapPoint(coordinate.x * worldChunk + sumX / count * cell,
                         coordinate.z * worldChunk + sumZ / count * cell), new Vector2(span, span),
                     AerialSprawlRoofColor(variant + buildings, SlopCityCityForge.IsStarterRing(coordinate), true));
-            }
-        }
-
-        private static Vector2 AerialSprawlRoofOffset(int index, float chunk)
-        {
-            float offset = chunk * .245f;
-            switch (index % 4)
-            {
-                case 0: return new Vector2(-offset, offset);
-                case 1: return new Vector2(offset, offset);
-                case 2: return new Vector2(-offset, -offset);
-                default: return new Vector2(offset, -offset);
             }
         }
 
@@ -1395,7 +1377,7 @@ namespace SlopCity
     /// <summary>Pans the district map and teleports the player when tapped.</summary>
     internal sealed class SlopCityCityMapNavigator : MonoBehaviour, IPointerDownHandler, IPointerUpHandler, IDragHandler
     {
-        /// <summary>A bounded visual window that rebases instead of ending the frontier.</summary>
+        /// <summary>A bounded visual window that follows the accepted island coastline.</summary>
         internal const int AerialWindowRadius = 6;
         internal const float MapScale = .5f;
         internal const float ChunkLocalSize = SlopCityCityForge.ChunkSizeMeters * MapScale;
@@ -1516,10 +1498,9 @@ namespace SlopCity
         }
 
         /// <summary>
-        /// A map tap may target a deterministic Sprawl block outside the
-        /// currently streamed neighborhood. Stream only that normal bounded
-        /// neighborhood before probing it; the runtime provides a transient
-        /// scenic walking surface without writing a player plan.
+        /// A map tap may load a built island block outside the currently
+        /// streamed neighborhood. Water and unbuilt shoreline are never travel
+        /// surfaces, even when they are within the survey window.
         /// </summary>
         private static bool PrepareSprawlTravel(Vector3 mapped)
         {
@@ -1527,6 +1508,7 @@ namespace SlopCity
             if (!SlopCityCityForge.IsBuildable(coordinate)) return true;
             SlopCityCityForgeController controller = UnityEngine.Object.FindFirstObjectByType<SlopCityCityForgeController>();
             if (!controller || !controller.IsInitialized) return false;
+            if (!controller.HasAcceptedIslandGround(coordinate)) return false;
             try
             {
                 controller.StreamAt(coordinate);
@@ -1570,6 +1552,8 @@ namespace SlopCity
         private void SetWindowCenter(CityForgeCoord requested)
         {
             CityForgeCoord next = new CityForgeCoord(ClampCoordinate(requested.x), ClampCoordinate(requested.z));
+            SlopCityCityForgeController controller = UnityEngine.Object.FindFirstObjectByType<SlopCityCityForgeController>();
+            if (controller && controller.IsInitialized) next = controller.ClampAerialMapCentre(next, 1);
             if (next.Equals(windowCenter)) return;
             windowCenter = next;
             WindowChanged?.Invoke(windowCenter);

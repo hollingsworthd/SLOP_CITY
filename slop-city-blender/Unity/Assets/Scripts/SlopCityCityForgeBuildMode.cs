@@ -462,7 +462,7 @@ namespace SlopCity
             catch (Exception error) { SetMessage(error.Message); return false; }
             pendingOpenWhenReady = false;
             ResetAtomicDrafts(draft); history = new SlopCityCityForgeDraftHistory(draft); opened = true; view = View.Ground;
-            ResumeFirstPersonForBuildMode(); SetHudSuppressed(true); GateFirstPerson(true); CaptureCamera(); controller.SetBuildMode(true); controller.StreamAt(selected); ShowStrategicMap(); SetUi(true); SetLauncher(false); RefreshUi(); RefreshBuildOverlay(); SetMessage("Sky Sprawl blocks are open air. Use Ground to lay island cells before you build."); BuildModeChanged?.Invoke(true); return true;
+            ResumeFirstPersonForBuildMode(); SetHudSuppressed(true); GateFirstPerson(true); CaptureCamera(); controller.SetBuildMode(true); controller.StreamAt(selected); ShowStrategicMap(); SetUi(true); SetLauncher(false); RefreshUi(); RefreshBuildOverlay(); SetMessage("The island ends at the shore. Lay ground before adding streets or buildings."); BuildModeChanged?.Invoke(true); return true;
         }
 
         public void Close()
@@ -521,7 +521,7 @@ namespace SlopCity
             bool hasGround = next.groundCells.Contains(cell);
             if (remove)
             {
-                if (!hasGround) { SetMessage("This cell is already open sky. Switch to Lay ground to make an island."); return false; }
+                if (!hasGround) { SetMessage("This cell is already open water. Switch to Lay ground to reclaim it."); return false; }
                 if ((next.parcels ?? new List<CityForgeParcel>()).Any(parcel => parcel != null && (parcel.cells ?? new List<int>()).Contains(cell)))
                 {
                     SetMessage("Remove the lot before clearing the island ground beneath it.");
@@ -1918,8 +1918,8 @@ namespace SlopCity
                         ? "Choose a road side, then click any grid cell to erase it · the lit bar previews the road · drag to pan · scroll to zoom"
                         : "Lay two touching island cells, then click either one · a simple pair picks its shared edge; otherwise choose Road side · drag to pan · scroll to zoom";
                 case View.Ground: return removeGround
-                    ? "Erase ground mode · click a clear island cell to return it to open sky · lots and streets stay protected · every change auto-saves"
-                    : "Lay ground mode · click open sky to make an island · click Mode: Lay ground to switch to erase · every change auto-saves";
+                    ? "Erase ground mode · click a clear island cell to return it to open water · lots and streets stay protected · every change auto-saves"
+                    : "Lay ground mode · click open water to reclaim an island cell · click Mode: Lay ground to switch to erase · every change auto-saves";
                 case View.Lots: return "Click a cell to make a lot · Shift-click builds a footprint · lay a street beside it before building · changes auto-save";
                 case View.Buildings: return "Click a zoned lot to add a designed building · it automatically faces any street touching the lot · changes auto-save";
                 case View.Services: return "Lay a street beside the lot, then click it to add service · choose a screen target before placing a screen · changes auto-save";

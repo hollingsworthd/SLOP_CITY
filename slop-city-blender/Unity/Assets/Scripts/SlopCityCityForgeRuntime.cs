@@ -132,7 +132,6 @@ namespace SlopCity
             ChunkInstance instance = new ChunkInstance { root = root, coord = coord, resolvedHash = chunk.resolvedHash ?? string.Empty };
             try
             {
-                BuildScenicCityContinuation(instance, chunk);
                 BuildGround(instance, chunk);
                 BuildRoads(instance, chunk.roads);
                 BuildBuildings(instance, chunk);
@@ -695,163 +694,6 @@ namespace SlopCity
             ClearCityForgeBuildOverlay(); ClearCityForgeStrategicMap(); ClearCityForgeDraftPreview(); ReleaseAllCityForgeChunks();
             if (buildOverlayMaterial) Destroy(buildOverlayMaterial);
             if (strategicGridMaterial) Destroy(strategicGridMaterial);
-        }
-
-        /// <summary>
-        /// Untouched City Forge coordinates stay player-owned: they still have
-        /// no accepted ground, streets, fixtures, or save records.  Leaving a
-        /// streamed coordinate as literal empty sky, however, made the Sprawl
-        /// look like a test island rather than the city continuing past the
-        /// Old City.  This deterministic, collider-free cityscape supplies the
-        /// visual continuity only.  The first accepted ChunkPlan replaces it
-        /// outright, so a player's real streets, lots, and buildings always
-        /// remain the sole physical topology.
-        /// </summary>
-        private void BuildScenicCityContinuation(ChunkInstance instance, CityForgeResolvedChunk chunk)
-        {
-            if (instance == null || !instance.root || chunk == null || chunk.baseChunk == null
-                || chunk.acceptedPlan != null || !SlopCityCityForge.IsBuildable(instance.coord)) return;
-
-            CityForgeBaseChunk baseChunk = chunk.baseChunk;
-            const float chunkSize = SlopCityCityForge.ChunkSizeMeters;
-            GameObject cityscape = new GameObject("ScenicCityContinuation");
-            cityscape.transform.SetParent(instance.root.transform, false);
-
-            // A shallow rendered deck makes the predictable street grammar read
-            // as continuous city land from the Old City connection, while its
-            // disabled collider preserves the empty-space / player-laid-ground
-            // contract for an untouched chunk.
-            ScenicPrimitive("ScenicTerrain", PrimitiveType.Cube, cityscape.transform,
-                new Vector3(chunkSize * .5f, -.46f, chunkSize * .5f), new Vector3(chunkSize, .16f, chunkSize),
-                ScenicTerrainColor(baseChunk.terrainId));
-            // A streamed scenic block needs an actual, bounded walking surface
-            // for map travel. This collider is deterministic presentation only:
-            // it is neither a saved ChunkPlan nor a substitute for player-laid
-            // ground, roads, or building collision, and it is released with the
-            // normal nearby-chunk window.
-            BuildScenicTravelSurface(cityscape.transform, chunkSize);
-
-            CityForgeRoadClass avenue = ScenicRoadClass(baseChunk);
-            BuildScenicAvenue(cityscape.transform, "ScenicAvenue_Centre_NS", new Vector3(chunkSize * .5f, -.29f, chunkSize * .5f), chunkSize, true, avenue);
-            BuildScenicAvenue(cityscape.transform, "ScenicAvenue_Centre_EW", new Vector3(chunkSize * .5f, -.29f, chunkSize * .5f), chunkSize, false, avenue);
-            // Boundary avenues meet the adjoining generated coordinate at the
-            // exact chunk edge. East/north ownership means a shared boundary
-            // is emitted once, not twice by its two streamed neighbours.
-            BuildScenicAvenue(cityscape.transform, "ScenicAvenue_East", new Vector3(chunkSize, -.29f, chunkSize * .5f), chunkSize, true, avenue);
-            BuildScenicAvenue(cityscape.transform, "ScenicAvenue_North", new Vector3(chunkSize * .5f, -.29f, chunkSize), chunkSize, false, avenue);
-
-            uint seed = StableHash(baseChunk.baseHash + "|scenic-city");
-            Vector3[] blocks =
-            {
-                new Vector3(18f, 0f, 18f), new Vector3(54f, 0f, 18f),
-                new Vector3(18f, 0f, 54f), new Vector3(54f, 0f, 54f)
-            };
-            for (int index = 0; index < blocks.Length; index++)
-                BuildScenicBuilding(cityscape.transform, baseChunk, index, blocks[index]);
-
-            BuildScenicLamp(cityscape.transform, "ScenicLamp_SW", new Vector3(31.7f, -.19f, 31.7f), seed + 1u);
-            BuildScenicLamp(cityscape.transform, "ScenicLamp_SE", new Vector3(40.3f, -.19f, 31.7f), seed + 2u);
-            BuildScenicLamp(cityscape.transform, "ScenicLamp_NW", new Vector3(31.7f, -.19f, 40.3f), seed + 3u);
-            BuildScenicLamp(cityscape.transform, "ScenicLamp_NE", new Vector3(40.3f, -.19f, 40.3f), seed + 4u);
-        }
-
-        private static void BuildScenicAvenue(Transform parent, string name, Vector3 centre, float length, bool northSouth, CityForgeRoadClass roadClass)
-        {
-            Vector3 pavement = northSouth ? new Vector3(8.2f, .08f, length) : new Vector3(length, .08f, 8.2f);
-            Vector3 asphalt = northSouth ? new Vector3(4.8f, .10f, length) : new Vector3(length, .10f, 4.8f);
-            ScenicPrimitive(name + "_Footway", PrimitiveType.Cube, parent, centre, pavement, new Color(.29f, .31f, .30f));
-            ScenicPrimitive(name + "_Asphalt", PrimitiveType.Cube, parent, centre + Vector3.up * .08f, asphalt, RoadColor(roadClass));
-            // The narrow central marking is visual only; real drivable roads
-            // continue to come exclusively from accepted road records.
-            Vector3 marking = northSouth ? new Vector3(.15f, .025f, length) : new Vector3(length, .025f, .15f);
-            ScenicPrimitive(name + "_Marking", PrimitiveType.Cube, parent, centre + Vector3.up * .15f, marking, new Color(.76f, .68f, .43f), true);
-        }
-
-        private static void BuildScenicBuilding(Transform parent, CityForgeBaseChunk baseChunk, int index, Vector3 position)
-        {
-            uint seed = StableHash(baseChunk.baseHash + "|building|" + index.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            float span = 24f - (float)(seed % 4u) * .7f;
-            float height = ScenicBuildingHeight(baseChunk.skylineId, seed, index);
-            GameObject shell = new GameObject("ScenicBuilding_" + index);
-            shell.transform.SetParent(parent, false);
-            shell.transform.localPosition = position;
-            shell.transform.localRotation = Quaternion.Euler(0f, (float)((seed >> 3) % 4u) * 90f, 0f);
-            string kit = BuildingKits[(int)(seed % (uint)BuildingKits.Length)];
-            string facade = ScenicFacadeKits[(int)((seed >> 7) % (uint)ScenicFacadeKits.Length)];
-            string roof = ScenicRoofKits[(int)((seed >> 13) % (uint)ScenicRoofKits.Length)];
-            BuildBuildingShell(shell.transform, span, height, kit);
-            ApplyBuildingFinish(shell.transform, facade, roof);
-            BuildScenicWindowBands(shell.transform, span, height, seed);
-            DisableScenicColliders(shell.transform);
-        }
-
-        private static float ScenicBuildingHeight(string skylineId, uint seed, int index)
-        {
-            if (skylineId == "tower-punctuated") return (index == (int)(seed % 4u) ? 38f : 18f + (float)(seed % 4u) * 2.4f);
-            if (skylineId == "mixed-rise") return 18f + (float)(seed % 6u) * 2.4f;
-            if (skylineId == "civic-open") return 10f + (float)(seed % 4u) * 1.8f;
-            return 12f + (float)(seed % 5u) * 1.9f;
-        }
-
-        private static void BuildScenicWindowBands(Transform parent, float span, float height, uint seed)
-        {
-            Color glass = Color.Lerp(new Color(.08f, .17f, .24f), new Color(.19f, .43f, .46f), (float)(seed & 3u) / 3f);
-            float low = Mathf.Clamp(height * .34f, 3.1f, height - 2.4f);
-            float high = Mathf.Clamp(height * .70f, low + 1.1f, height - 1.2f);
-            foreach (float elevation in new[] { low, high })
-            {
-                ScenicPrimitive("ScenicWindowFront", PrimitiveType.Cube, parent, new Vector3(0f, elevation, -span * .5f - .14f), new Vector3(span * .66f, .34f, .08f), glass, true);
-                ScenicPrimitive("ScenicWindowRear", PrimitiveType.Cube, parent, new Vector3(0f, elevation, span * .5f + .14f), new Vector3(span * .66f, .34f, .08f), glass, true);
-                ScenicPrimitive("ScenicWindowWest", PrimitiveType.Cube, parent, new Vector3(-span * .5f - .14f, elevation, 0f), new Vector3(.08f, .34f, span * .66f), glass, true);
-                ScenicPrimitive("ScenicWindowEast", PrimitiveType.Cube, parent, new Vector3(span * .5f + .14f, elevation, 0f), new Vector3(.08f, .34f, span * .66f), glass, true);
-            }
-        }
-
-        private static void BuildScenicLamp(Transform parent, string name, Vector3 position, uint seed)
-        {
-            ScenicPrimitive(name + "_Pole", PrimitiveType.Cylinder, parent, position + Vector3.up * 2.0f,
-                new Vector3(.13f, 2.0f, .13f), new Color(.16f, .20f, .22f));
-            ScenicPrimitive(name + "_Head", PrimitiveType.Sphere, parent, position + Vector3.up * 4.05f, Vector3.one * .34f,
-                Color.Lerp(new Color(.74f, .62f, .28f), new Color(.48f, .75f, .82f), (float)(seed & 1u)));
-        }
-
-        private static GameObject ScenicPrimitive(string name, PrimitiveType type, Transform parent, Vector3 position, Vector3 scale, Color color, bool disableShadow = false)
-        {
-            GameObject value = Primitive(name, type, parent, position, scale);
-            Collider collider = value.GetComponent<Collider>(); if (collider) collider.enabled = false;
-            Renderer renderer = value.GetComponent<Renderer>(); if (renderer) SetRendererColor(renderer, color);
-            if (disableShadow) DisableShadow(value);
-            return value;
-        }
-
-        private static void BuildScenicTravelSurface(Transform parent, float chunkSize)
-        {
-            GameObject surface = new GameObject("ScenicTravelSurface", typeof(BoxCollider));
-            surface.transform.SetParent(parent, false);
-            surface.transform.localPosition = new Vector3(chunkSize * .5f, -.16f, chunkSize * .5f);
-            BoxCollider collider = surface.GetComponent<BoxCollider>();
-            collider.size = new Vector3(chunkSize, .32f, chunkSize);
-        }
-
-        private static void DisableScenicColliders(Transform root)
-        {
-            foreach (Collider collider in root.GetComponentsInChildren<Collider>(true)) if (collider) collider.enabled = false;
-        }
-
-        private static Color ScenicTerrainColor(string terrain)
-        {
-            if (terrain == "garden-grade") return new Color(.23f, .34f, .24f);
-            if (terrain == "old-masonry") return new Color(.31f, .28f, .25f);
-            if (terrain == "service-concrete") return new Color(.26f, .28f, .28f);
-            return new Color(.22f, .27f, .29f);
-        }
-
-        private static CityForgeRoadClass ScenicRoadClass(CityForgeBaseChunk chunk)
-        {
-            if (chunk != null && chunk.skylineId == "tower-punctuated") return CityForgeRoadClass.Boulevard;
-            if (chunk != null && chunk.lifeThemeId == "culture") return CityForgeRoadClass.PedestrianRoute;
-            if (chunk != null && chunk.lifeThemeId == "repair") return CityForgeRoadClass.ServiceAlley;
-            return CityForgeRoadClass.LocalStreet;
         }
 
         private void BuildGround(ChunkInstance instance, CityForgeResolvedChunk chunk)
@@ -1518,10 +1360,6 @@ namespace SlopCity
         // are a presentation lookup, not a place where plan input can name an
         // arbitrary prefab, material, transform, or behavior.
         private static readonly string[] BuildingKits = { "walk-up", "courtyard-home", "tower-residence", "live-work-block", "workshop", "repair-bay", "clinic", "laundry", "depot", "small-office", "corner-shop", "market-hall", "cafe", "exchange", "kiosk", "care-station", "library-room", "utility-office", "community-hall", "screening-room", "studio", "venue", "archive", "performance-space", "garden", "plaza", "water-node", "power-relay", "shelter", "service-yard" };
-        // Scenic continuation chooses only the same fixed catalog vocabulary as
-        // accepted buildings; no player input reaches these presentation IDs.
-        private static readonly string[] ScenicFacadeKits = { "wet-masonry", "poured-concrete", "glazed-ceramic", "oxidized-metal", "painted-render", "brick-utility", "night-glass", "garden-lattice" };
-        private static readonly string[] ScenicRoofKits = { "service-roof", "rain-garden", "solar-rack", "water-tank", "relay-array", "lantern-roof", "terrace", "greenhouse", "vent-stack", "civic-canopy", "screen-crown", "utility-bridge" };
         private static readonly string[] InteriorKits = { "home-room", "workshop-floor", "repair-counter", "care-room", "laundry-room", "depot-bay", "office-floor", "shop-floor", "market-floor", "cafe-room", "exchange-room", "library-room", "community-room", "screening-room", "studio-room", "venue-room", "archive-room", "performance-room", "utility-room", "shelter-room" };
         private static readonly string[] ServiceKits = { "care-station", "repair-counter", "laundry-service", "delivery-bay", "neighborhood-office", "market-stall", "food-counter", "exchange-desk", "library-desk", "utility-desk", "community-room", "screening-service", "studio-service", "venue-door", "archive-desk", "garden-steward", "water-service", "power-service", "shelter-desk", "service-yard-bay" };
         private static readonly string[] OutcomeKits = { "repair-loft", "listening-room", "green-refuge", "repair-cooperative", "mutual-aid-washhouse", "after-hours-room", "light-sanctuary", "street-garden", "notice-arcade", "rider-support-post", "small-exhibition-platform", "connector-lounge", "water-garden", "relay-workshop", "observation-room", "used-goods-exchange", "neighborhood-kitchen", "community-studio", "machine-bay", "supply-cache", "mural-passage", "local-archive", "screening-club", "quiet-learning-room", "welcome-desk", "care-station-outcome", "night-office", "signal-workshop", "rest-terrace", "weather-shelter" };

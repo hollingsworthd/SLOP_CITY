@@ -42,6 +42,7 @@ namespace SlopCity
             // The authored Old City is not a mutable City Forge coordinate. Keep
             // the entry window stable until the player uses the public bridge.
             if (!SlopCityCityForge.IsBuildable(playerCoordinate)) return;
+            if (!controller.HasAcceptedIslandGround(playerCoordinate)) return;
 
             if (!hasCenter)
             {
@@ -55,7 +56,7 @@ namespace SlopCity
         /// <summary>Lets a public travel bridge immediately establish its known-safe entry center.</summary>
         public void SetKnownCenter(CityForgeCoord coordinate)
         {
-            if (!SlopCityCityForge.IsBuildable(coordinate)) return;
+            if (!SlopCityCityForge.IsBuildable(coordinate) || controller == null || !controller.HasAcceptedIslandGround(coordinate)) return;
             hasCenter = true;
             center = coordinate;
         }
@@ -73,12 +74,14 @@ namespace SlopCity
 
         public void RestoreKnownCenter()
         {
-            if (hasCenter && SlopCityCityForge.IsBuildable(center)) { SetCenter(center); return; }
-            SetCenter(new CityForgeCoord(2, 0));
+            if (hasCenter && SlopCityCityForge.IsBuildable(center) && controller != null && controller.HasAcceptedIslandGround(center)) { SetCenter(center); return; }
+            CityForgeCoord entry = new CityForgeCoord(2, 0);
+            if (controller != null && controller.HasAcceptedIslandGround(entry)) SetCenter(entry);
         }
 
         private void SetCenter(CityForgeCoord next)
         {
+            if (controller == null || !controller.HasAcceptedIslandGround(next)) return;
             try { controller.StreamAt(next); }
             catch { return; }
             hasCenter = true;

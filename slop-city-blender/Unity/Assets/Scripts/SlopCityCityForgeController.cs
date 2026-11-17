@@ -522,10 +522,54 @@ namespace SlopCity
         public bool CanDraft(CityForgeCoord coordinate)
         {
             if (!initialized || !SlopCityCityForge.IsBuildable(coordinate)) return false;
-            if (SlopCityCityForge.IsStarterRing(coordinate) || accepted.ContainsKey(coordinate)) return true;
+            // An accepted plan remains editable even when it contains no
+            // ground.  That preserves existing sparse records while ensuring
+            // they cannot turn into stepping stones for an automatically
+            // generated Sprawl.
+            if (accepted.ContainsKey(coordinate)) return true;
             foreach (CityForgeDirection direction in new[] { CityForgeDirection.North, CityForgeDirection.East, CityForgeDirection.South, CityForgeDirection.West })
-                if (accepted.ContainsKey(SlopCityCityForge.Neighbour(coordinate, direction))) return true;
+            {
+                CityForgeCoord neighbour = SlopCityCityForge.Neighbour(coordinate, direction);
+                if (SlopCityCityForge.IsProtectedOldCity(neighbour)) return true;
+                if (HasAcceptedIslandGround(neighbour)) return true;
+            }
             return false;
+        }
+
+        /// <summary>Only accepted player-laid ground extends the island's visible and editable shoreline.</summary>
+        public bool HasAcceptedIslandGround(CityForgeCoord coordinate)
+        {
+            return accepted.TryGetValue(coordinate, out CityForgeChunkPlan plan) && HasIslandGround(plan);
+        }
+
+        /// <summary>
+        /// Keeps aerial/planning cameras to the actual island and a caller-owned
+        /// small survey margin.  Sparse records without ground remain editable
+        /// for compatibility, but never enlarge this visible land frontier.
+        /// </summary>
+        public CityForgeCoord ClampAerialMapCentre(CityForgeCoord requested, int margin)
+        {
+            int minimumX = SlopCityCityForge.CoreMinimum.x;
+            int maximumX = SlopCityCityForge.CoreMaximum.x;
+            int minimumZ = SlopCityCityForge.CoreMinimum.z;
+            int maximumZ = SlopCityCityForge.CoreMaximum.z;
+            foreach (KeyValuePair<CityForgeCoord, CityForgeChunkPlan> item in accepted)
+            {
+                if (!HasIslandGround(item.Value)) continue;
+                minimumX = Math.Min(minimumX, item.Key.x);
+                maximumX = Math.Max(maximumX, item.Key.x);
+                minimumZ = Math.Min(minimumZ, item.Key.z);
+                maximumZ = Math.Max(maximumZ, item.Key.z);
+            }
+            int surveyMargin = Math.Max(0, margin);
+            return new CityForgeCoord(
+                Mathf.Clamp(requested.x, minimumX - surveyMargin, maximumX + surveyMargin),
+                Mathf.Clamp(requested.z, minimumZ - surveyMargin, maximumZ + surveyMargin));
+        }
+
+        private static bool HasIslandGround(CityForgeChunkPlan plan)
+        {
+            return plan != null && plan.groundCells != null && plan.groundCells.Count > 0;
         }
 
         public CityForgeChunkPlan BeginDraft(CityForgeCoord coordinate)
@@ -823,7 +867,10 @@ namespace SlopCity
                 for (int z = -activeChunkRadius; z <= activeChunkRadius; z++)
                 {
                     CityForgeCoord coordinate = new CityForgeCoord(center.x + x, center.z + z);
-                    if (!SlopCityCityForge.IsBuildable(coordinate)) continue;
+                    // The compiler receives real island geography only. Empty
+                    // draft/legacy records remain editable, but must not turn
+                    // into streamed scene roots outside the built coastline.
+                    if (!SlopCityCityForge.IsBuildable(coordinate) || !HasAcceptedIslandGround(coordinate)) continue;
                     requested.Add(Resolve(coordinate));
                 }
             compiler.Reconcile(center, requested, constrainedWebGl);

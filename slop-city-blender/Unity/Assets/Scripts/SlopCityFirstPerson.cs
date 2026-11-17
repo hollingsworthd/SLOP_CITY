@@ -24,8 +24,8 @@ namespace SlopCity
         [SerializeField] private SlopCityMediaPlayer media;
         [SerializeField] private SlopCityDistrict[] districts = new SlopCityDistrict[0];
         [Header("Movement")]
-        [SerializeField] private float walkingSpeed = 3.2f;
-        [SerializeField] private float sprintingSpeed = 12f;
+        [SerializeField] private float walkingSpeed = 2.4f;
+        [SerializeField] private float sprintingSpeed = 4.25f;
         [SerializeField] private float standingEyeHeight = 1.62f;
         [SerializeField] private float mouseSensitivity = 1.8f;
         [SerializeField] private float gravity = -18f;
@@ -332,7 +332,7 @@ namespace SlopCity
                                 TeleportTo(SlopCityCityForgeTravel.StarterEntryPosition, transform.eulerAngles.y);
                                 verticalSpeed = 0f;
                                 skySprawlFallLatched = false;
-                                ShowFeedback("Returned to the Sky Sprawl entry.");
+                                ShowFeedback("Returned to the island entry.");
                             }
                         }
                         else

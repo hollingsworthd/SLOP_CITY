@@ -109,7 +109,7 @@ test('City Forge grids its bounded strategic window and retains one safe cross-c
   assert.match(toolChanges, /CancelPendingMapAction\(\); roadClass =/, 'tool changes must cancel, not reinterpret, a queued action');
 });
 
-test('City Forge physical ground has no artificial seams and the Sky Sprawl uses its authored sky', () => {
+test('City Forge physical ground has no artificial seams and its island exterior suppresses false land', () => {
   const runtime = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeRuntime.cs', import.meta.url), 'utf8');
   const ground = runtime.slice(runtime.indexOf('private void BuildGround('), runtime.indexOf('private void BuildEditorGround('));
   const skyVista = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeSkyVista.cs', import.meta.url), 'utf8');
@@ -118,7 +118,9 @@ test('City Forge physical ground has no artificial seams and the Sky Sprawl uses
   assert.doesNotMatch(ground, /cell - \.20f/, 'valid neighbouring ground cells must not leave a visual no-build slit');
   assert.match(ground, /new Vector3\(cell - \.92f, \.88f, cell - \.92f\)/, 'only the island underside remains inset at a true exterior edge');
   assert.doesNotMatch(skyVista, /CityForgeSkyVista_Clouds|SkyCloud_|CreatePrimitive\(PrimitiveType\.Sphere\)|RenderSettings\.fog/, 'the runtime must not generate cloud puffs or cloud fog');
-  assert.match(skyVista, /SetDistantGroundSuppressed\(SlopCityCityForgeTravel\.IsSkySprawlPosition\(followTarget\.position\)\);/, 'removing fake clouds must not restore the authored distant floor in the Sky Sprawl');
+  assert.match(skyVista, /bool islandContext = SlopCityCityForgeTravel\.IsSkySprawlPosition\(followTarget\.position\);/);
+  assert.match(skyVista, /SetDistantGroundSuppressed\(islandContext\);/, 'removing fake clouds must not restore the authored distant floor outside the island');
+  assert.match(skyVista, /SetOceanVisible\(islandContext\);/, 'the exterior should read as non-walkable water rather than generated city land');
 });
 
 test('City Forge map ground meets the fixed Old City core without duplicate layers', () => {

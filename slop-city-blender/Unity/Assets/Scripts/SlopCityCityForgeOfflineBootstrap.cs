@@ -72,8 +72,14 @@ namespace SlopCity
             // the visible Build City launcher; no mutable authored Old City scene
             // is initialized or replaced here.
             CityForgeCoord entry = SlopCityCityForgeTravel.StarterEntryCoordinate;
-            controller.StreamAt(entry);
-            follower.SetKnownCenter(entry);
+            // A new island begins as coastline, not an invisible generated
+            // city. Build Mode may still select the core-adjacent starter cell,
+            // but physical streaming waits for accepted reclaimed ground.
+            if (controller.HasAcceptedIslandGround(entry))
+            {
+                controller.StreamAt(entry);
+                follower.SetKnownCenter(entry);
+            }
         }
 
         private void OnDestroy()
