@@ -622,6 +622,16 @@ namespace SlopCity
                 : new Color(.052f + (variant % 3) * .003f, .081f + (variant % 4) * .002f, .087f + (variant % 2) * .003f, .96f);
             AddAerialFeature("AerialSprawlParcel_" + coordinate.x + "_" + coordinate.z, centre,
                 Vector2.one * (chunk - .18f), ground);
+            // Parcel seams alone collapse below a display pixel at pause-map
+            // scale. Draw the chunk boundary deliberately, but keep it behind
+            // streets and roofs so this reads as a quiet city-plan grid rather
+            // than a background checkerboard.
+            const float gridLine = .9f;
+            Color grid = starter ? new Color(.16f, .27f, .27f, .76f) : new Color(.10f, .17f, .18f, .76f);
+            AddAerialFeature("AerialSprawlGridE_" + coordinate.x + "_" + coordinate.z,
+                centre + new Vector2((chunk - gridLine) * .5f, 0f), new Vector2(gridLine, chunk), grid);
+            AddAerialFeature("AerialSprawlGridN_" + coordinate.x + "_" + coordinate.z,
+                centre + new Vector2(0f, (chunk - gridLine) * .5f), new Vector2(chunk, gridLine), grid);
             Color road = starter ? new Color(.21f, .34f, .34f, 1f) : new Color(.12f, .18f, .19f, 1f);
             float lane = starter ? 3.0f : 2.45f;
             AddAerialFeature("AerialSprawlAvenueEW_" + coordinate.x + "_" + coordinate.z, centre,
@@ -1486,7 +1496,7 @@ namespace SlopCity
 
         private bool TryTeleport(PointerEventData e)
         {
-            if (!player || player.IsSeated || !viewport
+            if (!player || !viewport
                 || !RectTransformUtility.RectangleContainsScreenPoint(viewport, e.position, e.pressEventCamera)) return false;
             SlopCitySandbox sandbox = player.Sandbox;
             if (sandbox && (sandbox.IsDriving || sandbox.IsResting || sandbox.IsTravelling)) return false;
