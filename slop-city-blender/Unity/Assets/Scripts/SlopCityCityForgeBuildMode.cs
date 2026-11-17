@@ -1163,11 +1163,36 @@ namespace SlopCity
             buildCamera.transform.position -= new Vector3(movement.x * metresPerPixel, 0f, movement.y * metresPerPixel);
         }
 
+        /// <summary>
+        /// Converts an input point in display pixels into this camera's normalized
+        /// viewport. Browser presentation can render the city to a smaller
+        /// RenderTexture and stretch it back over the full display, so feeding
+        /// display pixels directly to ScreenPointToRay would select a different
+        /// map cell in WebGL. Viewport coordinates keep the ray tied to the
+        /// visible image on both the native backbuffer and a render target.
+        /// </summary>
+        private bool TryGetMapViewportPoint(Vector3 screenPosition, out Vector3 viewportPoint)
+        {
+            viewportPoint = default(Vector3);
+            if (!buildCamera) return false;
+            float displayWidth = Mathf.Max(1f, Screen.width);
+            float displayHeight = Mathf.Max(1f, Screen.height);
+            Rect cameraRect = buildCamera.rect;
+            if (cameraRect.width <= 0f || cameraRect.height <= 0f) return false;
+            float displayX = screenPosition.x / displayWidth;
+            float displayY = screenPosition.y / displayHeight;
+            float viewportX = (displayX - cameraRect.xMin) / cameraRect.width;
+            float viewportY = (displayY - cameraRect.yMin) / cameraRect.height;
+            if (viewportX < 0f || viewportX > 1f || viewportY < 0f || viewportY > 1f) return false;
+            viewportPoint = new Vector3(viewportX, viewportY, 0f);
+            return true;
+        }
+
         private bool TryGetMapCell(Vector3 screenPosition, out CityForgeCoord coordinate, out int x, out int z)
         {
             coordinate = default(CityForgeCoord); x = z = 0;
-            if (!buildCamera) return false;
-            Ray ray = buildCamera.ScreenPointToRay(screenPosition);
+            if (!TryGetMapViewportPoint(screenPosition, out Vector3 viewportPoint)) return false;
+            Ray ray = buildCamera.ViewportPointToRay(viewportPoint);
             if (!new Plane(Vector3.up, Vector3.zero).Raycast(ray, out float distance)) return false;
             Vector3 point = ray.GetPoint(distance);
             coordinate = new CityForgeCoord(Mathf.FloorToInt(point.x / SlopCityCityForge.ChunkSizeMeters), Mathf.FloorToInt(point.z / SlopCityCityForge.ChunkSizeMeters));

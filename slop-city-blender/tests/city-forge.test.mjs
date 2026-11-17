@@ -60,6 +60,30 @@ test('City Forge keeps map clicks separate from the bounded toolbar', () => {
   assert.match(launcher, /Press B to build your city/, 'the locked-pointer entry route must remain explicit');
 });
 
+test('City Forge maps display input through the camera viewport when browser presentation uses a render target', () => {
+  const buildMode = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeBuildMode.cs', import.meta.url), 'utf8');
+  const presentation = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityWebPresentation.cs', import.meta.url), 'utf8');
+  const projection = buildMode.slice(
+    buildMode.indexOf('private bool TryGetMapViewportPoint('),
+    buildMode.indexOf('private bool TryGetMapCell('),
+  );
+  const mapCell = buildMode.slice(
+    buildMode.indexOf('private bool TryGetMapCell('),
+    buildMode.indexOf('private void CaptureMapCell('),
+  );
+
+  assert.match(presentation, /worldCamera\.targetTexture = target;/,
+    'the browser presentation deliberately renders the world through a bounded target');
+  assert.match(projection, /screenPosition\.x \/ displayWidth/);
+  assert.match(projection, /screenPosition\.y \/ displayHeight/);
+  assert.match(projection, /Rect cameraRect = buildCamera\.rect;/);
+  assert.match(mapCell, /TryGetMapViewportPoint\(screenPosition, out Vector3 viewportPoint\)/);
+  assert.match(mapCell, /buildCamera\.ViewportPointToRay\(viewportPoint\)/,
+    'map hit testing must follow the displayed camera viewport, not target pixels');
+  assert.doesNotMatch(mapCell, /ScreenPointToRay/,
+    'display pixels are not camera-target pixels in the WebGL presentation');
+});
+
 test('City Forge grids its bounded strategic window and retains one safe cross-chunk action', () => {
   const buildMode = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeBuildMode.cs', import.meta.url), 'utf8');
   const runtime = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeRuntime.cs', import.meta.url), 'utf8');
