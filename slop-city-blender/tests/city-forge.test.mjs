@@ -2,6 +2,7 @@ import {createHash} from 'node:crypto';
 import {readFileSync} from 'node:fs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import vm from 'node:vm';
 import {
   CITY_FORGE_BUILDINGS, CITY_FORGE_BUILDING_SCREEN_SLOTS, CITY_FORGE_CATALOG_HASH, CITY_FORGE_FACADES, CITY_FORGE_GENERATOR_VERSION, CITY_FORGE_LANDMARKS, CITY_FORGE_OLD_CITY_CONNECTION_CLASS, CITY_FORGE_ROOFS, CITY_FORGE_SITUATIONS,
   CITY_FORGE_SCREEN_MOUNTS, CITY_FORGE_CHUNK_CELLS, canonicalBoundaryEdgeKey,
@@ -52,12 +53,59 @@ test('City Forge keeps map clicks separate from the bounded toolbar', () => {
   assert.doesNotMatch(source, /root\.AddComponent<Image>\(\)/, 'the screen-sized Canvas root must never become a map-blocking graphic');
   assert.match(mapPointer, /mapMousePressed = !mouseStartedOverBuildUi;/);
   assert.doesNotMatch(mapPointer, /IsPointerOverGameObject/, 'unrelated HUD raycasters must not swallow map presses');
-  assert.match(mapPointer, /!BuildUiSurfaceContains\(Input\.mousePosition\)/, 'releasing over the toolbar must not edit through it');
+  assert.match(mapPointer, /Vector2 pointer = CurrentCityForgePointer\(\);/, 'map clicks must use the same canvas point as the toolbar');
+  assert.match(mapPointer, /!BuildUiSurfaceContains\(pointer\)/, 'releasing over the toolbar must not edit through it');
   assert.doesNotMatch(source, /enabled = !UsesNativeMacMapPointer/, 'macOS must retain the normal UGUI raycasters');
   assert.match(source, /LegacyMouseGestureUnavailable\(\)/, 'native desktop input may be a guarded fallback, not the only pointer route');
   assert.match(launcher, /launcherButton\.gameObject\.SetActive\(!launcherCursorLocked\)/, 'a locked first-person cursor must not receive an intrusive center button');
   assert.doesNotMatch(launcher, /new Vector2\(\.5f, \.5f\)/, 'the launcher must not return to the center of the viewport');
   assert.match(launcher, /Press B to build your city/, 'the locked-pointer entry route must remain explicit');
+});
+
+test('City Forge maps browser pointer events into backing-canvas pixels for every mouse route', () => {
+  const source = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeBuildMode.cs', import.meta.url), 'utf8');
+  const template = readFileSync(new URL('../Unity/Assets/WebGLTemplates/SlopCity/index.html', import.meta.url), 'utf8');
+  const bridge = readFileSync(new URL('../Unity/Assets/Plugins/WebGL/SlopCityPresentation.jslib', import.meta.url), 'utf8');
+  const mapperStart = template.indexOf('function slopCityCanvasPoint(event)');
+  const mapperEnd = template.indexOf('function trackSlopCityCanvasPointer(event)', mapperStart);
+  assert.ok(mapperStart >= 0 && mapperEnd > mapperStart, 'the WebGL template must expose the canvas mapper');
+  const context = {
+    canvas: {
+      width: 2000,
+      height: 1000,
+      getBoundingClientRect() { return { left: 100, bottom: 450, width: 500, height: 250 }; },
+    },
+    Number,
+  };
+  vm.runInNewContext(`${template.slice(mapperStart, mapperEnd)}; result = slopCityCanvasPoint({ clientX: 350, clientY: 325 });`, context);
+  assert.equal(context.result.x, 1000, 'DOM x must scale into backing pixels');
+  assert.equal(context.result.y, 500, 'DOM top-left y must become lower-left backing pixels');
+  assert.equal(context.result.valid, true);
+  context.canvas.getBoundingClientRect = () => ({ left: 100, bottom: 450, width: 0, height: 250 });
+  vm.runInNewContext(`${template.slice(mapperStart, mapperEnd)}; result = slopCityCanvasPoint({ clientX: 350, clientY: 325 });`, context);
+  assert.equal(context.result, null, 'an invalid canvas rectangle must fall back to Unity input');
+
+  assert.match(template, /\(clientX - rect\.left\) \* width \/ rect\.width/);
+  assert.match(template, /\(rect\.bottom - clientY\) \* height \/ rect\.height/);
+  assert.match(template, /window\.addEventListener\("pointerup", onSlopCityTrackedPointerUp, true\)/,
+    'an outside release must retain its actual release coordinate');
+  assert.match(template, /resetSlopCityCanvasPointer\(\);\n      if \(graphicsLost \|\| sessionFailed\) return;/,
+    'pointer lock must invalidate the bridge before Unity falls back');
+  assert.match(bridge, /SlopCity_HasCanvasPointer/);
+  assert.match(bridge, /SlopCity_GetCanvasPointerX/);
+  assert.match(bridge, /SlopCity_GetCanvasPointerY/);
+  assert.match(source, /\[DllImport\("__Internal"\)\] private static extern int SlopCity_HasCanvasPointer\(\);/);
+  assert.match(source, /private static Vector2 CurrentCityForgePointer\(\)/);
+  assert.match(source, /return Input\.mousePosition;/, 'custom WebGL hosts and native players keep the ordinary input fallback');
+
+  const onGui = source.slice(source.indexOf('private void OnGUI()'), source.indexOf('private static bool UsesNativeMacMapPointer()'));
+  const mapPointer = source.slice(source.indexOf('private void UpdateMapMousePointer'), source.indexOf('private void UpdateHoveredCell'));
+  const hover = source.slice(source.indexOf('private void UpdateHoveredCell'), source.indexOf('private void PanMap'));
+  const launcher = source.slice(source.indexOf('private void UpdateLauncherPointerActivation()'), source.indexOf('private bool LauncherContains'));
+  const toolbar = source.slice(source.indexOf('private bool UpdateBuildUiPointerActivation()'), source.indexOf('private bool BuildUiSurfaceContains'));
+  for (const [name, route] of Object.entries({ onGui, mapPointer, hover, launcher, toolbar })) {
+    assert.match(route, /CurrentCityForgePointer\(\)/, `${name} must share the canvas-pixel pointer route`);
+  }
 });
 
 test('City Forge maps display input through the camera viewport when browser presentation uses a render target', () => {

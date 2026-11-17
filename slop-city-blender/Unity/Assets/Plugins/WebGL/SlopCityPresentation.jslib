@@ -16,6 +16,22 @@ mergeInto(LibraryManager.library, {
   SlopCity_IsViewportTransition: function () {
     return window.slopCityViewportTransition === true ? 1 : 0;
   },
+  // City Forge has a ScreenSpaceOverlay toolbar as well as a rendered map.
+  // Unity's WebGL legacy pointer can be expressed in a page/CSS basis when a
+  // manually-sized high-density canvas sits below browser chrome. The shell
+  // records the exact backing-canvas point without retaining any history.
+  SlopCity_HasCanvasPointer: function () {
+    var pointer = window.slopCityCanvasPointer;
+    return pointer && pointer.valid === true && Number.isFinite(pointer.x) && Number.isFinite(pointer.y) ? 1 : 0;
+  },
+  SlopCity_GetCanvasPointerX: function () {
+    var pointer = window.slopCityCanvasPointer;
+    return pointer && pointer.valid === true && Number.isFinite(pointer.x) ? pointer.x : 0;
+  },
+  SlopCity_GetCanvasPointerY: function () {
+    var pointer = window.slopCityCanvasPointer;
+    return pointer && pointer.valid === true && Number.isFinite(pointer.y) ? pointer.y : 0;
+  },
   SlopCity_ReportRuntimeFault: function (kind) {
     try {
       var report = window.slopCityReportUnityFailure;

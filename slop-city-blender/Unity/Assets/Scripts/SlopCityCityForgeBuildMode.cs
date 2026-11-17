@@ -4,6 +4,9 @@ using System.Linq;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.UI;
+#if UNITY_WEBGL && !UNITY_EDITOR
+using System.Runtime.InteropServices;
+#endif
 
 namespace SlopCity
 {
@@ -11,6 +14,12 @@ namespace SlopCity
     [DisallowMultipleComponent]
     public sealed class SlopCityCityForgeBuildMode : MonoBehaviour
     {
+#if UNITY_WEBGL && !UNITY_EDITOR
+        [DllImport("__Internal")] private static extern int SlopCity_HasCanvasPointer();
+        [DllImport("__Internal")] private static extern float SlopCity_GetCanvasPointerX();
+        [DllImport("__Internal")] private static extern float SlopCity_GetCanvasPointerY();
+#endif
+
         public enum View { Streets, Ground, Lots, Buildings, Services, Life }
 
         [SerializeField] private SlopCityCityForgeController controller;
@@ -287,7 +296,7 @@ namespace SlopCity
             // Only a gesture missing from legacy input uses the native event.
             Vector2 screenPosition = useNativeMacFallback
                 ? GuiPointerToCanvasScreenPoint(current, opened ? canvas : launcherCanvas)
-                : Input.mousePosition;
+                : CurrentCityForgePointer();
 
             if (!opened)
             {
@@ -349,6 +358,31 @@ namespace SlopCity
         private static bool LegacyMouseGestureUnavailable()
         {
             return !Input.GetMouseButton(0) && !Input.GetMouseButtonDown(0) && !Input.GetMouseButtonUp(0);
+        }
+
+        /// <summary>
+        /// WebGL may expose legacy input in CSS/page pixels while the shell's
+        /// manually sized canvas and this ScreenSpaceOverlay Canvas use
+        /// backing display pixels. The browser bridge makes the canvas basis
+        /// authoritative for every City Forge mouse hit; native players and
+        /// custom WebGL hosts retain Unity's ordinary input fallback.
+        /// </summary>
+        private static Vector2 CurrentCityForgePointer()
+        {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            try
+            {
+                if (SlopCity_HasCanvasPointer() != 0)
+                {
+                    float x = SlopCity_GetCanvasPointerX();
+                    float y = SlopCity_GetCanvasPointerY();
+                    if (!float.IsNaN(x) && !float.IsInfinity(x) && !float.IsNaN(y) && !float.IsInfinity(y)) return new Vector2(x, y);
+                }
+            }
+            catch (EntryPointNotFoundException) { }
+            catch (DllNotFoundException) { }
+#endif
+            return Input.mousePosition;
         }
 
         /// <summary>
@@ -1096,7 +1130,7 @@ namespace SlopCity
             {
                 // A rare legacy-input miss is being handled through the
                 // guarded native fallback. Every ordinary Mac gesture stays
-                // on this same Input.mousePosition path as other platforms.
+                // on its native event path; WebGL uses its canvas-pixel bridge.
                 mapMousePressed = false;
                 mapMouseDragged = false;
                 return;
@@ -1107,6 +1141,7 @@ namespace SlopCity
                 mapMouseDragged = false;
                 return;
             }
+            Vector2 pointer = CurrentCityForgePointer();
             if (Input.GetMouseButtonDown(0))
             {
                 // The build canvas deliberately owns a full-screen Canvas so
@@ -1118,24 +1153,24 @@ namespace SlopCity
                 // thing allowed to claim this gesture.
                 mapMousePressed = !mouseStartedOverBuildUi;
                 mapMouseDragged = false;
-                mapMouseStart = Input.mousePosition;
+                mapMouseStart = pointer;
                 mapMousePrevious = mapMouseStart;
                 if (mapMousePressed) CaptureMapCell(mapMouseStart);
                 else ClearCapturedMapCell();
             }
             if (mapMousePressed && Input.GetMouseButton(0))
             {
-                Vector2 current = Input.mousePosition;
+                Vector2 current = pointer;
                 if (!mapMouseDragged && Vector2.Distance(current, mapMouseStart) >= MapDragThresholdPixels) mapMouseDragged = true;
                 if (mapMouseDragged) ClearCapturedMapCell();
                 if (mapMouseDragged) PanMap(current - mapMousePrevious, Screen.height);
                 mapMousePrevious = current;
             }
             if (!Input.GetMouseButtonUp(0)) return;
-            bool activate = mapMousePressed && !mapMouseDragged && !BuildUiSurfaceContains(Input.mousePosition);
+            bool activate = mapMousePressed && !mapMouseDragged && !BuildUiSurfaceContains(pointer);
             mapMousePressed = false;
             mapMouseDragged = false;
-            if (activate) ClickCapturedMapCell(Input.mousePosition);
+            if (activate) ClickCapturedMapCell(pointer);
             else ClearCapturedMapCell();
         }
 
@@ -1143,7 +1178,7 @@ namespace SlopCity
         {
             bool nextHasHover = false;
             CityForgeCoord nextHover = default(CityForgeCoord);
-            Vector2 pointer = nativeMacPointerFallback && hasMapGuiPointer ? mapGuiPointer : Input.mousePosition;
+            Vector2 pointer = nativeMacPointerFallback && hasMapGuiPointer ? mapGuiPointer : CurrentCityForgePointer();
             bool pointerDragging = nativeMacPointerFallback ? mapGuiMouseDragged : mapMouseDragged;
             if (!BuildUiSurfaceContains(pointer) && !pointerDragging && TryGetMapCell(pointer, out CityForgeCoord coordinate, out int x, out int z) && coordinate.Equals(selected))
             {
@@ -2095,7 +2130,7 @@ namespace SlopCity
                     observedLauncherPointerActivationSequence = activationSequence;
                     return;
                 }
-                bool mouseInside = LauncherContains(Input.mousePosition);
+                bool mouseInside = LauncherContains(CurrentCityForgePointer());
                 if (Input.GetMouseButtonDown(0))
                 {
                     launcherMousePressedInside = mouseInside;
@@ -2188,15 +2223,17 @@ namespace SlopCity
                 }
                 if (Input.GetMouseButtonDown(0))
                 {
-                    buildUiMouseSurfaceCapture = BuildUiSurfaceContains(Input.mousePosition);
-                    buildUiMouseCapture = buildUiMouseSurfaceCapture ? BuildUiActivatableButtonAt(Input.mousePosition) : null;
+                    Vector2 pointer = CurrentCityForgePointer();
+                    buildUiMouseSurfaceCapture = BuildUiSurfaceContains(pointer);
+                    buildUiMouseCapture = buildUiMouseSurfaceCapture ? BuildUiActivatableButtonAt(pointer) : null;
                     buildUiMousePressFrame = Time.frameCount;
                     mouseStartedOverBuildUi = buildUiMouseSurfaceCapture;
                 }
                 if (Input.GetMouseButtonUp(0))
                 {
                     Button capture = buildUiMouseCapture;
-                    bool activate = buildUiMouseSurfaceCapture && capture && BuildUiActivatableButtonAt(Input.mousePosition) == capture && !BuildUiButtonActivatedOnOrAfter(capture, buildUiMousePressFrame);
+                    Vector2 pointer = CurrentCityForgePointer();
+                    bool activate = buildUiMouseSurfaceCapture && capture && BuildUiActivatableButtonAt(pointer) == capture && !BuildUiButtonActivatedOnOrAfter(capture, buildUiMousePressFrame);
                     buildUiMouseCapture = null;
                     buildUiMouseSurfaceCapture = false;
                     buildUiMousePressFrame = -1;

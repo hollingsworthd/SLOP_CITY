@@ -182,6 +182,77 @@
   <script src="slop-city-browser-media.js?v={{{ PRODUCT_VERSION }}}"></script>
   <script>
     const canvas = document.getElementById("unity-canvas");
+    // City Forge must receive the same lower-left backing-pixel coordinate for
+    // its ScreenSpaceOverlay controls and the map camera. The normal Unity
+    // WebGL input bridge can instead report a CSS/page-space point when this
+    // high-density canvas is positioned below the shell toolbar.
+    let slopCityTrackedFinePointerId = null;
+    window.slopCityCanvasPointer = null;
+    function resetSlopCityCanvasPointer() {
+      slopCityTrackedFinePointerId = null;
+      window.slopCityCanvasPointer = null;
+    }
+    function isSlopCityFinePointer(event) {
+      return !!event && event.isPrimary !== false && (event.pointerType === "mouse" || event.pointerType === "pen");
+    }
+    function slopCityCanvasPoint(event) {
+      const rect = canvas.getBoundingClientRect();
+      const width = Number(canvas.width), height = Number(canvas.height);
+      const clientX = Number(event && event.clientX), clientY = Number(event && event.clientY);
+      if (!rect || !Number.isFinite(rect.left) || !Number.isFinite(rect.bottom)
+        || !Number.isFinite(rect.width) || !Number.isFinite(rect.height)
+        || rect.width <= 0 || rect.height <= 0 || width <= 0 || height <= 0
+        || !Number.isFinite(clientX) || !Number.isFinite(clientY)) return null;
+      const x = (clientX - rect.left) * width / rect.width;
+      const y = (rect.bottom - clientY) * height / rect.height;
+      return Number.isFinite(x) && Number.isFinite(y) ? { x: x, y: y, valid: true } : null;
+    }
+    function trackSlopCityCanvasPointer(event) {
+      if (!isSlopCityFinePointer(event) || document.pointerLockElement === canvas || window.slopCityViewportTransition === true) {
+        resetSlopCityCanvasPointer();
+        return false;
+      }
+      window.slopCityCanvasPointer = slopCityCanvasPoint(event);
+      return window.slopCityCanvasPointer !== null;
+    }
+    function onSlopCityCanvasPointerMove(event) {
+      if (slopCityTrackedFinePointerId !== null && event && event.pointerId !== slopCityTrackedFinePointerId) return;
+      trackSlopCityCanvasPointer(event);
+    }
+    function onSlopCityTrackedPointerMove(event) {
+      if (!event || event.pointerId !== slopCityTrackedFinePointerId) return;
+      trackSlopCityCanvasPointer(event);
+    }
+    function onSlopCityTrackedPointerUp(event) {
+      if (!event || event.pointerId !== slopCityTrackedFinePointerId) return;
+      // Preserve an outside release point. Falling back to a stale in-canvas
+      // coordinate could activate a toolbar control after the pointer left it.
+      trackSlopCityCanvasPointer(event);
+      slopCityTrackedFinePointerId = null;
+    }
+    function onSlopCityTrackedPointerCancel(event) {
+      if (!event || event.pointerId !== slopCityTrackedFinePointerId) return;
+      resetSlopCityCanvasPointer();
+    }
+    function onSlopCityCanvasPointerDown(event) {
+      if (trackSlopCityCanvasPointer(event)) slopCityTrackedFinePointerId = event.pointerId;
+      const finePointer = isSlopCityFinePointer(event);
+      if (finePointer) window.slopCityFinePointerActive = true;
+      else if (event && event.pointerType === "touch") {
+        window.slopCityFinePointerActive = false;
+        if (document.pointerLockElement === canvas && document.exitPointerLock) document.exitPointerLock();
+      }
+      if (graphicsLost || sessionFailed) return;
+      if (unityInstance && window.slopCityTouchControls) status.textContent = "CITY CONNECTED / TOUCH CONTROLS ACTIVE";
+    }
+    function releaseSlopCityCanvasPointerTracking() {
+      resetSlopCityCanvasPointer();
+      canvas.removeEventListener("pointerdown", onSlopCityCanvasPointerDown);
+      canvas.removeEventListener("pointermove", onSlopCityCanvasPointerMove);
+      window.removeEventListener("pointermove", onSlopCityTrackedPointerMove, true);
+      window.removeEventListener("pointerup", onSlopCityTrackedPointerUp, true);
+      window.removeEventListener("pointercancel", onSlopCityTrackedPointerCancel, true);
+    }
     const stage = document.getElementById("stage");
     const gate = document.getElementById("gate");
     const launch = document.getElementById("launch");
@@ -387,6 +458,7 @@
 
     function scheduleViewportGeometry() {
       if (graphicsLost || sessionFailed) return;
+      resetSlopCityCanvasPointer();
       if (viewportRetryTimer !== null) { clearTimeout(viewportRetryTimer); viewportRetryTimer = null; }
       viewportEpoch++;
       window.slopCityViewportTransition = true;
@@ -439,6 +511,7 @@
       document.removeEventListener("fullscreenchange", scheduleViewportGeometry);
       document.removeEventListener("pointerlockchange", onPointerLockChange);
       document.removeEventListener("keydown", capturePausedGamePointerLock, true);
+      releaseSlopCityCanvasPointerTracking();
     }
 
     function releaseCanvasBacking() {
@@ -906,21 +979,23 @@
       } catch (_) {}
     }
     function onPointerLockChange() {
+      if (document.pointerLockElement === canvas) resetSlopCityCanvasPointer();
       if (graphicsLost || sessionFailed) return;
       if (unityInstance && window.slopCityFinePointerActive) status.textContent = document.pointerLockElement === canvas ? "CITY CONNECTED" : "CITY CONNECTED / MOUSE RELEASED";
     }
     document.addEventListener("pointerlockchange", onPointerLockChange);
     document.addEventListener("keydown", capturePausedGamePointerLock, true);
-    canvas.addEventListener("pointerdown", function (event) {
-      const finePointer = event && (event.pointerType === "mouse" || event.pointerType === "pen");
-      if (finePointer) window.slopCityFinePointerActive = true;
-      else if (event && event.pointerType === "touch") {
-        window.slopCityFinePointerActive = false;
-        if (document.pointerLockElement === canvas && document.exitPointerLock) document.exitPointerLock();
-      }
-      if (graphicsLost || sessionFailed) return;
-      if (unityInstance && window.slopCityTouchControls) status.textContent = "CITY CONNECTED / TOUCH CONTROLS ACTIVE";
-    });
+    // Keep the established fine-pointer/touch shell behavior even in an
+    // older host which lacks the richer PointerEvent constructor.
+    canvas.addEventListener("pointerdown", onSlopCityCanvasPointerDown, { passive: true });
+    if (typeof window.PointerEvent === "function") {
+      canvas.addEventListener("pointermove", onSlopCityCanvasPointerMove, { passive: true });
+      // Window capture receives the final point even when a drag exits the
+      // canvas before release, without recording unrelated idle movement.
+      window.addEventListener("pointermove", onSlopCityTrackedPointerMove, true);
+      window.addEventListener("pointerup", onSlopCityTrackedPointerUp, true);
+      window.addEventListener("pointercancel", onSlopCityTrackedPointerCancel, true);
+    }
     canvas.addEventListener("contextmenu", function (event) { event.preventDefault(); });
   </script>
 </body>
