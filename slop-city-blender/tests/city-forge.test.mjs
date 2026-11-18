@@ -108,6 +108,26 @@ test('City Forge maps browser pointer events into backing-canvas pixels for ever
   }
 });
 
+test('City Forge starts browser drafting wider and keeps web controls readable without changing Mac defaults', () => {
+  const source = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeBuildMode.cs', import.meta.url), 'utf8');
+  const awake = source.slice(source.indexOf('private void Awake()'), source.indexOf('private void Update()'));
+  const button = source.slice(source.indexOf('private static Button Button('), source.indexOf('private void SetUi('));
+
+  assert.match(source, /NativeInitialTopDownHeight = 130f/);
+  assert.match(source, /WebGlInitialTopDownHeight = 205f/);
+  assert.match(awake, /#if UNITY_WEBGL && !UNITY_EDITOR[\s\S]*?topDownHeight = WebGlInitialTopDownHeight;/,
+    'only browser players should receive the wider initial Forge survey');
+  assert.match(source, /buildCamera\.orthographicSize = topDownHeight \* \.55f/,
+    'the wider initial height must drive the actual drafting camera');
+  assert.match(button, /size\.y = Mathf\.Max\(size\.y, 40f\);/,
+    'browser action targets must remain comfortably clickable');
+  assert.match(button, /const int buttonFontSize = 15;/);
+  assert.match(button, /const int buttonFontSize = 13;/,
+    'the native desktop geometry remains the established Forge baseline');
+  assert.match(source, /scaler\.referenceResolution = new Vector2\(1280, 720\);/,
+    'controls must not shrink a wide row by changing the shared scaler');
+});
+
 test('City Forge maps display input through the camera viewport when browser presentation uses a render target', () => {
   const buildMode = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeBuildMode.cs', import.meta.url), 'utf8');
   const presentation = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityWebPresentation.cs', import.meta.url), 'utf8');
@@ -193,6 +213,31 @@ test('City Forge physical ground has no artificial seams and its island exterior
   assert.match(skyVista, /bool islandContext = SlopCityCityForgeTravel\.IsSkySprawlPosition\(followTarget\.position\);/);
   assert.match(skyVista, /SetDistantGroundSuppressed\(islandContext\);/, 'removing fake clouds must not restore the authored distant floor outside the island');
   assert.match(skyVista, /SetOceanVisible\(islandContext\);/, 'the exterior should read as non-walkable water rather than generated city land');
+});
+
+test('City Forge streams the deterministic street-level continuation around player-owned plans', () => {
+  const runtime = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeRuntime.cs', import.meta.url), 'utf8');
+  const controller = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeController.cs', import.meta.url), 'utf8');
+  const bootstrap = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeOfflineBootstrap.cs', import.meta.url), 'utf8');
+  const follower = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeOfflineStreamFollower.cs', import.meta.url), 'utf8');
+  const activate = runtime.slice(runtime.indexOf('public void ActivateCityForgeChunk'), runtime.indexOf('public void ReleaseCityForgeChunk'));
+  const scenic = runtime.slice(runtime.indexOf('private void BuildScenicCityContinuation'), runtime.indexOf('private void BuildGround('));
+  const stream = controller.slice(controller.indexOf('public void StreamAt('), controller.indexOf('public void SetBuildMode('));
+
+  assert.ok(activate.indexOf('BuildScenicCityContinuation(instance, chunk);') < activate.indexOf('BuildGround(instance, chunk)'),
+    'unaccepted chunks must receive their Forge street fabric before an accepted plan is rendered');
+  assert.match(scenic, /chunk\.acceptedPlan != null/, 'accepted plans must replace, rather than layer over, scenic presentation');
+  assert.match(scenic, /ScenicAvenue_Centre_NS|ScenicAvenue_Centre_EW/);
+  assert.match(scenic, /ScenicBuilding_|ScenicWindowFront|ScenicLamp_/,
+    'the restored ground view must include deterministic buildings, windows, and street lamps');
+  assert.match(scenic, /BuildScenicTravelSurface/);
+  assert.match(runtime, /ScenicFacadeKits/);
+  assert.match(runtime, /ScenicRoofKits/);
+  assert.doesNotMatch(stream, /!HasAcceptedIslandGround\(coordinate\)/,
+    'the bounded compiler window must include the unaccepted visual continuation');
+  assert.match(bootstrap, /controller\.StreamAt\(entry\);[\s\S]*?follower\.SetKnownCenter\(entry\);/);
+  assert.doesNotMatch(follower, /HasAcceptedIslandGround/,
+    'the offline follower must keep the presentation window alive before the first accepted ground cell');
 });
 
 test('City Forge map ground meets the fixed Old City core without duplicate layers', () => {

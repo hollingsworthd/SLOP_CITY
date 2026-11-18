@@ -26,7 +26,13 @@ namespace SlopCity
         [SerializeField] private Camera buildCamera;
         [SerializeField] private MonoBehaviour previewSinkComponent;
         [SerializeField] private KeyCode toggleKey = KeyCode.B;
-        [SerializeField, Range(40f, 280f)] private float topDownHeight = 130f;
+        // Keep native drafting at its established framing, while giving the
+        // browser enough initial context to read the surrounding Forge blocks
+        // without immediately reaching for the wheel.  The normal 40–280m
+        // zoom range remains available on both targets.
+        private const float NativeInitialTopDownHeight = 130f;
+        private const float WebGlInitialTopDownHeight = 205f;
+        [SerializeField, Range(40f, 280f)] private float topDownHeight = NativeInitialTopDownHeight;
         [SerializeField] private bool editingEnabled = true;
         private const int CityForgeCanvasSortingOrder = 300;
         private Canvas canvas;
@@ -215,6 +221,9 @@ namespace SlopCity
 
         private void Awake()
         {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            topDownHeight = WebGlInitialTopDownHeight;
+#endif
             if (!controller) controller = GetComponent<SlopCityCityForgeController>();
             if (!buildCamera) buildCamera = Camera.main;
             previewSink = previewSinkComponent as ISlopCityCityForgeDraftPreviewSink ?? FindPreviewSink();
@@ -2423,11 +2432,21 @@ namespace SlopCity
         }
         private static Button Button(Transform parent, string label, Vector2 anchored, Vector2 size, bool invokeOnMousePointerDown = false)
         {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            // Browser backing-canvas scaling can make a nominal 30px control
+            // uncomfortably small despite a desktop-width viewport.  Preserve
+            // the established Mac geometry and give every browser action a
+            // consistent, touch-safe vertical target instead.
+            size.y = Mathf.Max(size.y, 40f);
+            const int buttonFontSize = 15;
+#else
+            const int buttonFontSize = 13;
+#endif
             GameObject item = new GameObject("Button_" + label, typeof(RectTransform), typeof(Image)); item.transform.SetParent(parent, false);
             RectTransform rect = item.GetComponent<RectTransform>(); rect.anchorMin = new Vector2(0f, 1f); rect.anchorMax = new Vector2(0f, 1f); rect.pivot = new Vector2(0f, 1f); rect.anchoredPosition = anchored; rect.sizeDelta = size;
             Image image = item.GetComponent<Image>(); image.color = new Color(.23f, .34f, .25f, 1f);
             SlopCityCityForgeActionButton button = item.AddComponent<SlopCityCityForgeActionButton>(); button.InvokeOnMousePointerDown = invokeOnMousePointerDown;
-            Text text = Label(item.transform, label, 13, Vector2.zero, size); text.alignment = TextAnchor.MiddleCenter; RectTransform textRect = text.GetComponent<RectTransform>(); textRect.anchorMin = Vector2.zero; textRect.anchorMax = Vector2.one; textRect.pivot = new Vector2(.5f, .5f); textRect.anchoredPosition = Vector2.zero; return button;
+            Text text = Label(item.transform, label, buttonFontSize, Vector2.zero, size); text.alignment = TextAnchor.MiddleCenter; RectTransform textRect = text.GetComponent<RectTransform>(); textRect.anchorMin = Vector2.zero; textRect.anchorMax = Vector2.one; textRect.pivot = new Vector2(.5f, .5f); textRect.anchoredPosition = Vector2.zero; return button;
         }
         private void SetUi(bool visible) { if (canvas) canvas.gameObject.SetActive(visible); }
         private void RefreshUi()

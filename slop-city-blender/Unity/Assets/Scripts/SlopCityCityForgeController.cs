@@ -867,10 +867,11 @@ namespace SlopCity
                 for (int z = -activeChunkRadius; z <= activeChunkRadius; z++)
                 {
                     CityForgeCoord coordinate = new CityForgeCoord(center.x + x, center.z + z);
-                    // The compiler receives real island geography only. Empty
-                    // draft/legacy records remain editable, but must not turn
-                    // into streamed scene roots outside the built coastline.
-                    if (!SlopCityCityForge.IsBuildable(coordinate) || !HasAcceptedIslandGround(coordinate)) continue;
+                    // Unaccepted coordinates stream their deterministic Forge
+                    // continuation.  They remain outside accepted state: the
+                    // runtime replaces that presentation only after a player
+                    // commits real ground, roads, lots, or buildings.
+                    if (!SlopCityCityForge.IsBuildable(coordinate)) continue;
                     requested.Add(Resolve(coordinate));
                 }
             compiler.Reconcile(center, requested, constrainedWebGl);
