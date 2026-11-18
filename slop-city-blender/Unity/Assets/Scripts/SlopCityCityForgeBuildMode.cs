@@ -26,13 +26,12 @@ namespace SlopCity
         [SerializeField] private Camera buildCamera;
         [SerializeField] private MonoBehaviour previewSinkComponent;
         [SerializeField] private KeyCode toggleKey = KeyCode.B;
-        // Keep native drafting at its established framing, while giving the
-        // browser enough initial context to read the surrounding Forge blocks
-        // without immediately reaching for the wheel.  The normal 40–280m
-        // zoom range remains available on both targets.
-        private const float NativeInitialTopDownHeight = 130f;
-        private const float WebGlInitialTopDownHeight = 280f;
-        [SerializeField, Range(40f, 280f)] private float topDownHeight = NativeInitialTopDownHeight;
+        // Begin with the active 72m block and its immediate shoreline legible.
+        // The same 40–280m zoom range remains available on every target, but
+        // a broad browser-only opening view made the protected Old City and
+        // distant presentation tiles read as a broken planning surface.
+        private const float InitialTopDownHeight = 130f;
+        [SerializeField, Range(40f, 280f)] private float topDownHeight = InitialTopDownHeight;
         [SerializeField] private bool editingEnabled = true;
         private const int CityForgeCanvasSortingOrder = 300;
         private Canvas canvas;
@@ -236,9 +235,6 @@ namespace SlopCity
 
         private void Awake()
         {
-#if UNITY_WEBGL && !UNITY_EDITOR
-            topDownHeight = WebGlInitialTopDownHeight;
-#endif
             if (!controller) controller = GetComponent<SlopCityCityForgeController>();
             if (!buildCamera) buildCamera = Camera.main;
             previewSink = previewSinkComponent as ISlopCityCityForgeDraftPreviewSink ?? FindPreviewSink();

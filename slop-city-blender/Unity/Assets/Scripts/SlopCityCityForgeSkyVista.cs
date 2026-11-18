@@ -39,9 +39,21 @@ namespace SlopCity
         private void LateUpdate()
         {
             if (!followTarget) return;
-            bool islandContext = SlopCityCityForgeTravel.IsSkySprawlPosition(followTarget.position);
+            // Opening Build Mode moves the shared camera above a City Forge
+            // block while the first-person root can still be inside Old City.
+            // Treat that orthographic camera as island context too, otherwise
+            // the planner exposes the authored distant ground/clear colour
+            // instead of the same water that surrounds an unclaimed island.
+            bool mapContext = HasActiveOverheadMapCamera();
+            bool islandContext = mapContext || SlopCityCityForgeTravel.IsSkySprawlPosition(followTarget.position);
             SetDistantGroundSuppressed(islandContext);
             SetOceanVisible(islandContext);
+        }
+
+        private static bool HasActiveOverheadMapCamera()
+        {
+            Camera mapCamera = Camera.main;
+            return mapCamera && mapCamera.enabled && mapCamera.gameObject.activeInHierarchy && mapCamera.orthographic;
         }
 
         private void OnDisable()
@@ -61,21 +73,19 @@ namespace SlopCity
             EnsureOcean();
             if (!oceanBody) return;
             Vector3 point = followTarget ? followTarget.position : transform.position;
-#if UNITY_WEBGL && !UNITY_EDITOR
             Camera mapCamera = Camera.main;
-            bool mapMode = mapCamera && mapCamera.orthographic;
+            bool mapMode = mapCamera && mapCamera.enabled && mapCamera.gameObject.activeInHierarchy && mapCamera.orthographic;
             if (mapMode) point = mapCamera.transform.position;
+#if UNITY_WEBGL && !UNITY_EDITOR
             SetBrowserOceanStyle(mapMode);
-            // The browser map is allowed to pan much farther than a first-person
-            // step.  Center a deliberately visual-only ocean field on the
-            // map camera so neither its edge nor a glossy specular highlight
-            // appears to slide across the planning grid.
+#endif
+            // Build Mode may pan far away from the first-person root. Center
+            // this visual-only water field on its map camera on every target,
+            // so the planner never reveals the authored distant ground or a
+            // water edge while it is editing an island.
             oceanBody.transform.localScale = Vector3.one * ((mapMode ? MapOceanSpan : OceanSpan) / 10f);
             oceanBody.transform.position = new Vector3(mapMode ? point.x : SnapOcean(point.x), OceanElevation,
                 mapMode ? point.z : SnapOcean(point.z));
-#else
-            oceanBody.transform.position = new Vector3(SnapOcean(point.x), OceanElevation, SnapOcean(point.z));
-#endif
             if (!oceanBody.activeSelf) oceanBody.SetActive(true);
         }
 

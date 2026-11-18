@@ -72,6 +72,12 @@ namespace SlopCity
         private GameObject strategicMap;
         private GameObject buildOverlay;
         private Material buildOverlayMaterial;
+        // Build Mode has its own bounded map representation.  Keep the
+        // streamed street-level roots resident for a quick return to play,
+        // but do not composite their full 3D city over the strategic map and
+        // draft layer.  That mixed two representations of the same blocks
+        // and made the planner look disconnected from its selected island.
+        private bool buildOverlayPresentationActive;
 
         public int ActiveChunkCount { get { return chunks.Count; } }
         public int ActiveFixtureCount { get { return fixtures.Count; } }
@@ -133,10 +139,11 @@ namespace SlopCity
                 BuildLandmarks(instance, chunk);
                 BuildLife(instance, chunk);
                 BuildScreens(instance, chunk);
-                // The planning overlay is additive. Keep accepted chunks
-                // visible beneath it so their island ground never disappears
-                // while a player edits the next change.
-                root.SetActive(true);
+                // Chunks arriving while Build Mode is open still finish their
+                // normal bounded compilation, but stay out of the planner's
+                // single-map presentation until the player returns to first
+                // person.
+                root.SetActive(!buildOverlayPresentationActive);
                 chunks.Add(coord, instance);
             }
             catch (Exception error)
@@ -281,17 +288,25 @@ namespace SlopCity
             CityForgeDirection roadDirection, SlopCityCityForgeBuildMode.View view,
             bool draftIsValid)
         {
-            DestroyBuildOverlay();
-            if (head == null || draft == null || !draft.coord.Equals(selected)) return;
+            if (head == null || draft == null || !draft.coord.Equals(selected))
+            {
+                DestroyBuildOverlay(true);
+                return;
+            }
+
+            // Replace only the lightweight draft presentation.  The physical
+            // roots remain hidden throughout consecutive edits so a scheduled
+            // Destroy cannot flash them through the next map frame.
+            DestroyBuildOverlay(false);
+            SetChunkPresentationForBuildOverlay(true);
 
             buildOverlay = new GameObject("CityForgeBuildOverlay_" + selected);
             buildOverlay.transform.SetParent(transform, false);
             buildOverlay.transform.localPosition = ChunkOrigin(selected);
             Color status = draftIsValid ? new Color(.55f, .94f, .42f) : new Color(1f, .57f, .18f);
-            // Keep the editor additive and quiet: a dark selected-chunk slab,
-            // border, or replacement grid made one block look corrupt and hid
-            // the streamed ground beneath it. Clicks raycast directly to the
-            // world, so only the actual draft state needs a compact overlay.
+            // Keep the planner quiet: a dark selected-chunk slab, border, or
+            // replacement grid made one block look corrupt. Its dedicated
+            // map layer therefore shows only the actual draft state.
             BuildEditorGround(buildOverlay.transform, draft);
             BuildEditorLots(buildOverlay.transform, draft);
             BuildEditorRoads(buildOverlay.transform, draft, status);
@@ -304,10 +319,10 @@ namespace SlopCity
 
         public void ClearCityForgeBuildOverlay()
         {
-            DestroyBuildOverlay();
+            DestroyBuildOverlay(true);
         }
 
-        private void DestroyBuildOverlay()
+        private void DestroyBuildOverlay(bool restorePhysicalChunks)
         {
             if (buildOverlay)
             {
@@ -318,6 +333,21 @@ namespace SlopCity
                 Destroy(buildOverlay);
                 buildOverlay = null;
             }
+            if (restorePhysicalChunks) SetChunkPresentationForBuildOverlay(false);
+        }
+
+        /// <summary>
+        /// City Forge never unloads a nearby physical chunk merely because a
+        /// player opens the planner.  It only switches which bounded
+        /// presentation owns the camera: a strategic/draft map while editing,
+        /// or the compiled street-level scene while walking.
+        /// </summary>
+        private void SetChunkPresentationForBuildOverlay(bool active)
+        {
+            if (buildOverlayPresentationActive == active) return;
+            buildOverlayPresentationActive = active;
+            foreach (ChunkInstance instance in chunks.Values)
+                if (instance != null && instance.root) instance.root.SetActive(!active);
         }
 
         private void BuildEditorLots(Transform root, CityForgeChunkPlan draft)

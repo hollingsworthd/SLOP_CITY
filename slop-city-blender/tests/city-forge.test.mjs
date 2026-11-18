@@ -108,21 +108,22 @@ test('City Forge maps browser pointer events into backing-canvas pixels for ever
   }
 });
 
-test('City Forge starts browser drafting wider and keeps browser and mobile controls readable without changing Mac defaults', () => {
+test('City Forge starts focused and keeps browser and mobile controls readable', () => {
   const source = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeBuildMode.cs', import.meta.url), 'utf8');
   const awake = source.slice(source.indexOf('private void Awake()'), source.indexOf('private void Update()'));
   const button = source.slice(source.indexOf('private Button Button('), source.indexOf('private InputField IntegerInput('));
   const canvas = source.slice(source.indexOf('private void ConfigureCityForgeCanvas('), source.indexOf('private static Color CityForgeToolbarColor()'));
   const touchLayout = source.slice(source.indexOf('private void LayoutTouchCityForgeUi(bool force)'), source.indexOf('private static void LayoutTouchRect('));
 
-  assert.match(source, /NativeInitialTopDownHeight = 130f/);
-  assert.match(source, /WebGlInitialTopDownHeight = 280f/);
-  assert.match(source, /\[SerializeField, Range\(40f, 280f\)\] private float topDownHeight = NativeInitialTopDownHeight;/,
-    'the browser default must use the existing shared 40–280m zoom bounds without changing native framing');
-  assert.match(awake, /#if UNITY_WEBGL && !UNITY_EDITOR[\s\S]*?topDownHeight = WebGlInitialTopDownHeight;/,
-    'only browser players should receive the wider initial Forge survey');
+  assert.match(source, /InitialTopDownHeight = 130f/);
+  assert.doesNotMatch(source, /WebGlInitialTopDownHeight/,
+    'browser planning must begin at the same focused scale as the established editor');
+  assert.match(source, /\[SerializeField, Range\(40f, 280f\)\] private float topDownHeight = InitialTopDownHeight;/,
+    'the focused default must preserve the existing 40–280m zoom bounds');
+  assert.doesNotMatch(awake, /topDownHeight\s*=/,
+    'opening a browser game must not replace the focused serialized default with a distant survey');
   assert.match(source, /buildCamera\.orthographicSize = topDownHeight \* \.55f/,
-    'the wider initial height must drive the actual drafting camera');
+    'the focused initial height must drive the actual drafting camera');
   assert.match(button, /size\.y = Mathf\.Max\(size\.y, 40f\);/,
     'browser action targets must remain comfortably clickable');
   assert.match(button, /buttonFontSize = 15;/);
@@ -217,28 +218,32 @@ test('City Forge omits visual strategic grids and retains one safe cross-chunk a
   assert.match(toolChanges, /CancelPendingMapAction\(\); roadClass =/, 'tool changes must cancel, not reinterpret, a queued action');
 });
 
-test('City Forge keeps streamed chunks visible under its bounded opaque toolbar without rewriting camera clear state', () => {
+test('City Forge uses one planning layer and restores streamed chunks after editing', () => {
   const buildMode = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeBuildMode.cs', import.meta.url), 'utf8');
   const runtime = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeRuntime.cs', import.meta.url), 'utf8');
   const activate = runtime.slice(runtime.indexOf('public void ActivateCityForgeChunk'), runtime.indexOf('public void ReleaseCityForgeChunk'));
   const overlay = runtime.slice(runtime.indexOf('public void ShowCityForgeBuildOverlay('), runtime.indexOf('public void ClearCityForgeBuildOverlay()'));
+  const clear = runtime.slice(runtime.indexOf('public void ClearCityForgeBuildOverlay()'), runtime.indexOf('private void BuildEditorLots('));
   const camera = buildMode.slice(buildMode.indexOf('private void CaptureCamera()'), buildMode.indexOf('private void FocusCamera()'));
   const ui = buildMode.slice(buildMode.indexOf('private void CreateUi()'), buildMode.indexOf('private void RegisterViewControl(View scope, Button button)'));
   const toolbarColor = buildMode.slice(buildMode.indexOf('private static Color CityForgeToolbarColor()'), buildMode.indexOf('private static Color RoadColor('));
 
-  assert.match(activate, /root\.SetActive\(true\);/,
-    'an accepted streamed chunk must be activated after its physical ground and fixtures are compiled');
-  assert.doesNotMatch(runtime, /buildOverlayPresentationActive|SetChunkPresentationForBuildOverlay/,
-    'opening the planning overlay must never hide or disable a streamed physical chunk');
-  assert.doesNotMatch(overlay, /SetChunkPresentationForBuildOverlay|root\.SetActive\(false\)/,
-    'the draft layer is additive rather than a replacement for visible accepted ground');
+  assert.match(runtime, /private bool buildOverlayPresentationActive;/);
+  assert.match(activate, /root\.SetActive\(!buildOverlayPresentationActive\);/,
+    'a chunk streamed during editing must remain compiled but hidden from the planning map');
+  assert.match(overlay, /DestroyBuildOverlay\(false\);[\s\S]*?SetChunkPresentationForBuildOverlay\(true\);/,
+    'the draft layer must hide physical street-level roots before it draws the map representation');
+  assert.match(clear, /DestroyBuildOverlay\(true\);/,
+    'leaving the editor must restore the retained physical chunks for first-person play');
+  assert.match(runtime, /private void SetChunkPresentationForBuildOverlay\(bool active\)[\s\S]*?instance\.root\.SetActive\(!active\);/,
+    'the presentation switch must keep every streamed chunk resident while toggling only visibility');
   assert.doesNotMatch(camera, /clearFlags|backgroundColor/,
     'Build Mode must preserve the active camera presentation instead of producing a dark map with a rewritten clear state');
   assert.match(ui, /new GameObject\("CityForgeToolbar", typeof\(RectTransform\), typeof\(Image\)\)/,
     'only the bounded toolbar, rather than the screen-wide canvas root, owns an opaque panel');
   assert.match(ui, /panel\.color = CityForgeToolbarColor\(\);/);
   assert.match(toolbarColor, /return new Color\(\.025f, \.045f, \.06f, 1f\);/,
-    'the browser toolbar remains opaque while the world camera stays unchanged');
+    'the browser toolbar remains opaque while the map owns the view behind it');
 });
 
 test('City Forge supports rectangular building taps, queued dimensions, and tap-to-demolish mode', () => {
@@ -405,13 +410,18 @@ test('City Forge physical ground has no artificial seams and its island exterior
   assert.doesNotMatch(ground, /cell - \.20f/, 'valid neighbouring ground cells must not leave a visual no-build slit');
   assert.match(ground, /new Vector3\(cell - \.92f, \.88f, cell - \.92f\)/, 'only the island underside remains inset at a true exterior edge');
   assert.doesNotMatch(skyVista, /CityForgeSkyVista_Clouds|SkyCloud_|CreatePrimitive\(PrimitiveType\.Sphere\)|RenderSettings\.fog/, 'the runtime must not generate cloud puffs or cloud fog');
-  assert.match(skyVista, /bool islandContext = SlopCityCityForgeTravel\.IsSkySprawlPosition\(followTarget\.position\);/);
+  assert.match(skyVista, /bool mapContext = HasActiveOverheadMapCamera\(\);/,
+    'Build Mode must be recognised even while the first-person root remains in Old City');
+  assert.match(skyVista, /bool islandContext = mapContext \|\| SlopCityCityForgeTravel\.IsSkySprawlPosition\(followTarget\.position\);/);
+  assert.match(skyVista, /private static bool HasActiveOverheadMapCamera\(\)[\s\S]*?Camera mapCamera = Camera\.main;[\s\S]*?mapCamera\.orthographic/);
   assert.match(skyVista, /SetDistantGroundSuppressed\(islandContext\);/, 'removing fake clouds must not restore the authored distant floor outside the island');
   assert.match(skyVista, /SetOceanVisible\(islandContext\);/, 'the exterior should read as non-walkable water rather than generated city land');
   assert.match(skyVista, /private const float MapOceanSpan = 1536f;/,
     'the browser map must cover its wider overhead viewport without exposing a moving water edge');
-  assert.match(skyVista, /bool mapMode = mapCamera && mapCamera\.orthographic;/,
-    'only the overhead browser map may switch ocean presentation');
+  assert.match(skyVista, /bool mapMode = mapCamera && mapCamera\.enabled && mapCamera\.gameObject\.activeInHierarchy && mapCamera\.orthographic;/,
+    'only an active overhead map may switch ocean presentation');
+  assert.match(skyVista, /oceanBody\.transform\.localScale = Vector3\.one \* \(\(mapMode \? MapOceanSpan : OceanSpan\) \/ 10f\);/,
+    'the map ocean must cover the planner on every supported target');
   assert.match(skyVista, /SetBrowserOceanStyle\(mapMode\);/,
     'the map must not use the street-level glossy ocean material');
 });
