@@ -699,15 +699,22 @@ namespace SlopCity
 
         /// <summary>
         /// Untouched City Forge coordinates remain player-owned: they have no
-        /// accepted ground, streets, fixtures, or save records.  They still
+        /// accepted ground, streets, fixtures, or save records. They still
         /// need the deterministic Forge city fabric that makes the Sprawl read
-        /// as a continuation of the Old City at street level.  A real accepted
-        /// ChunkPlan replaces this bounded presentation outright.
+        /// as a continuation of the Old City at street level. Accepted plans
+        /// keep every laid cell and authored feature, while the unclaimed
+        /// surrounding space retains collider-free visual city fabric.
         /// </summary>
         private void BuildScenicCityContinuation(ChunkInstance instance, CityForgeResolvedChunk chunk)
         {
             if (instance == null || !instance.root || chunk == null || chunk.baseChunk == null
-                || chunk.acceptedPlan != null || !SlopCityCityForge.IsBuildable(instance.coord)) return;
+                || !SlopCityCityForge.IsBuildable(instance.coord)) return;
+
+            if (chunk.acceptedPlan != null)
+            {
+                BuildScenicAcceptedInfill(instance, chunk);
+                return;
+            }
 
             CityForgeBaseChunk baseChunk = chunk.baseChunk;
             const float chunkSize = SlopCityCityForge.ChunkSizeMeters;
@@ -741,6 +748,166 @@ namespace SlopCity
             BuildScenicLamp(cityscape.transform, "ScenicLamp_SE", new Vector3(40.3f, -.19f, 31.7f), seed + 2u);
             BuildScenicLamp(cityscape.transform, "ScenicLamp_NW", new Vector3(31.7f, -.19f, 40.3f), seed + 3u);
             BuildScenicLamp(cityscape.transform, "ScenicLamp_NE", new Vector3(40.3f, -.19f, 40.3f), seed + 4u);
+        }
+
+        /// <summary>
+        /// A plan owns every laid ground cell as well as its roads, parcels,
+        /// and buildings. Only a ground-only plan may receive this scenic
+        /// continuation in its genuinely unclaimed surrounding space. Any
+        /// authored geometry, screen, road host, or life record owns the
+        /// complete chunk presentation instead, avoiding approximate footprint
+        /// math around interactive objects.
+        /// </summary>
+        private static void BuildScenicAcceptedInfill(ChunkInstance instance, CityForgeResolvedChunk chunk)
+        {
+            CityForgeChunkPlan plan = chunk == null ? null : chunk.acceptedPlan;
+            CityForgeBaseChunk baseChunk = chunk == null ? null : chunk.baseChunk;
+            if (instance == null || !instance.root || plan == null || baseChunk == null) return;
+            if (!IsScenicAcceptedInfillEligible(plan, chunk)) return;
+
+            HashSet<int> reserved = ScenicReservedCells(plan, chunk.roads);
+            const float chunkSize = SlopCityCityForge.ChunkSizeMeters;
+            GameObject cityscape = new GameObject("ScenicAcceptedInfill");
+            cityscape.transform.SetParent(instance.root.transform, false);
+
+            CityForgeRoadClass avenue = ScenicRoadClass(baseChunk);
+            // Keep the continuation at the same street datum without adding a
+            // whole-chunk travel collider beneath a player-shaped island.
+            if (ScenicCellsAreClear(reserved, 3, 5, 0, 8))
+                BuildScenicAvenue(cityscape.transform, "ScenicInfillAvenue_Centre_NS", new Vector3(chunkSize * .5f, .015f, chunkSize * .5f), chunkSize, true, avenue);
+            if (ScenicCellsAreClear(reserved, 0, 8, 3, 5))
+                BuildScenicAvenue(cityscape.transform, "ScenicInfillAvenue_Centre_EW", new Vector3(chunkSize * .5f, .015f, chunkSize * .5f), chunkSize, false, avenue);
+
+            int scenicBuildings = 0;
+            if (BuildScenicInfillBuildingIfClear(cityscape.transform, baseChunk, reserved, 0, new Vector3(18f, 0f, 18f), 0, 3, 0, 3)) scenicBuildings++;
+            if (BuildScenicInfillBuildingIfClear(cityscape.transform, baseChunk, reserved, 1, new Vector3(54f, 0f, 18f), 5, 8, 0, 3)) scenicBuildings++;
+            if (BuildScenicInfillBuildingIfClear(cityscape.transform, baseChunk, reserved, 2, new Vector3(18f, 0f, 54f), 0, 3, 5, 8)) scenicBuildings++;
+            if (BuildScenicInfillBuildingIfClear(cityscape.transform, baseChunk, reserved, 3, new Vector3(54f, 0f, 54f), 5, 8, 5, 8)) scenicBuildings++;
+
+            uint seed = StableHash(baseChunk.baseHash + "|scenic-city");
+            if (ScenicCellsAreClear(reserved, 3, 4, 3, 4))
+                BuildScenicLamp(cityscape.transform, "ScenicInfillLamp_SW", new Vector3(31.7f, 0f, 31.7f), seed + 1u);
+            if (ScenicCellsAreClear(reserved, 4, 5, 3, 4))
+                BuildScenicLamp(cityscape.transform, "ScenicInfillLamp_SE", new Vector3(40.3f, 0f, 31.7f), seed + 2u);
+            if (ScenicCellsAreClear(reserved, 3, 4, 4, 5))
+                BuildScenicLamp(cityscape.transform, "ScenicInfillLamp_NW", new Vector3(31.7f, 0f, 40.3f), seed + 3u);
+            if (ScenicCellsAreClear(reserved, 4, 5, 4, 5))
+                BuildScenicLamp(cityscape.transform, "ScenicInfillLamp_NE", new Vector3(40.3f, 0f, 40.3f), seed + 4u);
+
+            // Sparse ground-only islands can split all four large blocks while
+            // leaving a genuinely unclaimed void cell. Give that surrounding
+            // space a compact Forge facade rather than treating a player-laid
+            // cell as an unrecorded building.
+            if (scenicBuildings == 0)
+            {
+                int cell = FindScenicInfillCell(reserved);
+                if (cell >= 0)
+                {
+                    BuildScenicInfillFacade(cityscape.transform, baseChunk, cell, seed);
+                    int x = cell % SlopCityCityForge.GridSize, z = cell / SlopCityCityForge.GridSize;
+                    float cellSize = SlopCityCityForge.CellSizeMeters;
+                    BuildScenicLamp(cityscape.transform, "ScenicInfillLamp_" + cell,
+                        new Vector3((x + .90f) * cellSize, 0f, (z + .10f) * cellSize), seed + (uint)(cell + 5));
+                }
+            }
+        }
+
+        private static bool BuildScenicInfillBuildingIfClear(Transform parent, CityForgeBaseChunk baseChunk, HashSet<int> reserved,
+            int index, Vector3 position, int minimumX, int maximumX, int minimumZ, int maximumZ)
+        {
+            if (!ScenicCellsAreClear(reserved, minimumX, maximumX, minimumZ, maximumZ)) return false;
+            BuildScenicBuilding(parent, baseChunk, index, position);
+            return true;
+        }
+
+        private static HashSet<int> ScenicReservedCells(CityForgeChunkPlan plan, IEnumerable<CityForgeRoad> roads)
+        {
+            HashSet<int> reserved = new HashSet<int>();
+            if (plan == null) return reserved;
+            // BuildLife always contributes its small CityPulse fixture near
+            // local (4, 4), even in an otherwise ground-only plan. Reserve the
+            // containing cell so the compact fallback cannot enclose it.
+            reserved.Add(0);
+            foreach (int cell in (plan.groundCells ?? new List<int>()).Where(IsScenicCell)) reserved.Add(cell);
+            foreach (CityForgeParcel parcel in (plan.parcels ?? new List<CityForgeParcel>()).Where(item => item != null && item.cells != null))
+                foreach (int cell in parcel.cells.Where(IsScenicCell)) reserved.Add(cell);
+            foreach (CityForgeRoad road in (roads ?? Enumerable.Empty<CityForgeRoad>()).Where(item => item != null))
+                for (int cell = 0; cell < SlopCityCityForge.GridSize * SlopCityCityForge.GridSize; cell++)
+                    if (SlopCityCityForge.RoadTouchesCell(road, cell)) reserved.Add(cell);
+            return reserved;
+        }
+
+        private static bool IsScenicAcceptedInfillEligible(CityForgeChunkPlan plan, CityForgeResolvedChunk chunk)
+        {
+            if (plan == null || chunk == null) return false;
+            // Do not approximate physical footprint coverage. Once a plan has
+            // any authored or interactive content, its own compiled geometry
+            // is the sole street-level presentation.
+            if ((plan.roads ?? new List<CityForgeRoad>()).Any()
+                || (plan.removedRoadEdges ?? new List<string>()).Any()
+                || (plan.parcels ?? new List<CityForgeParcel>()).Any()
+                || (plan.buildings ?? new List<CityForgeBuilding>()).Any()
+                || (plan.services ?? new List<CityForgeService>()).Any()
+                || (plan.landmarks ?? new List<CityForgeLandmark>()).Any()
+                || (plan.screens ?? new List<CityForgeScreen>()).Any()
+                || (plan.situations ?? new List<CityForgeSituationState>()).Any()) return false;
+            if ((chunk.roads ?? new List<CityForgeRoad>()).Any()
+                || (chunk.screens ?? new List<CityForgeResolvedScreen>()).Any()) return false;
+            CityForgeCityPulse pulse = chunk.pulse;
+            return pulse == null
+                || (!((pulse.residentRoles ?? new List<string>()).Any(item => !string.IsNullOrEmpty(item)))
+                    && !(pulse.persistedSituations ?? new List<CityForgeSituationState>()).Any(item => item != null)
+                    && !(pulse.availableSituations ?? new List<string>()).Any(item => !string.IsNullOrEmpty(item))
+                    && !(pulse.availableSituationOpportunities ?? new List<CityForgeSituationOpportunity>()).Any(item => item != null));
+        }
+
+        private static bool ScenicCellsAreClear(HashSet<int> reserved, int minimumX, int maximumX, int minimumZ, int maximumZ)
+        {
+            for (int z = minimumZ; z <= maximumZ; z++)
+                for (int x = minimumX; x <= maximumX; x++)
+                    if (reserved != null && reserved.Contains(x + z * SlopCityCityForge.GridSize)) return false;
+            return true;
+        }
+
+        private static int FindScenicInfillCell(HashSet<int> reserved)
+        {
+            int candidate = -1, bestDistance = int.MinValue;
+            for (int cell = 0; cell < SlopCityCityForge.GridSize * SlopCityCityForge.GridSize; cell++)
+            {
+                if (reserved != null && reserved.Contains(cell)) continue;
+                int x = cell % SlopCityCityForge.GridSize, z = cell / SlopCityCityForge.GridSize;
+                int distance = Mathf.Abs(x - 4) + Mathf.Abs(z - 4);
+                if (candidate < 0 || distance > bestDistance || (distance == bestDistance && cell < candidate))
+                {
+                    candidate = cell;
+                    bestDistance = distance;
+                }
+            }
+            return candidate;
+        }
+
+        private static bool IsScenicCell(int cell)
+        {
+            return cell >= 0 && cell < SlopCityCityForge.GridSize * SlopCityCityForge.GridSize;
+        }
+
+        private static void BuildScenicInfillFacade(Transform parent, CityForgeBaseChunk baseChunk, int cell, uint seed)
+        {
+            int x = cell % SlopCityCityForge.GridSize, z = cell / SlopCityCityForge.GridSize;
+            float cellSize = SlopCityCityForge.CellSizeMeters;
+            float span = cellSize * .68f;
+            float height = Mathf.Clamp(ScenicBuildingHeight(baseChunk.skylineId, seed + (uint)cell, cell % 4) * .58f, 7.5f, 16f);
+            GameObject facade = new GameObject("ScenicInfillFacade_" + cell);
+            facade.transform.SetParent(parent, false);
+            facade.transform.localPosition = new Vector3((x + .5f) * cellSize, 0f, (z + .5f) * cellSize);
+            facade.transform.localRotation = Quaternion.Euler(0f, (float)((seed >> 3) % 4u) * 90f, 0f);
+            string kit = BuildingKits[(int)(seed % (uint)BuildingKits.Length)];
+            string facadeKit = ScenicFacadeKits[(int)((seed >> 7) % (uint)ScenicFacadeKits.Length)];
+            string roof = ScenicRoofKits[(int)((seed >> 13) % (uint)ScenicRoofKits.Length)];
+            BuildBuildingShell(facade.transform, span, height, kit);
+            ApplyBuildingFinish(facade.transform, facadeKit, roof);
+            BuildScenicWindowBands(facade.transform, span, height, seed + (uint)cell);
+            DisableScenicColliders(facade.transform);
         }
 
         private static void BuildScenicAvenue(Transform parent, string name, Vector3 centre, float length, bool northSouth, CityForgeRoadClass roadClass)

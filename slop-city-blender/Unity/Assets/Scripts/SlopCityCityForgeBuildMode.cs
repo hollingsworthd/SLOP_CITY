@@ -31,7 +31,7 @@ namespace SlopCity
         // without immediately reaching for the wheel.  The normal 40–280m
         // zoom range remains available on both targets.
         private const float NativeInitialTopDownHeight = 130f;
-        private const float WebGlInitialTopDownHeight = 205f;
+        private const float WebGlInitialTopDownHeight = 280f;
         [SerializeField, Range(40f, 280f)] private float topDownHeight = NativeInitialTopDownHeight;
         [SerializeField] private bool editingEnabled = true;
         private const int CityForgeCanvasSortingOrder = 300;

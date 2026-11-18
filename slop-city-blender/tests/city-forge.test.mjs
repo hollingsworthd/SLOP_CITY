@@ -114,7 +114,9 @@ test('City Forge starts browser drafting wider and keeps web controls readable w
   const button = source.slice(source.indexOf('private static Button Button('), source.indexOf('private void SetUi('));
 
   assert.match(source, /NativeInitialTopDownHeight = 130f/);
-  assert.match(source, /WebGlInitialTopDownHeight = 205f/);
+  assert.match(source, /WebGlInitialTopDownHeight = 280f/);
+  assert.match(source, /\[SerializeField, Range\(40f, 280f\)\] private float topDownHeight = NativeInitialTopDownHeight;/,
+    'the browser default must use the existing shared 40–280m zoom bounds without changing native framing');
   assert.match(awake, /#if UNITY_WEBGL && !UNITY_EDITOR[\s\S]*?topDownHeight = WebGlInitialTopDownHeight;/,
     'only browser players should receive the wider initial Forge survey');
   assert.match(source, /buildCamera\.orthographicSize = topDownHeight \* \.55f/,
@@ -222,15 +224,44 @@ test('City Forge streams the deterministic street-level continuation around play
   const follower = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeOfflineStreamFollower.cs', import.meta.url), 'utf8');
   const activate = runtime.slice(runtime.indexOf('public void ActivateCityForgeChunk'), runtime.indexOf('public void ReleaseCityForgeChunk'));
   const scenic = runtime.slice(runtime.indexOf('private void BuildScenicCityContinuation'), runtime.indexOf('private void BuildGround('));
+  const acceptedInfill = runtime.slice(runtime.indexOf('private static void BuildScenicAcceptedInfill'), runtime.indexOf('private static void BuildScenicAvenue'));
   const stream = controller.slice(controller.indexOf('public void StreamAt('), controller.indexOf('public void SetBuildMode('));
 
   assert.ok(activate.indexOf('BuildScenicCityContinuation(instance, chunk);') < activate.indexOf('BuildGround(instance, chunk)'),
-    'unaccepted chunks must receive their Forge street fabric before an accepted plan is rendered');
-  assert.match(scenic, /chunk\.acceptedPlan != null/, 'accepted plans must replace, rather than layer over, scenic presentation');
+    'the visual continuation must resolve before accepted player geometry is rendered');
+  assert.match(scenic, /if \(chunk\.acceptedPlan != null\)[\s\S]*?BuildScenicAcceptedInfill\(instance, chunk\);/,
+    'ground-only accepted islands must receive safe Forge visual infill');
   assert.match(scenic, /ScenicAvenue_Centre_NS|ScenicAvenue_Centre_EW/);
   assert.match(scenic, /ScenicBuilding_|ScenicWindowFront|ScenicLamp_/,
     'the restored ground view must include deterministic buildings, windows, and street lamps');
   assert.match(scenic, /BuildScenicTravelSurface/);
+  assert.match(acceptedInfill, /ScenicReservedCells\(plan, chunk\.roads\)/,
+    'accepted-plan geometry must reserve its physical area before scenic infill is chosen');
+  assert.match(acceptedInfill, /if \(!IsScenicAcceptedInfillEligible\(plan, chunk\)\) return;/,
+    'scenic infill must stop before any authored or interactive plan content is built');
+  assert.match(acceptedInfill, /plan\.roads[\s\S]*?plan\.parcels[\s\S]*?plan\.buildings[\s\S]*?plan\.services[\s\S]*?plan\.landmarks[\s\S]*?plan\.screens[\s\S]*?plan\.situations/,
+    'roads, lots, buildings, services, landmarks, screens, and situations must all suppress approximate scenery');
+  assert.match(acceptedInfill, /chunk\.roads[\s\S]*?chunk\.screens/,
+    'resolved road hosts and screens must suppress infill even when their plan source is indirect');
+  assert.match(acceptedInfill, /residentRoles[\s\S]*?persistedSituations[\s\S]*?availableSituations[\s\S]*?availableSituationOpportunities/,
+    'resident and situation fixture records must suppress infill rather than rely on hashed placement estimates');
+  assert.match(acceptedInfill, /reserved\.Add\(0\)/,
+    'the fixed CityPulse fixture cell must remain reserved in an otherwise ground-only plan');
+  assert.match(acceptedInfill, /plan\.groundCells \?\? new List<int>\(\)\)\.Where\(IsScenicCell\)\) reserved\.Add\(cell\)/,
+    'every accepted ground cell must remain owned by the plan, never dressed as an unrecorded street or facade');
+  const infillSelection = acceptedInfill.slice(acceptedInfill.indexOf('private static int FindScenicInfillCell'), acceptedInfill.indexOf('private static bool IsScenicCell'));
+  assert.doesNotMatch(infillSelection, /plan\.groundCells/,
+    'the compact fallback may use only an unclaimed non-ground cell');
+  assert.match(acceptedInfill, /BuildScenicAvenue[\s\S]*?BuildScenicInfillBuildingIfClear[\s\S]*?BuildScenicLamp/,
+    'safe accepted-plan infill must retain the Forge street, facade, and lamp language');
+  assert.match(acceptedInfill, /BuildScenicInfillFacade[\s\S]*?DisableScenicColliders/,
+    'the sparse partial-plan fallback must remain visual-only');
+  assert.doesNotMatch(acceptedInfill, /BuildScenicTravelSurface/,
+    'accepted-plan infill must never create a whole-chunk travel collider beneath a player-shaped island');
+  assert.doesNotMatch(acceptedInfill, /AddFixture\(/,
+    'accepted-plan infill must not create a persisted interaction or media host');
+  assert.doesNotMatch(acceptedInfill, /plan\.(?:groundCells|roads|parcels|buildings)\.(?:Add|Remove|Clear)/,
+    'presentation must not mutate an accepted plan or its save data');
   assert.match(runtime, /ScenicFacadeKits/);
   assert.match(runtime, /ScenicRoofKits/);
   assert.doesNotMatch(stream, /!HasAcceptedIslandGround\(coordinate\)/,

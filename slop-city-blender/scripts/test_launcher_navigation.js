@@ -30,6 +30,8 @@ function harness({ cleanupThrows = false, reloadThrows = false, foreignContext =
       getContext() { return { MAX_VIEWPORT_DIMS: 1, MAX_TEXTURE_SIZE: 2, MAX_RENDERBUFFER_SIZE: 3,
         getParameter(key) { return key === 1 ? [8192, 8192] : 8192; }, getExtension() { return { loseContext() {} }; } }; },
       addEventListener(type, callback) { events.set(type, callback); },
+      removeEventListener(type, callback) { if (!callback || events.get(type) === callback) events.delete(type); },
+      hasEventListener(type) { return events.has(type); },
       fire(type, event = {}) { if (events.has(type)) return events.get(type).call(item, event); }
     };
     nodes.set(id, item);
@@ -46,12 +48,13 @@ function harness({ cleanupThrows = false, reloadThrows = false, foreignContext =
     clearInterval(id) { intervals.delete(id); calls.push("clear-watch"); },
     requestAnimationFrame() { return 0; },
     cancelAnimationFrame() {},
-    WebAssembly: {}, fetch() {}, ReadableStream: function () {}, AbortController: function () {}, Worker: function () {},
+    WebAssembly: {}, fetch() {}, ReadableStream: function () {}, AbortController: function () {}, Worker: function () {}, PointerEvent: function () {},
     CustomEvent: class { constructor(type) { this.type = type; } },
     createUnityInstance(canvas, config) { state.config = config; return new Promise(resolve => { resolveInstance = resolve; }); }
   });
   context.window = context;
   context.devicePixelRatio = 1;
+  context.slopCityDesktopGameBrowser = true;
   context.slopCityInlineVideoPolicyVersion = 3;
   context.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   context.addEventListener = (type, callback) => listeners.set(type, callback);
@@ -66,7 +69,7 @@ function harness({ cleanupThrows = false, reloadThrows = false, foreignContext =
     slopCityDisposeOwnedVideoDecoders() { calls.push("dispose-owned-videos"); if (cleanupThrows) throw new Error("video cleanup failed"); },
     pauseMainLoop() { calls.push("pause-frames"); } };
   const instance = { Module: module, Quit() { calls.push("quit-needs-frame"); return new Promise(() => {}); } };
-  return { calls, state, module, nodes, intervals,
+  return { calls, state, module, nodes, intervals, listeners,
     emit(type, event = {}) { listeners.get(type)(event); },
     launch({ deferLoader = false } = {}) { node("launch").fire("click"); assert.equal(intervals.size, 1); if (!deferLoader) { state.loaderScript.onload(); assert.ok(state.config); } },
     loadScript() { state.loaderScript.onload?.(); },
@@ -100,9 +103,19 @@ function harness({ cleanupThrows = false, reloadThrows = false, foreignContext =
 
   const running = harness(); running.launch(); running.initialize(); await running.complete();
   assert.equal(running.state.readyEvents, 1);
+  assert.equal(running.nodes.get("unity-canvas").hasEventListener("pointerdown"), true);
+  assert.equal(running.nodes.get("unity-canvas").hasEventListener("pointermove"), true);
+  assert.equal(running.listeners.has("pointerup"), true);
   running.calls.length = 0;
-  running.emit("pagehide", { persisted: true }); running.emit("pagehide", { persisted: true });
-  assert.deepEqual(running.calls, ["abort-downloads", "abort-startup", "abort-startup", "abort-downloads", "dispose-owned-videos", "pause-frames", "owned-context-extension", "lose-owned-context", "abort-downloads"]);
+  running.emit("pagehide", { persisted: true });
+  assert.equal(running.nodes.get("unity-canvas").hasEventListener("pointerdown"), false,
+    "navigation teardown must release the canvas pointer-down bridge");
+  assert.equal(running.nodes.get("unity-canvas").hasEventListener("pointermove"), false,
+    "navigation teardown must release the canvas pointer-move bridge");
+  assert.equal(running.listeners.has("pointerup"), false,
+    "navigation teardown must release the captured pointer-up bridge");
+  running.emit("pagehide", { persisted: true });
+  assert.deepEqual(running.calls, ["abort-downloads", "abort-startup", "abort-startup", "abort-downloads", "dispose-owned-videos", "pause-frames", "owned-context-extension", "lose-owned-context"]);
   running.emit("pageshow", { persisted: false }); assert.equal(running.state.reloads, 0);
   running.emit("pageshow", { persisted: true }); assert.equal(running.state.reloads, 1);
   assert.equal(running.nodes.get("gate").hidden, false);
