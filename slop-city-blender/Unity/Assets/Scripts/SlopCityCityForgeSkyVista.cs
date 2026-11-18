@@ -11,9 +11,12 @@ namespace SlopCity
         // makes the unbuilt exterior read as ocean without creating a walkable
         // surface or implying city fabric beyond the reclaimed island.
         private const float OceanSpan = 576f;
+        private const float MapOceanSpan = 1536f;
         private const float OceanElevation = -.42f;
         private GameObject oceanBody;
+        private Renderer oceanRenderer;
         private Material oceanMaterial;
+        private Material mapOceanMaterial;
         // The authored scene includes this huge distant visual mesh. It has no
         // collider, so it never stopped a fall, but it made the Sky Sprawl
         // look like it still had an infinite floor. Keep the authored city
@@ -58,7 +61,21 @@ namespace SlopCity
             EnsureOcean();
             if (!oceanBody) return;
             Vector3 point = followTarget ? followTarget.position : transform.position;
+#if UNITY_WEBGL && !UNITY_EDITOR
+            Camera mapCamera = Camera.main;
+            bool mapMode = mapCamera && mapCamera.orthographic;
+            if (mapMode) point = mapCamera.transform.position;
+            SetBrowserOceanStyle(mapMode);
+            // The browser map is allowed to pan much farther than a first-person
+            // step.  Center a deliberately visual-only ocean field on the
+            // map camera so neither its edge nor a glossy specular highlight
+            // appears to slide across the planning grid.
+            oceanBody.transform.localScale = Vector3.one * ((mapMode ? MapOceanSpan : OceanSpan) / 10f);
+            oceanBody.transform.position = new Vector3(mapMode ? point.x : SnapOcean(point.x), OceanElevation,
+                mapMode ? point.z : SnapOcean(point.z));
+#else
             oceanBody.transform.position = new Vector3(SnapOcean(point.x), OceanElevation, SnapOcean(point.z));
+#endif
             if (!oceanBody.activeSelf) oceanBody.SetActive(true);
         }
 
@@ -79,20 +96,43 @@ namespace SlopCity
                 if (Application.isPlaying) Destroy(collider); else DestroyImmediate(collider);
             }
 
-            Renderer renderer = oceanBody.GetComponent<Renderer>();
+            oceanRenderer = oceanBody.GetComponent<Renderer>();
             Shader shader = Shader.Find("Standard");
             if (!shader) shader = Shader.Find("Unlit/Color");
-            if (!renderer || !shader) return;
+            if (!oceanRenderer || !shader) return;
             oceanMaterial = new Material(shader) { name = "Slop City / Island Ocean" };
             Color water = new Color(.025f, .105f, .145f, 1f);
             if (oceanMaterial.HasProperty("_Color")) oceanMaterial.SetColor("_Color", water);
             if (oceanMaterial.HasProperty("_BaseColor")) oceanMaterial.SetColor("_BaseColor", water);
             if (oceanMaterial.HasProperty("_Metallic")) oceanMaterial.SetFloat("_Metallic", .24f);
             if (oceanMaterial.HasProperty("_Glossiness")) oceanMaterial.SetFloat("_Glossiness", .76f);
-            renderer.sharedMaterial = oceanMaterial;
-            renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
-            renderer.receiveShadows = false;
+            oceanRenderer.sharedMaterial = oceanMaterial;
+            oceanRenderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
+            oceanRenderer.receiveShadows = false;
         }
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+        private void SetBrowserOceanStyle(bool mapMode)
+        {
+            if (!oceanRenderer) return;
+            if (!mapMode)
+            {
+                if (oceanMaterial && oceanRenderer.sharedMaterial != oceanMaterial) oceanRenderer.sharedMaterial = oceanMaterial;
+                return;
+            }
+
+            if (!mapOceanMaterial)
+            {
+                Shader shader = Shader.Find("Unlit/Color") ?? Shader.Find("Sprites/Default");
+                if (!shader) return;
+                mapOceanMaterial = new Material(shader) { name = "Slop City / Browser Map Ocean" };
+                Color water = new Color(.018f, .075f, .115f, 1f);
+                if (mapOceanMaterial.HasProperty("_Color")) mapOceanMaterial.SetColor("_Color", water);
+                if (mapOceanMaterial.HasProperty("_BaseColor")) mapOceanMaterial.SetColor("_BaseColor", water);
+            }
+            if (mapOceanMaterial && oceanRenderer.sharedMaterial != mapOceanMaterial) oceanRenderer.sharedMaterial = mapOceanMaterial;
+        }
+#endif
 
         private static float SnapOcean(float value)
         {
@@ -127,6 +167,7 @@ namespace SlopCity
         {
             if (oceanBody) DestroyOwned(oceanBody);
             if (oceanMaterial) DestroyOwned(oceanMaterial);
+            if (mapOceanMaterial) DestroyOwned(mapOceanMaterial);
         }
 
         private static void DestroyOwned(UnityEngine.Object item)

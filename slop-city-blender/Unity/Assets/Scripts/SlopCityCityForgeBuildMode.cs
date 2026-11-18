@@ -1878,7 +1878,7 @@ namespace SlopCity
             // Keep the normal UGUI raycaster live on every platform. The
             // native IMGUI branch is only a last-resort fallback when legacy
             // input missed a gesture entirely, never the primary UI route.
-            CanvasScaler scaler = root.GetComponent<CanvasScaler>(); scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize; scaler.referenceResolution = new Vector2(1280, 720);
+            CanvasScaler scaler = root.GetComponent<CanvasScaler>(); ConfigureCityForgeCanvas(canvas, scaler);
             // A root overlay Canvas is screen-sized even when its RectTransform
             // appears to be resized. Giving that root an Image made an
             // invisible full-screen raycast target on standalone builds, so
@@ -1886,7 +1886,7 @@ namespace SlopCity
             // to input and put the actual, bounded toolbar in a child.
             GameObject toolbar = new GameObject("CityForgeToolbar", typeof(RectTransform), typeof(Image)); toolbar.transform.SetParent(root.transform, false);
             buildUiSurface = toolbar.GetComponent<RectTransform>(); buildUiSurface.anchorMin = new Vector2(0f, 1f); buildUiSurface.anchorMax = new Vector2(1f, 1f); buildUiSurface.pivot = new Vector2(.5f, 1f); buildUiSurface.sizeDelta = new Vector2(0f, 164f);
-            Image panel = toolbar.GetComponent<Image>(); panel.color = new Color(.025f, .045f, .06f, .96f);
+            Image panel = toolbar.GetComponent<Image>(); panel.color = CityForgeToolbarColor();
             heading = Label(toolbar.transform, "City Forge", 20, new Vector2(12, -10), new Vector2(420, 26));
             contextHint = Label(toolbar.transform, "", 13, new Vector2(436, -10), new Vector2(830, 24)); contextHint.alignment = TextAnchor.MiddleRight;
             message = Label(toolbar.transform, "", 13, new Vector2(12, -142), new Vector2(1240, 18));
@@ -2018,7 +2018,7 @@ namespace SlopCity
             GameObject root = new GameObject("CityForgeBuildLauncher", typeof(RectTransform), typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
             root.transform.SetParent(transform, false);
             launcherCanvas = root.GetComponent<Canvas>(); launcherCanvas.renderMode = RenderMode.ScreenSpaceOverlay; launcherCanvas.overrideSorting = true; launcherCanvas.sortingOrder = CityForgeCanvasSortingOrder;
-            CanvasScaler scaler = root.GetComponent<CanvasScaler>(); scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize; scaler.referenceResolution = new Vector2(1280, 720);
+            CanvasScaler scaler = root.GetComponent<CanvasScaler>(); ConfigureCityForgeCanvas(launcherCanvas, scaler);
             launcherButton = Button(root.transform, "BUILD CITY", Vector2.zero, new Vector2(188f, 52f), true);
             RectTransform rect = launcherButton.GetComponent<RectTransform>(); rect.anchorMin = Vector2.zero; rect.anchorMax = Vector2.zero; rect.pivot = Vector2.zero; rect.anchoredPosition = new Vector2(22f, 22f);
             launcherStatus = Label(root.transform, "Open City Forge · B", 13, Vector2.zero, new Vector2(420f, 24f));
@@ -2502,7 +2502,23 @@ namespace SlopCity
         {
             if (buildCamera)
             {
-                originalCamera = new CameraState { position = buildCamera.transform.position, rotation = buildCamera.transform.rotation, orthographic = buildCamera.orthographic, orthographicSize = buildCamera.orthographicSize };
+                originalCamera = new CameraState
+                {
+                    position = buildCamera.transform.position,
+                    rotation = buildCamera.transform.rotation,
+                    orthographic = buildCamera.orthographic,
+                    orthographicSize = buildCamera.orthographicSize,
+                    clearFlags = buildCamera.clearFlags,
+                    backgroundColor = buildCamera.backgroundColor
+                };
+#if UNITY_WEBGL && !UNITY_EDITOR
+                // The daytime sky and its sun are attractive at street level,
+                // but become a blown-out, shifting backdrop behind an overhead
+                // planning map.  The browser map supplies its own quiet ocean
+                // field, so clear to a stable solid color instead.
+                buildCamera.clearFlags = CameraClearFlags.SolidColor;
+                buildCamera.backgroundColor = new Color(.012f, .030f, .048f, 1f);
+#endif
                 FocusCamera();
             }
             savedCursorLockState = Cursor.lockState;
@@ -2516,7 +2532,7 @@ namespace SlopCity
             if (!cursorStateCaptured) return;
             if (buildCamera)
             {
-                buildCamera.transform.position = originalCamera.position; buildCamera.transform.rotation = originalCamera.rotation; buildCamera.orthographic = originalCamera.orthographic; buildCamera.orthographicSize = originalCamera.orthographicSize;
+                buildCamera.transform.position = originalCamera.position; buildCamera.transform.rotation = originalCamera.rotation; buildCamera.orthographic = originalCamera.orthographic; buildCamera.orthographicSize = originalCamera.orthographicSize; buildCamera.clearFlags = originalCamera.clearFlags; buildCamera.backgroundColor = originalCamera.backgroundColor;
             }
             Cursor.lockState = savedCursorLockState;
             Cursor.visible = savedCursorVisible;
@@ -2569,7 +2585,34 @@ namespace SlopCity
             if (paused) { ResetLauncherPointerActivation(); CancelBuildUiPointerActivation(); ResetNativeMapPointer(); }
         }
         private void OnDisable() { ResetLauncherPointerActivation(); ResetBuildUiPointerActivation(); ResetNativeMapPointer(); }
-        private struct CameraState { public Vector3 position; public Quaternion rotation; public bool orthographic; public float orthographicSize; }
+        private static void ConfigureCityForgeCanvas(Canvas target, CanvasScaler scaler)
+        {
+            if (!target || !scaler) return;
+            scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
+            scaler.referenceResolution = new Vector2(1280, 720);
+#if UNITY_WEBGL && !UNITY_EDITOR
+            // The world may be deliberately rendered at 540p/720p, but the
+            // editor itself is a display overlay.  Request a denser dynamic
+            // font atlas and exact pixel alignment so it does not inherit the
+            // soft world presentation on a Retina browser display.
+            target.pixelPerfect = true;
+            scaler.dynamicPixelsPerUnit = Mathf.Clamp(SlopCityWebPresentation.DisplayPixelRatio, 1f, 2f);
+#endif
+        }
+
+        private static Color CityForgeToolbarColor()
+        {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            // An opaque browser toolbar keeps the high-contrast planning grid
+            // out of labels and controls instead of letting it shimmer through
+            // a translucent panel while the map pans.
+            return new Color(.025f, .045f, .06f, 1f);
+#else
+            return new Color(.025f, .045f, .06f, .96f);
+#endif
+        }
+
+        private struct CameraState { public Vector3 position; public Quaternion rotation; public bool orthographic; public float orthographicSize; public CameraClearFlags clearFlags; public Color backgroundColor; }
         private struct LandmarkChoice
         {
             public string classId;

@@ -112,6 +112,7 @@ test('City Forge starts browser drafting wider and keeps web controls readable w
   const source = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeBuildMode.cs', import.meta.url), 'utf8');
   const awake = source.slice(source.indexOf('private void Awake()'), source.indexOf('private void Update()'));
   const button = source.slice(source.indexOf('private static Button Button('), source.indexOf('private void SetUi('));
+  const browserCanvas = source.slice(source.indexOf('private static void ConfigureCityForgeCanvas('), source.indexOf('private static Color CityForgeToolbarColor()'));
 
   assert.match(source, /NativeInitialTopDownHeight = 130f/);
   assert.match(source, /WebGlInitialTopDownHeight = 280f/);
@@ -128,6 +129,10 @@ test('City Forge starts browser drafting wider and keeps web controls readable w
     'the native desktop geometry remains the established Forge baseline');
   assert.match(source, /scaler\.referenceResolution = new Vector2\(1280, 720\);/,
     'controls must not shrink a wide row by changing the shared scaler');
+  assert.match(browserCanvas, /target\.pixelPerfect = true;/,
+    'browser Forge controls must align to display pixels rather than the low-detail world target');
+  assert.match(browserCanvas, /scaler\.dynamicPixelsPerUnit = Mathf\.Clamp\(SlopCityWebPresentation\.DisplayPixelRatio, 1f, 2f\);/,
+    'browser Forge text must request a dense dynamic atlas on high-density displays');
 });
 
 test('City Forge maps display input through the camera viewport when browser presentation uses a render target', () => {
@@ -154,16 +159,12 @@ test('City Forge maps display input through the camera viewport when browser pre
     'display pixels are not camera-target pixels in the WebGL presentation');
 });
 
-test('City Forge grids its bounded strategic window and retains one safe cross-chunk action', () => {
+test('City Forge omits visual strategic grids and retains one safe cross-chunk action', () => {
   const buildMode = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeBuildMode.cs', import.meta.url), 'utf8');
   const runtime = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeRuntime.cs', import.meta.url), 'utf8');
   const strategic = runtime.slice(
     runtime.indexOf('public void ShowCityForgeStrategicMap(CityForgeWorldHead head, CityForgeCoord center, int radius,'),
     runtime.indexOf('public void ClearCityForgeStrategicMap()'),
-  );
-  const strategicGrid = runtime.slice(
-    runtime.indexOf('private void BuildStrategicGrid('),
-    runtime.indexOf('private static void BuildStrategicSummaryImpostor'),
   );
   const overlay = runtime.slice(
     runtime.indexOf('public void ShowCityForgeBuildOverlay('),
@@ -182,15 +183,15 @@ test('City Forge grids its bounded strategic window and retains one safe cross-c
     buildMode.indexOf('public bool TryMergeLots'),
   );
 
-  assert.match(strategic, /int boundedRadius = Mathf\.Clamp\(radius, 1, 6\);/, 'the visible planning grid must remain a bounded 13 by 13 window');
-  assert.match(strategic, /BuildStrategicGrid\([^;]*boundedRadius[^;]*\);/, 'the strategic window must receive one shared cell-grid overlay');
-  assert.match(strategicGrid, /for \(int \w+ = -radius; \w+ <= radius; \w+\+\+\)/, 'the shared grid must cover every chunk in the visible window');
-  assert.match(strategicGrid, /if \(!SlopCityCityForge\.IsBuildable\(coordinate\)\) continue;/, 'the immutable Old City must remain grid-free');
-  assert.match(strategicGrid, /for \(int \w+ = 0; \w+ <= SlopCityCityForge\.GridSize; \w+\+\+\)/, 'each buildable chunk must receive all of its 9 by 9 cell lines');
-  assert.match(strategicGrid, /SlopCityCityForge\.CellSizeMeters/, 'strategic grid lines must use the same cell geometry as placement');
-  assert.doesNotMatch(overlay, /BuildEditorGrid\(/, 'the selected draft must not add a second grid box over the shared strategic grid');
+  assert.match(strategic, /int boundedRadius = Mathf\.Clamp\(radius, 1, 6\);/, 'strategic summaries must remain bounded even without a visual planning grid');
+  assert.doesNotMatch(runtime, /CityForgeStrategicGrid|BuildStrategicGrid|RefreshCityForgeStrategicGrid|ISlopCityCityForgeStrategicGridSink/,
+    'the strategic map must not allocate, draw, or refresh a visible grid while panning');
+  assert.doesNotMatch(strategic, /BuildStrategicChunkOutline/,
+    'the strategic map must not substitute a coarse block lattice for the removed grid');
+  assert.doesNotMatch(overlay, /BuildEditorGrid\(/, 'the selected draft must not add a replacement grid box');
   assert.doesNotMatch(runtime, /PlanSurface|PlanBorder|private void BuildEditorGrid/, 'direct placement must not show a dark selected-chunk slab or border');
-  assert.match(strategic, /if \(!coordinate\.Equals\(center\)\)\s*\{\s*if \(acceptedPlans[\s\S]*?BuildStrategicAcceptedImpostor[\s\S]*?else if \(strategicSummaries[\s\S]*?BuildStrategicSummaryImpostor/, 'the selected draft block must not fall through to a distant-summary mass or road bar');
+  assert.match(strategic, /if \(!SlopCityCityForge\.IsBuildable\(coordinate\) \|\| coordinate\.Equals\(center\)\) continue;/, 'the selected draft block must not fall through to a distant-summary mass or road bar');
+  assert.match(strategic, /if \(acceptedPlans[\s\S]*?BuildStrategicAcceptedImpostor[\s\S]*?else if \(strategicSummaries[\s\S]*?BuildStrategicSummaryImpostor/, 'accepted and summarized neighbouring blocks must remain visible without grid geometry');
 
   assert.doesNotMatch(click, /if \(view == View\.Ground\)[\s\S]*?Click inside the highlighted block/, 'Ground must not discard a click merely because it lands outside the previously selected block');
   assert.match(click, /QueueMapAction\(coordinate, x, z\);/, 'an outside visible-cell click must retain its target while the destination loads');
@@ -215,6 +216,12 @@ test('City Forge physical ground has no artificial seams and its island exterior
   assert.match(skyVista, /bool islandContext = SlopCityCityForgeTravel\.IsSkySprawlPosition\(followTarget\.position\);/);
   assert.match(skyVista, /SetDistantGroundSuppressed\(islandContext\);/, 'removing fake clouds must not restore the authored distant floor outside the island');
   assert.match(skyVista, /SetOceanVisible\(islandContext\);/, 'the exterior should read as non-walkable water rather than generated city land');
+  assert.match(skyVista, /private const float MapOceanSpan = 1536f;/,
+    'the browser map must cover its wider overhead viewport without exposing a moving water edge');
+  assert.match(skyVista, /bool mapMode = mapCamera && mapCamera\.orthographic;/,
+    'only the overhead browser map may switch ocean presentation');
+  assert.match(skyVista, /SetBrowserOceanStyle\(mapMode\);/,
+    'the map must not use the street-level glossy ocean material');
 });
 
 test('City Forge streams the deterministic street-level continuation around player-owned plans', () => {
@@ -280,16 +287,15 @@ test('City Forge map ground meets the fixed Old City core without duplicate laye
     runtime.indexOf('public void ShowCityForgeStrategicMap(CityForgeWorldHead head, CityForgeCoord center, int radius,'),
     runtime.indexOf('public void ClearCityForgeStrategicMap()'),
   );
-  const acceptedGround = runtime.slice(runtime.indexOf('private static void BuildStrategicAcceptedImpostor'), runtime.indexOf('private static void BuildStrategicChunkOutline'));
+  const acceptedGround = runtime.slice(runtime.indexOf('private static void BuildStrategicAcceptedImpostor'), runtime.indexOf('private static void BuildStrategicSummaryImpostor'));
   const editorGround = runtime.slice(runtime.indexOf('private void BuildEditorGround('), runtime.indexOf('private void BuildRoads('));
 
   assert.match(layout, /CityForgeCoreGroundRect = Rect\.MinMaxRect\([\s\S]*CoreMinimum\.x \* SlopCityCityForge\.ChunkSizeMeters[\s\S]*CoreMaximum\.z \+ 1\) \* SlopCityCityForge\.ChunkSizeMeters/, 'the fixed pavement must use the protected core’s exact world limits');
   assert.match(layout, /OuterGroundRect = CityForgeCoreGroundRect;/, 'the Old City support apron must not use asymmetric hand-tuned bounds');
   assert.match(humanScale, /CityForgeCoreGroundRect\.xMin \+ 5\.85f/, 'the west transit spine must remain within the protected core instead of crossing into a starter cell');
-  assert.match(strategic, /if \(!coordinate\.Equals\(center\)\)\s*\{[\s\S]*?BuildStrategicAcceptedImpostor[\s\S]*?BuildStrategicSummaryImpostor/, 'the selected chunk must not draw either accepted-map or distant-summary geometry over its draft ground');
+  assert.match(strategic, /if \(!SlopCityCityForge\.IsBuildable\(coordinate\) \|\| coordinate\.Equals\(center\)\) continue;[\s\S]*?BuildStrategicAcceptedImpostor[\s\S]*?BuildStrategicSummaryImpostor/, 'the selected chunk must not draw either accepted-map or distant-summary geometry over its draft ground');
   assert.match(acceptedGround, /new Vector3\(SlopCityCityForge\.CellSizeMeters, \.04f, SlopCityCityForge\.CellSizeMeters\)/, 'accepted map ground must fill its complete cell');
   assert.match(editorGround, /new Vector3\(SlopCityCityForge\.CellSizeMeters, \.04f, SlopCityCityForge\.CellSizeMeters\)/, 'draft map ground must fill the same complete cell');
-  assert.match(runtime, /const float gridHeight = \.52f;/, 'the shared grid must remain visible over full-cell map ground');
   assert.doesNotMatch(travel, /OpenSkyGangway|CityForge_StarterSprawlBridge|EnsureBridge\(/, 'the fixed core apron replaces the overlapping generated entry bridge');
 });
 
