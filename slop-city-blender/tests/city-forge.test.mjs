@@ -108,11 +108,12 @@ test('City Forge maps browser pointer events into backing-canvas pixels for ever
   }
 });
 
-test('City Forge starts browser drafting wider and keeps web controls readable without changing Mac defaults', () => {
+test('City Forge starts browser drafting wider and keeps browser and mobile controls readable without changing Mac defaults', () => {
   const source = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeBuildMode.cs', import.meta.url), 'utf8');
   const awake = source.slice(source.indexOf('private void Awake()'), source.indexOf('private void Update()'));
-  const button = source.slice(source.indexOf('private static Button Button('), source.indexOf('private void SetUi('));
-  const browserCanvas = source.slice(source.indexOf('private static void ConfigureCityForgeCanvas('), source.indexOf('private static Color CityForgeToolbarColor()'));
+  const button = source.slice(source.indexOf('private Button Button('), source.indexOf('private InputField IntegerInput('));
+  const canvas = source.slice(source.indexOf('private void ConfigureCityForgeCanvas('), source.indexOf('private static Color CityForgeToolbarColor()'));
+  const touchLayout = source.slice(source.indexOf('private void LayoutTouchCityForgeUi(bool force)'), source.indexOf('private static void LayoutTouchRect('));
 
   assert.match(source, /NativeInitialTopDownHeight = 130f/);
   assert.match(source, /WebGlInitialTopDownHeight = 280f/);
@@ -124,14 +125,26 @@ test('City Forge starts browser drafting wider and keeps web controls readable w
     'the wider initial height must drive the actual drafting camera');
   assert.match(button, /size\.y = Mathf\.Max\(size\.y, 40f\);/,
     'browser action targets must remain comfortably clickable');
-  assert.match(button, /const int buttonFontSize = 15;/);
-  assert.match(button, /const int buttonFontSize = 13;/,
+  assert.match(button, /buttonFontSize = 15;/);
+  assert.match(button, /int buttonFontSize = 13;/,
     'the native desktop geometry remains the established Forge baseline');
   assert.match(source, /scaler\.referenceResolution = new Vector2\(1280, 720\);/,
     'controls must not shrink a wide row by changing the shared scaler');
-  assert.match(browserCanvas, /target\.pixelPerfect = true;/,
+  assert.match(button, /if \(UsesTouchCityForgeControls\(\)\)[\s\S]*?size\.y = Mathf\.Max\(size\.y, 44f\);/,
+    'native touch controls must retain a comfortably tappable minimum target');
+  assert.match(canvas, /if \(UsesTouchCityForgeControls\(\)\)[\s\S]*?bool portrait = Screen\.height >= Screen\.width;/,
+    'the instance canvas configuration must select a mobile layout from the current orientation');
+  assert.match(canvas, /scaler\.referenceResolution = portrait \? new Vector2\(360, 700\) : new Vector2\(720, 360\);/,
+    'phone portrait and landscape controls must receive their intended reference sizes');
+  assert.match(canvas, /scaler\.matchWidthOrHeight = portrait \? 0f : 1f;/,
+    'mobile controls must scale against the stable axis for each orientation');
+  assert.match(touchLayout, /float targetHeight = Mathf\.Max\(48f, 44f \/ canvasScale\);/,
+    'the live touch relayout must preserve a 44px physical minimum even on a compact scaled native surface');
+  assert.match(touchLayout, /int columns = landscape \? 6 : 3;/,
+    'the touch toolbar must reflow rather than rely on one desktop-wide row');
+  assert.match(canvas, /target\.pixelPerfect = true;/,
     'browser Forge controls must align to display pixels rather than the low-detail world target');
-  assert.match(browserCanvas, /scaler\.dynamicPixelsPerUnit = Mathf\.Clamp\(SlopCityWebPresentation\.DisplayPixelRatio, 1f, 2f\);/,
+  assert.match(canvas, /scaler\.dynamicPixelsPerUnit = Mathf\.Clamp\(SlopCityWebPresentation\.DisplayPixelRatio, 1f, 2f\);/,
     'browser Forge text must request a dense dynamic atlas on high-density displays');
 });
 
@@ -202,6 +215,185 @@ test('City Forge omits visual strategic grids and retains one safe cross-chunk a
   assert.match(buildMode, /ChunkNavigationCanceled\?\.Invoke\(coordinate\);/, 'canceling a queued action must invalidate its hosted navigation');
   assert.match(click, /pendingMapActionExtendsLotFootprint = Input\.GetKey/, 'a delayed lot action must retain its Shift modifier');
   assert.match(toolChanges, /CancelPendingMapAction\(\); roadClass =/, 'tool changes must cancel, not reinterpret, a queued action');
+});
+
+test('City Forge keeps streamed chunks visible under its bounded opaque toolbar without rewriting camera clear state', () => {
+  const buildMode = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeBuildMode.cs', import.meta.url), 'utf8');
+  const runtime = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeRuntime.cs', import.meta.url), 'utf8');
+  const activate = runtime.slice(runtime.indexOf('public void ActivateCityForgeChunk'), runtime.indexOf('public void ReleaseCityForgeChunk'));
+  const overlay = runtime.slice(runtime.indexOf('public void ShowCityForgeBuildOverlay('), runtime.indexOf('public void ClearCityForgeBuildOverlay()'));
+  const camera = buildMode.slice(buildMode.indexOf('private void CaptureCamera()'), buildMode.indexOf('private void FocusCamera()'));
+  const ui = buildMode.slice(buildMode.indexOf('private void CreateUi()'), buildMode.indexOf('private void RegisterViewControl(View scope, Button button)'));
+  const toolbarColor = buildMode.slice(buildMode.indexOf('private static Color CityForgeToolbarColor()'), buildMode.indexOf('private static Color RoadColor('));
+
+  assert.match(activate, /root\.SetActive\(true\);/,
+    'an accepted streamed chunk must be activated after its physical ground and fixtures are compiled');
+  assert.doesNotMatch(runtime, /buildOverlayPresentationActive|SetChunkPresentationForBuildOverlay/,
+    'opening the planning overlay must never hide or disable a streamed physical chunk');
+  assert.doesNotMatch(overlay, /SetChunkPresentationForBuildOverlay|root\.SetActive\(false\)/,
+    'the draft layer is additive rather than a replacement for visible accepted ground');
+  assert.doesNotMatch(camera, /clearFlags|backgroundColor/,
+    'Build Mode must preserve the active camera presentation instead of producing a dark map with a rewritten clear state');
+  assert.match(ui, /new GameObject\("CityForgeToolbar", typeof\(RectTransform\), typeof\(Image\)\)/,
+    'only the bounded toolbar, rather than the screen-wide canvas root, owns an opaque panel');
+  assert.match(ui, /panel\.color = CityForgeToolbarColor\(\);/);
+  assert.match(toolbarColor, /return new Color\(\.025f, \.045f, \.06f, 1f\);/,
+    'the browser toolbar remains opaque while the world camera stays unchanged');
+});
+
+test('City Forge supports rectangular building taps, queued dimensions, and tap-to-demolish mode', () => {
+  const source = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeBuildMode.cs', import.meta.url), 'utf8');
+  const click = source.slice(source.indexOf('private void ClickMapCell(CityForgeCoord coordinate, int x, int z)'), source.indexOf('private void ToggleStreet'));
+  const queue = source.slice(source.indexOf('private void QueueMapAction('), source.indexOf('private void ClearPendingMapAction()'));
+  const pending = source.slice(source.indexOf('private void ApplyPendingMapAction()'), source.indexOf('private void ToggleStreet'));
+  const building = source.slice(source.indexOf('private void AddBuilding(int x, int z, int width, int length, bool demolish)'), source.indexOf('private void AddService('));
+  const placement = source.slice(source.indexOf('private bool PlaceBuildingOnParcel('), source.indexOf('public bool TryPlaceService('));
+  const controls = source.slice(source.indexOf('private void CreateUi()'), source.indexOf('private void RegisterViewControl(View scope, Button button)'));
+  const input = source.slice(source.indexOf('private InputField IntegerInput('), source.indexOf('private bool UsesTouchCityForgeControls()'));
+  const demolition = source.slice(source.indexOf('private void ToggleBuildingDemolition()'), source.indexOf('private void CycleLotZone()'));
+  const nextId = source.slice(source.indexOf('private static string NextId(CityForgeChunkPlan source, string prefix)'), source.indexOf('private string Seed('));
+
+  assert.match(source, /private InputField buildingWidthInput, buildingLengthInput;/);
+  assert.match(controls, /buildingWidthInput = IntegerInput\(toolbar\.transform, "Width",[\s\S]*?SetBuildingFootprintWidth\)/);
+  assert.match(controls, /buildingLengthInput = IntegerInput\(toolbar\.transform, "Length",[\s\S]*?SetBuildingFootprintLength\)/);
+  assert.match(input, /field\.contentType = InputField\.ContentType\.IntegerNumber;/,
+    'footprint dimensions must be direct numeric inputs, including in native mobile builds');
+  assert.match(input, /field\.text = Mathf\.Clamp\(initialValue, 1, SlopCityCityForge\.GridSize\)\.ToString\(\);/);
+  assert.match(input, /if \(UsesTouchCityForgeControls\(\)\) size\.y = Mathf\.Max\(size\.y, 44f\);/,
+    'dimension inputs must be touch-sized too');
+  assert.match(click, /ApplyMapAction\(view, x, z, Input\.GetKey[\s\S]*?buildingFootprintWidth, buildingFootprintLength, demolishBuildings\);/,
+    'a same-block tap must pass the active dimensions and demolition mode to the edit action');
+  assert.match(source, /private int pendingMapActionBuildingWidth = 1;/);
+  assert.match(source, /private int pendingMapActionBuildingLength = 1;/);
+  assert.match(source, /private bool pendingMapActionDemolishBuildings;/);
+  assert.match(queue, /pendingMapActionBuildingWidth = buildingFootprintWidth;/);
+  assert.match(queue, /pendingMapActionBuildingLength = buildingFootprintLength;/);
+  assert.match(queue, /pendingMapActionDemolishBuildings = demolishBuildings;/,
+    'a cross-chunk tap must retain its original construction or demolition intent while data loads');
+  assert.match(pending, /int buildingWidth = pendingMapActionBuildingWidth;/);
+  assert.match(pending, /int buildingLength = pendingMapActionBuildingLength;/);
+  assert.match(pending, /bool demolish = pendingMapActionDemolishBuildings;/);
+  assert.match(pending, /ApplyMapAction\(actionView, x, z, extendsLotFootprint, buildingWidth, buildingLength, demolish\);/);
+  assert.match(building, /if \(demolish\) \{ DemolishBuildingAt\(x, z\); return; \}/,
+    'Demolish is a placement-mode tap on the selected footprint, not a global undo-like action');
+  assert.match(building, /private bool TryPlaceBuildingFootprint\(int x, int z, int requestedWidth, int requestedLength\)/);
+  assert.match(building, /int width = Mathf\.Clamp\(requestedWidth, 1, SlopCityCityForge\.GridSize\);/);
+  assert.match(building, /int length = Mathf\.Clamp\(requestedLength, 1, SlopCityCityForge\.GridSize\);/);
+  assert.match(building, /List<int> cells = new List<int>\(width \* length\);/);
+  assert.match(building, /for \(int cellZ = z; cellZ < z \+ length; cellZ\+\+\)[\s\S]*?for \(int cellX = x; cellX < x \+ width; cellX\+\+\) cells\.Add\(cellX \+ cellZ \* SlopCityCityForge\.GridSize\);/,
+    'the two inputs must expand to the complete rectangular parcel-cell footprint');
+  assert.match(building, /List<CityForgeParcel> remainingParcels = null;/);
+  assert.match(building, /else if \(footprint\.IsSubsetOf\(existingCells\)[\s\S]*?List<List<int>> fragments = SplitCellsIntoRectangles\(/,
+    'a smaller rectangle may be carved from one larger empty lot rather than being forced back to the whole lot');
+  assert.match(building, /parcelCount \+ fragments\.Count > SlopCityCityForge\.MaximumParcelRecords/);
+  assert.match(building, /foreach \(List<int> fragment in fragments\)[\s\S]*?remaining\.id = NextId\(idSource, "parcel"\);/);
+  assert.match(building, /remaining\.cells = fragment;/);
+  assert.match(placement, /foreach \(CityForgeParcel remaining in remainingParcels \?\? Enumerable\.Empty<CityForgeParcel>\(\)\)[\s\S]*?next\.parcels\.Add\(remaining\.Clone\(\)\);/,
+    'the unbuilt remainder must stay in separate non-overlapping parcels instead of a ring-shaped lot centered under the new building');
+  assert.match(nextId, /\.Concat\(source\?\.demolishedIds \?\? new List<string>\(\)\)/,
+    'demolished identities must remain tombstoned so a rebuilt footprint receives a new identity');
+  assert.match(building, /private void DemolishBuildingAt\(int x, int z\)/);
+  assert.match(controls, /demolishButton\.onClick\.AddListener\(ToggleBuildingDemolition\);/);
+  assert.match(demolition, /demolishBuildings = !demolishBuildings;/);
+  assert.match(source, /SetButtonLabel\(demolishButton, demolishBuildings \? "Demolish: ON" : "Demolish: OFF"\);/);
+  assert.doesNotMatch(source, /DemolishLast/,
+    'the obsolete "demolish whichever building came last" interaction must not return');
+});
+
+test('City Forge keeps slow touch pans and focused footprint entry from becoming placement actions', () => {
+  const source = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeBuildMode.cs', import.meta.url), 'utf8');
+  const update = source.slice(source.indexOf('private void Update()'), source.indexOf('private void OnGUI()'));
+  const click = source.slice(source.indexOf('private void ClickMapCell(CityForgeCoord coordinate, int x, int z)'), source.indexOf('private void QueueMapAction('));
+  const move = source.slice(source.indexOf('private void MoveCamera()'), source.indexOf('private void OnApplicationFocus('));
+  const layout = source.slice(source.indexOf('private void LayoutTouchCityForgeUi(bool force)'), source.indexOf('private static void LayoutTouchRect('));
+
+  assert.match(source, /private Vector2 touchStartPosition;/);
+  assert.match(move, /touchStartPosition = touch\.position;/);
+  assert.match(move, /\(touch\.position - touchStartPosition\)\.sqrMagnitude >= MapDragThresholdPixels \* MapDragThresholdPixels/,
+    'a series of small touch deltas must still count as a pan before release can place or demolish');
+  assert.match(click, /if \(view == View\.Buildings && !demolishBuildings\) CommitBuildingFootprintInputs\(\);/,
+    'a map tap must commit the latest width and length before it snapshots or applies the building action');
+  assert.match(source, /private static bool IsTextInputFocused\(\)/);
+  assert.match(update, /bool textInputFocused = IsTextInputFocused\(\);/);
+  assert.match(update, /if \(!textInputFocused\)[\s\S]*?KeyCode\.Alpha1[\s\S]*?KeyCode\.Alpha6/,
+    'number-row view shortcuts must not steal direct numeric footprint input');
+  assert.match(layout, /Canvas\.ForceUpdateCanvases\(\);[\s\S]*?canvasWidth <= 0f \|\| canvasHeight <= 0f \|\| canvas\.scaleFactor <= 0f/,
+    'the first touch layout must wait for a real canvas before caching it');
+  assert.match(layout, /canvasSize == lastBuildUiCanvasSize && Mathf\.Approximately\(canvasScale, lastBuildUiCanvasScale\)/,
+    'rotation or a CanvasScaler change must trigger a fresh safe-area layout rather than reuse stale bounds');
+});
+
+test('City Forge center-carve remainders stay usable outside the new building', () => {
+  const source = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeBuildMode.cs', import.meta.url), 'utf8');
+  const split = source.slice(source.indexOf('private static List<List<int>> SplitCellsIntoRectangles('), source.indexOf('private void DemolishBuildingAt('));
+  const candidate = plan();
+  candidate.groundCells = [0, 1, 2, 9, 10, 11, 18, 19, 20];
+  candidate.roads = [{ edge: '1,1:north', class: 'local-street' }];
+  candidate.parcels = [
+    { id: 'parcel-building', cells: ['1,1'], zone: 'home' },
+    { id: 'parcel-top', cells: ['0,2', '1,2', '2,2'], zone: 'home' },
+    { id: 'parcel-left', cells: ['0,0', '0,1'], zone: 'home' },
+    { id: 'parcel-right', cells: ['2,0', '2,1'], zone: 'home' },
+    { id: 'parcel-bottom', cells: ['1,0'], zone: 'home' },
+  ];
+  candidate.buildings = [{ id: 'building-center', parcelId: 'parcel-building', blueprintId: 'walk-up', facadeId: 'wet-masonry', roofId: 'service-roof', floors: 2, entranceEdge: 'north' }];
+  candidate.services = [{ id: 'service-top', parcelId: 'parcel-top', type: 'care-station' }];
+  candidate.screens = [];
+  candidate.landmarks = [];
+  candidate.situations = [];
+  candidate.demolishedIds = [];
+
+  assert.match(split, /List<int> rectangle = new List<int>\(width \* length\);/);
+  assert.match(split, /for \(int z = startZ; z < startZ \+ length; z\+\+\)[\s\S]*?for \(int x = startX; x < startX \+ width; x\+\+\)/,
+    'the remaining cells must be emitted as actual rectangles, not one ring-shaped parcel');
+  assert.equal(validateChunkPlan(candidate).valid, true,
+    'a center-carved building and a service on its independent remainder must remain a valid non-overlapping plan');
+  const buildingCells = new Set(candidate.parcels.find(parcel => parcel.id === 'parcel-building').cells);
+  for (const parcel of candidate.parcels.filter(parcel => parcel.id !== 'parcel-building'))
+    assert.equal(parcel.cells.some(cell => buildingCells.has(cell)), false, 'each remainder must exclude the building footprint');
+});
+
+test('City Forge renders rectangular building bounds in draft, strategic, physical, and screen presentations', () => {
+  const runtime = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeRuntime.cs', import.meta.url), 'utf8');
+  const editor = runtime.slice(runtime.indexOf('private void BuildEditorBuildings('), runtime.indexOf('private void BuildEditorServicesAndLife('));
+  const strategic = runtime.slice(runtime.indexOf('private static void BuildStrategicAcceptedImpostor('), runtime.indexOf('private static void BuildStrategicSummaryImpostor('));
+  const physical = runtime.slice(runtime.indexOf('private void BuildBuildings('), runtime.indexOf('private static void BuildBuildingShell(Transform parent, float span'));
+  const shell = runtime.slice(runtime.indexOf('private static void BuildBuildingShell(Transform parent, float width, float depth'), runtime.indexOf('/// <summary>', runtime.indexOf('private static void BuildBuildingShell(Transform parent, float width, float depth')));
+  const interior = runtime.slice(runtime.indexOf('private Transform BuildInterior('), runtime.indexOf('private static void ApplyBuildingFinish('));
+  const screens = runtime.slice(runtime.indexOf('private static bool TryScreenPlacement('), runtime.indexOf('private static void SlotGrid('));
+  const bounds = runtime.slice(runtime.indexOf('private static void ParcelBounds('), runtime.indexOf('private static Vector3 RoadEdgeCentre('));
+
+  assert.match(runtime, /New footprints are rectangles, while legacy irregular parcels retain[\s\S]*?bounded enclosing shape/,
+    'legacy arbitrary parcel cell lists must continue to render as stable bounded geometry');
+  assert.match(bounds, /int minX = values\.Min\(value => value % SlopCityCityForge\.GridSize\);/);
+  assert.match(bounds, /int maxX = values\.Max\(value => value % SlopCityCityForge\.GridSize\);/);
+  assert.match(bounds, /int minZ = values\.Min\(value => value \/ SlopCityCityForge\.GridSize\);/);
+  assert.match(bounds, /int maxZ = values\.Max\(value => value \/ SlopCityCityForge\.GridSize\);/);
+  assert.match(bounds, /width = \(maxX - minX \+ 1\) \* cell;/);
+  assert.match(bounds, /depth = \(maxZ - minZ \+ 1\) \* cell;/);
+  assert.match(editor, /ParcelBounds\(parcel\.cells, out Vector3 center, out float parcelWidth, out float parcelDepth\);/);
+  assert.match(editor, /new Vector3\(width, \.11f, depth\)/,
+    'the editor overlay must show independent X and Z spans instead of a one-cell marker');
+  assert.match(strategic, /ParcelBounds\(parcel\.cells, out Vector3 center, out float parcelWidth, out float parcelDepth\);/);
+  assert.match(strategic, /new Vector3\(width, height, depth\)/,
+    'accepted strategic impostors must preserve the rectangle after the editor closes');
+  assert.match(physical, /float worldWidth = Mathf\.Max\(4f, parcelWidth \* \.75f\);/);
+  assert.match(physical, /float worldDepth = Mathf\.Max\(4f, parcelDepth \* \.75f\);/,
+    'the physical compiler must not cap a multi-cell parcel back down to a one-cell-looking shell');
+  assert.match(physical, /float shellWidth = entranceFacesNorthSouth \? worldWidth : worldDepth;/);
+  assert.match(physical, /float shellDepth = entranceFacesNorthSouth \? worldDepth : worldWidth;/,
+    'east/west entrances may rotate the shell without rotating the world footprint out of its parcel');
+  assert.match(physical, /BuildBuildingShell\(shell\.transform, shellWidth, shellDepth, height, building\.blueprintId\);/);
+  assert.match(physical, /BuildInterior\(instance, building, centre, shellWidth, shellDepth,/);
+  assert.match(physical, /new ScreenHostLayout \{ exterior = shell\.transform, interior = room, width = shellWidth, depth = shellDepth,/);
+  assert.match(shell, /new Vector3\(wall, height, depth\)/);
+  assert.match(shell, /new Vector3\(width, height, wall\)/,
+    'physical walls and roof must use separate width and depth dimensions');
+  assert.match(interior, /float width = Mathf\.Max\(4f, shellWidth \* \.7f\);/);
+  assert.match(interior, /float depth = Mathf\.Max\(4f, shellDepth \* \.7f\);/);
+  assert.match(screens, /float width = Mathf\.Max\(4f, host\.width \* \.7f\);/);
+  assert.match(screens, /float depth = Mathf\.Max\(4f, host\.depth \* \.7f\);/,
+    'interior and exterior screen hosts must respect the rectangular shell dimensions');
 });
 
 test('City Forge physical ground has no artificial seams and its island exterior suppresses false land', () => {

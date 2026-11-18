@@ -72,7 +72,6 @@ namespace SlopCity
         private GameObject strategicMap;
         private GameObject buildOverlay;
         private Material buildOverlayMaterial;
-        private bool buildOverlayPresentationActive;
 
         public int ActiveChunkCount { get { return chunks.Count; } }
         public int ActiveFixtureCount { get { return fixtures.Count; } }
@@ -134,11 +133,10 @@ namespace SlopCity
                 BuildLandmarks(instance, chunk);
                 BuildLife(instance, chunk);
                 BuildScreens(instance, chunk);
-                // Build Mode is a clean planning surface, not a second scene
-                // layered over street geometry. A chunk that arrives while the
-                // editor is open remains safely streamed but visually hidden
-                // until the player returns to first person.
-                root.SetActive(!buildOverlayPresentationActive);
+                // The planning overlay is additive. Keep accepted chunks
+                // visible beneath it so their island ground never disappears
+                // while a player edits the next change.
+                root.SetActive(true);
                 chunks.Add(coord, instance);
             }
             catch (Exception error)
@@ -283,20 +281,17 @@ namespace SlopCity
             CityForgeDirection roadDirection, SlopCityCityForgeBuildMode.View view,
             bool draftIsValid)
         {
-            DestroyBuildOverlay(false);
+            DestroyBuildOverlay();
             if (head == null || draft == null || !draft.coord.Equals(selected)) return;
-
-            SetChunkPresentationForBuildOverlay(true);
 
             buildOverlay = new GameObject("CityForgeBuildOverlay_" + selected);
             buildOverlay.transform.SetParent(transform, false);
             buildOverlay.transform.localPosition = ChunkOrigin(selected);
             Color status = draftIsValid ? new Color(.55f, .94f, .42f) : new Color(1f, .57f, .18f);
-            // The bounded strategic map already supplies the continuous 9 × 9
-            // grid across every visible buildable block. A separate dark slab
-            // and status border here made one selected chunk look like a
-            // required placement box, even though clicks raycast directly to
-            // any visible grid cell.
+            // Keep the editor additive and quiet: a dark selected-chunk slab,
+            // border, or replacement grid made one block look corrupt and hid
+            // the streamed ground beneath it. Clicks raycast directly to the
+            // world, so only the actual draft state needs a compact overlay.
             BuildEditorGround(buildOverlay.transform, draft);
             BuildEditorLots(buildOverlay.transform, draft);
             BuildEditorRoads(buildOverlay.transform, draft, status);
@@ -309,10 +304,10 @@ namespace SlopCity
 
         public void ClearCityForgeBuildOverlay()
         {
-            DestroyBuildOverlay(true);
+            DestroyBuildOverlay();
         }
 
-        private void DestroyBuildOverlay(bool restorePhysicalChunks)
+        private void DestroyBuildOverlay()
         {
             if (buildOverlay)
             {
@@ -323,15 +318,6 @@ namespace SlopCity
                 Destroy(buildOverlay);
                 buildOverlay = null;
             }
-            if (restorePhysicalChunks) SetChunkPresentationForBuildOverlay(false);
-        }
-
-        private void SetChunkPresentationForBuildOverlay(bool visible)
-        {
-            if (buildOverlayPresentationActive == visible) return;
-            buildOverlayPresentationActive = visible;
-            foreach (ChunkInstance instance in chunks.Values)
-                if (instance != null && instance.root) instance.root.SetActive(!visible);
         }
 
         private void BuildEditorLots(Transform root, CityForgeChunkPlan draft)
@@ -368,12 +354,17 @@ namespace SlopCity
             {
                 CityForgeParcel parcel = (draft.parcels ?? new List<CityForgeParcel>()).FirstOrDefault(item => item != null && item.id == building.parcelId);
                 if (parcel == null || parcel.cells == null || parcel.cells.Count == 0) continue;
-                Vector3 center = ParcelCentre(parcel.cells);
-                float span = Mathf.Clamp(Mathf.Sqrt(parcel.cells.Count) * SlopCityCityForge.CellSizeMeters * .72f, 3.2f, 17f);
+                ParcelBounds(parcel.cells, out Vector3 center, out float parcelWidth, out float parcelDepth);
+                // A building's saved parcel is its W × L footprint.  Do not
+                // collapse a player-selected multi-cell rectangle back to the
+                // old one-cell marker in the planning view.
+                float width = Mathf.Max(3.2f, parcelWidth * .72f);
+                float depth = Mathf.Max(3.2f, parcelDepth * .72f);
                 Color color = Color.Lerp(FacadeColor(building.facadeId), Color.white, .22f);
-                EditorPrimitive("DraftBuilding_" + building.id, PrimitiveType.Cube, root, center + Vector3.up * .43f, new Vector3(span, .11f, span), color);
+                EditorPrimitive("DraftBuilding_" + building.id, PrimitiveType.Cube, root, center + Vector3.up * .43f, new Vector3(width, .11f, depth), color);
                 Vector3 direction = RoadNormal(building.entranceEdge);
-                EditorPrimitive("DraftEntrance_" + building.id, PrimitiveType.Cube, root, center + direction * (span * .47f) + Vector3.up * .50f, new Vector3(1.2f, .06f, 1.2f), new Color(.92f, .95f, .73f));
+                float entranceOffset = building.entranceEdge == CityForgeDirection.North || building.entranceEdge == CityForgeDirection.South ? depth : width;
+                EditorPrimitive("DraftEntrance_" + building.id, PrimitiveType.Cube, root, center + direction * (entranceOffset * .47f) + Vector3.up * .50f, new Vector3(1.2f, .06f, 1.2f), new Color(.92f, .95f, .73f));
             }
         }
 
@@ -505,10 +496,12 @@ namespace SlopCity
             foreach (CityForgeBuilding building in (plan.buildings ?? new List<CityForgeBuilding>()).Where(item => item != null).OrderBy(item => item.id, StringComparer.Ordinal))
             {
                 if (!parcels.TryGetValue(building.parcelId ?? string.Empty, out CityForgeParcel parcel) || parcel.cells == null || parcel.cells.Count == 0) continue;
-                Vector3 position = ParcelCentre(parcel.cells) - centreOffset;
-                float span = Mathf.Clamp(Mathf.Sqrt(parcel.cells.Count) * SlopCityCityForge.CellSizeMeters * .55f, 2.8f, 10f);
+                ParcelBounds(parcel.cells, out Vector3 center, out float parcelWidth, out float parcelDepth);
+                Vector3 position = center - centreOffset;
+                float width = Mathf.Max(2.8f, parcelWidth * .55f);
+                float depth = Mathf.Max(2.8f, parcelDepth * .55f);
                 float height = Mathf.Clamp(building.floors * .30f, .55f, 7.2f);
-                GameObject mass = Primitive("AcceptedBuildingMap_" + building.id, PrimitiveType.Cube, tile, position + Vector3.up * (height * .5f + .16f), new Vector3(span, height, span));
+                GameObject mass = Primitive("AcceptedBuildingMap_" + building.id, PrimitiveType.Cube, tile, position + Vector3.up * (height * .5f + .16f), new Vector3(width, height, depth));
                 Collider collider = mass.GetComponent<Collider>(); if (collider) collider.enabled = false;
                 SetRendererColor(mass.GetComponent<Renderer>(), KitColor(BuildingVariant(building.blueprintId), .40f, .62f));
                 screenHosts[building.id] = position + Vector3.up * (height + .30f);
@@ -978,29 +971,41 @@ namespace SlopCity
             {
                 CityForgeParcel parcel = (chunk.acceptedPlan.parcels ?? new List<CityForgeParcel>()).FirstOrDefault(item => item != null && item.id == building.parcelId);
                 if (parcel == null || parcel.cells == null || parcel.cells.Count == 0) continue;
-                Vector3 centre = ParcelCentre(parcel.cells);
-                float span = Mathf.Clamp(Mathf.Sqrt(parcel.cells.Count) * SlopCityCityForge.CellSizeMeters * .75f, 4f, 18f);
+                ParcelBounds(parcel.cells, out Vector3 centre, out float parcelWidth, out float parcelDepth);
+                // Keep the compiled physical shell proportional to the
+                // rectangular parcel.  The prior 18m cap made every 3+ cell
+                // building look like a single small square despite its saved
+                // W × L footprint.
+                float worldWidth = Mathf.Max(4f, parcelWidth * .75f);
+                float worldDepth = Mathf.Max(4f, parcelDepth * .75f);
                 float height = Mathf.Clamp(building.floors, 1, 24) * 2.8f;
+                bool entranceFacesNorthSouth = building.entranceEdge == CityForgeDirection.North || building.entranceEdge == CityForgeDirection.South;
+                // Shell-local -Z is always the entrance facade. Swap its
+                // axes for east/west entrances so the world-space footprint
+                // remains aligned with the player-selected parcel rectangle.
+                float shellWidth = entranceFacesNorthSouth ? worldWidth : worldDepth;
+                float shellDepth = entranceFacesNorthSouth ? worldDepth : worldWidth;
                 GameObject shell = Primitive("Building_" + building.id, PrimitiveType.Cube, instance.root.transform,
                     new Vector3(centre.x, 0f, centre.z), Vector3.one);
                 shell.transform.localRotation = Quaternion.Euler(0f, EntranceYaw(building.entranceEdge), 0f);
                 Renderer shellRenderer = shell.GetComponent<Renderer>(); if (shellRenderer) shellRenderer.enabled = false;
                 Collider shellCollider = shell.GetComponent<Collider>(); if (shellCollider) shellCollider.enabled = false;
-                BuildBuildingShell(shell.transform, span, height, building.blueprintId);
+                BuildBuildingShell(shell.transform, shellWidth, shellDepth, height, building.blueprintId);
                 ApplyBuildingFinish(shell.transform, building.facadeId, building.roofId);
                 // This is a ground-height opening in the front facade rather
                 // than a child of a solid cube, so normal street raycasts reach
                 // it before any structural wall collider.
                 GameObject entry = Primitive("Entry_" + building.id, PrimitiveType.Cube, instance.root.transform,
-                    instance.root.transform.InverseTransformPoint(shell.transform.TransformPoint(new Vector3(0f, 1.05f, -span * .5f - .14f))), new Vector3(1.45f, 2.1f, .18f));
+                    instance.root.transform.InverseTransformPoint(shell.transform.TransformPoint(new Vector3(0f, 1.05f, -shellDepth * .5f - .14f))), new Vector3(1.45f, 2.1f, .18f));
+                entry.transform.localRotation = shell.transform.localRotation;
                 SlopCityCityForgeFixture entryFixture = AddFixture(entry, "interior", string.IsNullOrEmpty(building.interiorRole) ? building.blueprintId : building.interiorRole, "Enter " + building.blueprintId, instance.coord);
-                Transform room = BuildInterior(instance, building, centre, span, entryFixture, entry.transform.position, shell.transform.localRotation);
-                instance.hosts[building.id] = new ScreenHostLayout { exterior = shell.transform, interior = room, span = span, height = height, building = true, blueprintId = building.blueprintId };
+                Transform room = BuildInterior(instance, building, centre, shellWidth, shellDepth, entryFixture, entry.transform.position, shell.transform.localRotation);
+                instance.hosts[building.id] = new ScreenHostLayout { exterior = shell.transform, interior = room, width = shellWidth, depth = shellDepth, height = height, building = true, blueprintId = building.blueprintId };
                 if (!string.IsNullOrEmpty(building.storefrontId) && building.storefrontId != "none")
                 {
                     float canopy = building.storefrontId == "arcade" ? 1.8f : building.storefrontId == "market-stall" ? 2.2f : 1.2f;
                     GameObject frontage = Primitive("Storefront_" + building.storefrontId, PrimitiveType.Cube, shell.transform,
-                        new Vector3(0f, 1.8f, -span * .5f - .12f), new Vector3(Mathf.Min(span, canopy * 2f), building.storefrontId == "glazed" ? 2.1f : .45f, .25f));
+                        new Vector3(0f, 1.8f, -shellDepth * .5f - .12f), new Vector3(Mathf.Min(shellWidth, canopy * 2f), building.storefrontId == "glazed" ? 2.1f : .45f, .25f));
                     DisableShadow(frontage);
                 }
             }
@@ -1010,7 +1015,7 @@ namespace SlopCity
                 GameObject site = new GameObject("Site_" + parcel.id);
                 site.transform.SetParent(instance.root.transform, false);
                 site.transform.localPosition = ParcelCentre(parcel.cells);
-                instance.hosts["site-" + parcel.id] = new ScreenHostLayout { exterior = site.transform, span = 4f, height = 4f, site = true };
+                instance.hosts["site-" + parcel.id] = new ScreenHostLayout { exterior = site.transform, width = 4f, depth = 4f, height = 4f, site = true };
             }
             foreach (CityForgeRoad road in chunk.roads ?? new List<CityForgeRoad>())
             {
@@ -1026,26 +1031,31 @@ namespace SlopCity
                 GameObject pole = Primitive("RoadKioskPole", PrimitiveType.Cylinder, instance.root.transform, curbside + Vector3.up * 1.05f, new Vector3(.18f, 1.05f, .18f));
                 GameObject basePad = Primitive("RoadKioskPad", PrimitiveType.Cube, instance.root.transform, curbside + Vector3.up * .08f, new Vector3(.9f, .16f, .65f));
                 DisableShadow(pole); DisableShadow(basePad);
-                instance.hosts[id] = new ScreenHostLayout { exterior = host.transform, span = 2f, height = 3f, road = true };
+                instance.hosts[id] = new ScreenHostLayout { exterior = host.transform, width = 2f, depth = 2f, height = 3f, road = true };
             }
         }
 
         private static void BuildBuildingShell(Transform parent, float span, float height, string blueprintId)
         {
+            BuildBuildingShell(parent, span, span, height, blueprintId);
+        }
+
+        private static void BuildBuildingShell(Transform parent, float width, float depth, float height, string blueprintId)
+        {
             float wall = .22f;
-            float doorway = Mathf.Clamp(span * .28f, 1.6f, 2.4f);
-            float sideWidth = Mathf.Max(.45f, (span - doorway) * .5f);
+            float doorway = Mathf.Clamp(width * .28f, 1.6f, 2.4f);
+            float sideWidth = Mathf.Max(.45f, (width - doorway) * .5f);
             // Side and rear walls retain collision; split front pieces and the
             // lintel leave a true catalog-derived doorway at street level.
-            Primitive("WestWall", PrimitiveType.Cube, parent, new Vector3(-span * .5f, height * .5f, 0f), new Vector3(wall, height, span));
-            Primitive("EastWall", PrimitiveType.Cube, parent, new Vector3(span * .5f, height * .5f, 0f), new Vector3(wall, height, span));
-            Primitive("RearWall", PrimitiveType.Cube, parent, new Vector3(0f, height * .5f, span * .5f), new Vector3(span, height, wall));
-            Primitive("FrontLeft", PrimitiveType.Cube, parent, new Vector3(-(doorway + sideWidth) * .5f, height * .5f, -span * .5f), new Vector3(sideWidth, height, wall));
-            Primitive("FrontRight", PrimitiveType.Cube, parent, new Vector3((doorway + sideWidth) * .5f, height * .5f, -span * .5f), new Vector3(sideWidth, height, wall));
-            Primitive("FrontLintel", PrimitiveType.Cube, parent, new Vector3(0f, Mathf.Max(2.25f, height - .55f), -span * .5f), new Vector3(doorway, Mathf.Min(1.1f, height * .35f), wall));
-            Primitive("Roof_" + (blueprintId ?? "kit"), PrimitiveType.Cube, parent, new Vector3(0f, height + wall * .5f, 0f), new Vector3(span + wall, wall, span + wall));
+            Primitive("WestWall", PrimitiveType.Cube, parent, new Vector3(-width * .5f, height * .5f, 0f), new Vector3(wall, height, depth));
+            Primitive("EastWall", PrimitiveType.Cube, parent, new Vector3(width * .5f, height * .5f, 0f), new Vector3(wall, height, depth));
+            Primitive("RearWall", PrimitiveType.Cube, parent, new Vector3(0f, height * .5f, depth * .5f), new Vector3(width, height, wall));
+            Primitive("FrontLeft", PrimitiveType.Cube, parent, new Vector3(-(doorway + sideWidth) * .5f, height * .5f, -depth * .5f), new Vector3(sideWidth, height, wall));
+            Primitive("FrontRight", PrimitiveType.Cube, parent, new Vector3((doorway + sideWidth) * .5f, height * .5f, -depth * .5f), new Vector3(sideWidth, height, wall));
+            Primitive("FrontLintel", PrimitiveType.Cube, parent, new Vector3(0f, Mathf.Max(2.25f, height - .55f), -depth * .5f), new Vector3(doorway, Mathf.Min(1.1f, height * .35f), wall));
+            Primitive("Roof_" + (blueprintId ?? "kit"), PrimitiveType.Cube, parent, new Vector3(0f, height + wall * .5f, 0f), new Vector3(width + wall, wall, depth + wall));
             int style = BuildingVariant(blueprintId);
-            BuildKitMassing(parent, span, height, style);
+            BuildKitMassing(parent, width, depth, height, style);
         }
 
         /// <summary>
@@ -1053,7 +1063,7 @@ namespace SlopCity
         /// silhouettes, while plans remain IDs and dimensions rather than
         /// arbitrary player meshes or transforms.
         /// </summary>
-        private static void BuildKitMassing(Transform parent, float span, float height, int style)
+        private static void BuildKitMassing(Transform parent, float width, float depth, float height, int style)
         {
             float roofY = height + .35f;
             switch (style % 5)
@@ -1063,22 +1073,22 @@ namespace SlopCity
                     Primitive("RoofLantern", PrimitiveType.Sphere, parent, new Vector3(0f, roofY + .92f, 0f), Vector3.one * .54f);
                     break;
                 case 1:
-                    Primitive("RoofSetback", PrimitiveType.Cube, parent, new Vector3(0f, roofY + 1.0f, 0f), new Vector3(Mathf.Max(2.2f, span * .56f), 1.9f, Mathf.Max(2.2f, span * .56f)));
+                    Primitive("RoofSetback", PrimitiveType.Cube, parent, new Vector3(0f, roofY + 1.0f, 0f), new Vector3(Mathf.Max(2.2f, width * .56f), 1.9f, Mathf.Max(2.2f, depth * .56f)));
                     Primitive("RoofCrown", PrimitiveType.Cylinder, parent, new Vector3(0f, roofY + 2.15f, 0f), new Vector3(.66f, .28f, .66f));
                     break;
                 case 2:
-                    float towerOffset = Mathf.Min(span * .22f, 2.3f);
-                    Primitive("RoofTowerWest", PrimitiveType.Cube, parent, new Vector3(-towerOffset, roofY + 1.25f, .06f), new Vector3(Mathf.Max(1.15f, span * .26f), 2.4f, Mathf.Max(1.15f, span * .26f)));
-                    Primitive("RoofTowerEast", PrimitiveType.Cube, parent, new Vector3(towerOffset, roofY + .92f, -.14f), new Vector3(Mathf.Max(1.1f, span * .23f), 1.75f, Mathf.Max(1.1f, span * .23f)));
+                    float towerOffset = Mathf.Min(width * .22f, 2.3f);
+                    Primitive("RoofTowerWest", PrimitiveType.Cube, parent, new Vector3(-towerOffset, roofY + 1.25f, .06f), new Vector3(Mathf.Max(1.15f, width * .26f), 2.4f, Mathf.Max(1.15f, depth * .26f)));
+                    Primitive("RoofTowerEast", PrimitiveType.Cube, parent, new Vector3(towerOffset, roofY + .92f, -.14f), new Vector3(Mathf.Max(1.1f, width * .23f), 1.75f, Mathf.Max(1.1f, depth * .23f)));
                     break;
                 case 3:
-                    Primitive("StreetArcadeCanopy", PrimitiveType.Cube, parent, new Vector3(0f, 2.45f, -span * .5f - .66f), new Vector3(span + .85f, .22f, 1.35f));
-                    Primitive("RoofServiceStack", PrimitiveType.Cube, parent, new Vector3(0f, roofY + .62f, span * .12f), new Vector3(Mathf.Max(1.8f, span * .38f), 1.1f, Mathf.Max(1.8f, span * .38f)));
+                    Primitive("StreetArcadeCanopy", PrimitiveType.Cube, parent, new Vector3(0f, 2.45f, -depth * .5f - .66f), new Vector3(width + .85f, .22f, 1.35f));
+                    Primitive("RoofServiceStack", PrimitiveType.Cube, parent, new Vector3(0f, roofY + .62f, depth * .12f), new Vector3(Mathf.Max(1.8f, width * .38f), 1.1f, Mathf.Max(1.8f, depth * .38f)));
                     break;
                 default:
-                    Primitive("RoofGardenTerrace", PrimitiveType.Cube, parent, new Vector3(0f, roofY + .20f, 0f), new Vector3(span * .72f, .30f, span * .72f));
-                    Primitive("RoofWaterTank", PrimitiveType.Cylinder, parent, new Vector3(-Mathf.Min(span * .18f, 1.8f), roofY + .98f, 0f), new Vector3(.72f, .68f, .72f));
-                    Primitive("RoofSolarRack", PrimitiveType.Cube, parent, new Vector3(Mathf.Min(span * .18f, 1.8f), roofY + .57f, 0f), new Vector3(Mathf.Max(1.4f, span * .28f), .22f, Mathf.Max(1.4f, span * .36f)));
+                    Primitive("RoofGardenTerrace", PrimitiveType.Cube, parent, new Vector3(0f, roofY + .20f, 0f), new Vector3(width * .72f, .30f, depth * .72f));
+                    Primitive("RoofWaterTank", PrimitiveType.Cylinder, parent, new Vector3(-Mathf.Min(width * .18f, 1.8f), roofY + .98f, 0f), new Vector3(.72f, .68f, .72f));
+                    Primitive("RoofSolarRack", PrimitiveType.Cube, parent, new Vector3(Mathf.Min(width * .18f, 1.8f), roofY + .57f, 0f), new Vector3(Mathf.Max(1.4f, width * .28f), .22f, Mathf.Max(1.4f, depth * .36f)));
                     break;
             }
         }
@@ -1152,7 +1162,7 @@ namespace SlopCity
             AddFixture(pulseMarker, "pulse", "city-pulse", "Pulse A" + pulse.access + " C" + pulse.care + " U" + pulse.culture, instance.coord);
         }
 
-        private Transform BuildInterior(ChunkInstance instance, CityForgeBuilding building, Vector3 parcelCentre, float span, SlopCityCityForgeFixture entry, Vector3 exteriorArrival, Quaternion orientation)
+        private Transform BuildInterior(ChunkInstance instance, CityForgeBuilding building, Vector3 parcelCentre, float shellWidth, float shellDepth, SlopCityCityForgeFixture entry, Vector3 exteriorArrival, Quaternion orientation)
         {
             if (entry == null) return null;
             // A streamed interior is derived from the approved kit and parcel,
@@ -1161,27 +1171,28 @@ namespace SlopCity
             GameObject room = new GameObject("Interior_" + building.id); room.transform.SetParent(instance.root.transform, false);
             room.transform.localPosition = parcelCentre + new Vector3(0f, 14f, 0f);
             room.transform.localRotation = orientation;
-            float width = Mathf.Clamp(span * .7f, 4f, 10f);
-            Primitive("Floor", PrimitiveType.Cube, room.transform, Vector3.zero, new Vector3(width, .25f, width));
-            Primitive("NorthWall", PrimitiveType.Cube, room.transform, new Vector3(0f, 2f, width * .5f), new Vector3(width, 4f, .2f));
-            Primitive("SouthWall", PrimitiveType.Cube, room.transform, new Vector3(0f, 2f, -width * .5f), new Vector3(width, 4f, .2f));
-            Primitive("EastWall", PrimitiveType.Cube, room.transform, new Vector3(width * .5f, 2f, 0f), new Vector3(.2f, 4f, width));
-            Primitive("WestWall", PrimitiveType.Cube, room.transform, new Vector3(-width * .5f, 2f, 0f), new Vector3(.2f, 4f, width));
-            BuildInteriorKit(room.transform, building.interiorRole, width);
-            GameObject returnControl = Primitive("ReturnToStreet", PrimitiveType.Cylinder, room.transform, new Vector3(0f, .7f, width * .24f), new Vector3(.6f, .7f, .6f));
+            float width = Mathf.Max(4f, shellWidth * .7f);
+            float depth = Mathf.Max(4f, shellDepth * .7f);
+            Primitive("Floor", PrimitiveType.Cube, room.transform, Vector3.zero, new Vector3(width, .25f, depth));
+            Primitive("NorthWall", PrimitiveType.Cube, room.transform, new Vector3(0f, 2f, depth * .5f), new Vector3(width, 4f, .2f));
+            Primitive("SouthWall", PrimitiveType.Cube, room.transform, new Vector3(0f, 2f, -depth * .5f), new Vector3(width, 4f, .2f));
+            Primitive("EastWall", PrimitiveType.Cube, room.transform, new Vector3(width * .5f, 2f, 0f), new Vector3(.2f, 4f, depth));
+            Primitive("WestWall", PrimitiveType.Cube, room.transform, new Vector3(-width * .5f, 2f, 0f), new Vector3(.2f, 4f, depth));
+            BuildInteriorKit(room.transform, building.interiorRole, width, depth);
+            GameObject returnControl = Primitive("ReturnToStreet", PrimitiveType.Cylinder, room.transform, new Vector3(0f, .7f, depth * .24f), new Vector3(.6f, .7f, .6f));
             SlopCityCityForgeFixture returnFixture = AddFixture(returnControl, "interior-return", "return-to-street", "Return to street", instance.coord);
             // Route both door controls through the game's standard interaction
             // and touch pipeline. The marker contains no player data: it is a
             // derived point inside this streamed public kit.
-            GameObject interiorDestination = new GameObject("InteriorArrival"); interiorDestination.transform.SetParent(room.transform, false); interiorDestination.transform.localPosition = new Vector3(0f, 1.2f, -width * .22f);
+            GameObject interiorDestination = new GameObject("InteriorArrival"); interiorDestination.transform.SetParent(room.transform, false); interiorDestination.transform.localPosition = new Vector3(0f, 1.2f, -depth * .22f);
             GameObject exteriorDestination = new GameObject("StreetArrival"); exteriorDestination.transform.SetParent(instance.root.transform, false); exteriorDestination.transform.localPosition = instance.root.transform.InverseTransformPoint(exteriorArrival);
             SlopCityInteractable entryControl = entry.GetComponent<SlopCityInteractable>(); if (entryControl) entryControl.ConfigureDestination(interiorDestination.transform);
             SlopCityInteractable returnControlInteraction = returnFixture ? returnFixture.GetComponent<SlopCityInteractable>() : null; if (returnControlInteraction) returnControlInteraction.ConfigureDestination(exteriorDestination.transform);
             InteriorPortal portal = new InteriorPortal
             {
                 chunk = instance.coord,
-                interiorPosition = room.transform.TransformPoint(new Vector3(0f, 1.2f, -width * .22f)),
-                exteriorPosition = instance.root.transform.TransformPoint(parcelCentre + new Vector3(0f, 1.2f, -span * .72f))
+                interiorPosition = room.transform.TransformPoint(new Vector3(0f, 1.2f, -depth * .22f)),
+                exteriorPosition = exteriorArrival
             };
             interiorEntries[entry] = portal; interiorReturns[returnFixture] = portal;
             return room.transform;
@@ -1198,12 +1209,12 @@ namespace SlopCity
             }
         }
 
-        private static void BuildInteriorKit(Transform room, string interiorRole, float width)
+        private static void BuildInteriorKit(Transform room, string interiorRole, float width, float depth)
         {
             int variant = InteriorVariant(interiorRole);
             PrimitiveType primary = variant % 3 == 0 ? PrimitiveType.Cube : variant % 3 == 1 ? PrimitiveType.Cylinder : PrimitiveType.Sphere;
-            GameObject furnishing = Primitive("InteriorKit_" + (interiorRole ?? "default"), primary, room, new Vector3(-width * .22f, .62f, 0f), new Vector3(1.1f + (variant % 3) * .2f, .85f, .9f));
-            GameObject counter = Primitive("InteriorWorkSurface", PrimitiveType.Cube, room, new Vector3(width * .22f, .55f, 0f), new Vector3(1.4f, 1.1f, .62f));
+            GameObject furnishing = Primitive("InteriorKit_" + (interiorRole ?? "default"), primary, room, new Vector3(-width * .22f, .62f, -depth * .08f), new Vector3(1.1f + (variant % 3) * .2f, .85f, .9f));
+            GameObject counter = Primitive("InteriorWorkSurface", PrimitiveType.Cube, room, new Vector3(width * .22f, .55f, depth * .08f), new Vector3(1.4f, 1.1f, .62f));
             Renderer first = furnishing.GetComponent<Renderer>(); if (first) SetRendererColor(first, InteriorColor(interiorRole));
             Renderer second = counter.GetComponent<Renderer>(); if (second) SetRendererColor(second, Color.Lerp(InteriorColor(interiorRole), Color.white, .18f));
         }
@@ -1329,12 +1340,13 @@ namespace SlopCity
             bool catalogInterior = screen.catalogIntegrated && string.Equals(screen.screenGroup, "interior", StringComparison.Ordinal);
             if (host.building && (wantsInterior || catalogInterior) && host.interior != null)
             {
-                float width = Mathf.Clamp(host.span * .7f, 4f, 10f);
+                float width = Mathf.Max(4f, host.width * .7f);
+                float depth = Mathf.Max(4f, host.depth * .7f);
                 float spacing = Mathf.Min(2.1f, width / Mathf.Max(2, columns + 1));
                 float x = (column - (columns - 1) * .5f) * spacing;
                 bool oppositeWall = screen.catalogIntegrated;
                 placement.parent = host.interior;
-                placement.localPosition = new Vector3(x, 2.0f + row * 1.35f, oppositeWall ? -width * .5f + .14f : width * .5f - .14f);
+                placement.localPosition = new Vector3(x, 2.0f + row * 1.35f, oppositeWall ? -depth * .5f + .14f : depth * .5f - .14f);
                 // CityScreen's authored front normal is local -Z. The north-wall
                 // player fixture therefore faces into the room (-Z), while the
                 // catalog fallback on the south wall faces north (+Z).
@@ -1345,11 +1357,11 @@ namespace SlopCity
             }
             if (host.building)
             {
-                float spacing = Mathf.Min(2.6f, host.span / Mathf.Max(2, columns + 1));
+                float spacing = Mathf.Min(2.6f, host.width / Mathf.Max(2, columns + 1));
                 float x = (column - (columns - 1) * .5f) * spacing;
                 bool rearFacade = screen.catalogIntegrated;
                 placement.parent = host.exterior;
-                placement.localPosition = new Vector3(x, Mathf.Min(host.height - 1.5f, 3.1f + row * 1.55f), rearFacade ? host.span * .5f + .08f : -host.span * .5f - .08f);
+                placement.localPosition = new Vector3(x, Mathf.Min(host.height - 1.5f, 3.1f + row * 1.55f), rearFacade ? host.depth * .5f + .08f : -host.depth * .5f - .08f);
                 // The player facade is outside the front (-Z) wall, so its
                 // local -Z front already faces the street. Fallbacks use the
                 // opposite facade and rotate to face +Z.
@@ -1527,6 +1539,32 @@ namespace SlopCity
             if (values.Count == 0) return new Vector3(36f, 0f, 36f);
             return new Vector3(values.Average(value => (value % 9 + .5f) * SlopCityCityForge.CellSizeMeters), 0f, values.Average(value => (value / 9 + .5f) * SlopCityCityForge.CellSizeMeters));
         }
+
+        /// <summary>
+        /// Converts a catalog-bounded parcel to an axis-aligned building box.
+        /// New footprints are rectangles, while legacy irregular parcels retain
+        /// a stable, bounded enclosing shape rather than being rejected.
+        /// </summary>
+        private static void ParcelBounds(IEnumerable<int> cells, out Vector3 centre, out float width, out float depth)
+        {
+            List<int> values = (cells ?? Enumerable.Empty<int>())
+                .Where(value => value >= 0 && value < SlopCityCityForge.GridSize * SlopCityCityForge.GridSize)
+                .ToList();
+            float cell = SlopCityCityForge.CellSizeMeters;
+            if (values.Count == 0)
+            {
+                centre = new Vector3(SlopCityCityForge.ChunkSizeMeters * .5f, 0f, SlopCityCityForge.ChunkSizeMeters * .5f);
+                width = depth = cell;
+                return;
+            }
+            int minX = values.Min(value => value % SlopCityCityForge.GridSize);
+            int maxX = values.Max(value => value % SlopCityCityForge.GridSize);
+            int minZ = values.Min(value => value / SlopCityCityForge.GridSize);
+            int maxZ = values.Max(value => value / SlopCityCityForge.GridSize);
+            width = (maxX - minX + 1) * cell;
+            depth = (maxZ - minZ + 1) * cell;
+            centre = new Vector3((minX + maxX + 1) * cell * .5f, 0f, (minZ + maxZ + 1) * cell * .5f);
+        }
         private static Vector3 RoadEdgeCentre(CityForgeRoad road)
         {
             float cell = SlopCityCityForge.CellSizeMeters;
@@ -1668,7 +1706,8 @@ namespace SlopCity
         {
             public Transform exterior;
             public Transform interior;
-            public float span;
+            public float width;
+            public float depth;
             public float height;
             public bool building;
             public bool site;

@@ -359,7 +359,10 @@ namespace SlopCity
                     cityMapTitle.rectTransform.sizeDelta = new Vector2(152,22);
                 }
                 if (cityProgress) cityProgress.rectTransform.sizeDelta = new Vector2(155,18);
-                cityMap.gameObject.SetActive(!input || !input.UseTouchControls);
+                // The compact map is also a travel control. Keep it available
+                // in the running touch HUD rather than making mobile players
+                // reopen the pause card just to reach built land.
+                cityMap.gameObject.SetActive(true);
             }
             LayoutCityMapPresentation();
         }
@@ -386,6 +389,41 @@ namespace SlopCity
                 cityMapTitle.rectTransform.sizeDelta = new Vector2(width - 16f,24f);
             }
             if (cityProgress) cityProgress.rectTransform.sizeDelta = new Vector2(width - 12f,20f);
+        }
+
+        /// <summary>
+        /// Keeps the running map in the clear centre band between mobile
+        /// guidance and the two lower thumb-control zones. It remains a
+        /// compact, direct tap target instead of competing with either stick
+        /// or the action pad.
+        /// </summary>
+        private void LayoutRunningTouchCityMap(Rect safeFrame)
+        {
+            if (!cityMap || cityMapPausedPresentation || input == null || !input.UseTouchControls
+                || !(transform is RectTransform canvas)) return;
+            const float mapAspect = 166f / 194f;
+            float width = Mathf.Clamp(Mathf.Min(safeFrame.width * .38f, safeFrame.height * .24f), 112f, 148f);
+            float height = width / mapAspect;
+            cityMap.anchorMin = cityMap.anchorMax = cityMap.pivot = new Vector2(.5f,.5f);
+            cityMap.anchoredPosition = new Vector2(0f, Mathf.Clamp(height * .42f,
+                safeFrame.yMin - canvas.rect.height * .5f + height * .5f + 12f,
+                safeFrame.yMax - canvas.rect.height * .5f - height * .5f - 12f));
+            cityMap.sizeDelta = new Vector2(width,height);
+            Image mapImage = cityMap.GetComponent<Image>();
+            if (mapImage)
+            {
+                mapImage.color = new Color(.012f,.027f,.035f,.82f);
+                mapImage.raycastTarget = true;
+            }
+            cityMapContent.localScale = Vector3.one;
+            if (cityMapNavigator) cityMapNavigator.RefreshPresentation();
+            if (cityMapTitle)
+            {
+                cityMapTitle.text = "AERIAL CITY  ·  TAP BUILT LAND";
+                cityMapTitle.fontSize = 8;
+                cityMapTitle.rectTransform.sizeDelta = new Vector2(width - 16f,20f);
+            }
+            if (cityProgress) cityProgress.rectTransform.sizeDelta = new Vector2(width - 12f,18f);
         }
 
         private void StyleGameplayLayer()
@@ -994,7 +1032,7 @@ namespace SlopCity
             lastCanvasSize = size;
             lastSafeArea = safeArea;
             Rect safeFrame = CanvasSafeFrame(size);
-            Transform map = gameplayLayer.transform.Find("CityMap"); if (map) map.gameObject.SetActive(false);
+            Transform map = gameplayLayer.transform.Find("CityMap"); if (map) map.gameObject.SetActive(true);
             districtName.gameObject.SetActive(false); homeDistance.gameObject.SetActive(false); nowPlaying.gameObject.SetActive(false);
             if (controlsLabel) controlsLabel.gameObject.SetActive(false);
             Transform subtitle = gameplayLayer.transform.Find("Subtitle"); if (subtitle) subtitle.gameObject.SetActive(false);
@@ -1003,6 +1041,7 @@ namespace SlopCity
             reputation.gameObject.SetActive(false);
             if (stateLabel) stateLabel.gameObject.SetActive(false);
             LayoutMobileGuidance();
+            LayoutRunningTouchCityMap(safeFrame);
             LayoutMobileMenu(safeFrame,portrait);
             LayoutMobileSource(safeFrame);
             LayoutCityMapPresentation();
@@ -1388,6 +1427,7 @@ namespace SlopCity
         private RectTransform viewport, content, pointer;
         private Vector2 pan, pressScreen;
         private bool dragging, userPanning;
+        private int activePointerId = int.MinValue;
         private float presentationScale = 1f;
         private CityForgeCoord windowCenter = new CityForgeCoord(0, 0);
 
@@ -1443,7 +1483,8 @@ namespace SlopCity
 
         public void OnPointerDown(PointerEventData e)
         {
-            if (e.button != PointerEventData.InputButton.Left) return;
+            if (!IsMapPointer(e)) return;
+            activePointerId = e.pointerId;
             pressScreen = e.position;
             dragging = false;
             userPanning = true;
@@ -1455,6 +1496,7 @@ namespace SlopCity
 
         public void OnDrag(PointerEventData e)
         {
+            if (e == null || e.pointerId != activePointerId) return;
             if ((e.position - pressScreen).sqrMagnitude > DragThresholdPixels * DragThresholdPixels && !dragging)
             {
                 dragging = true;
@@ -1468,12 +1510,21 @@ namespace SlopCity
 
         public void OnPointerUp(PointerEventData e)
         {
-            if (e.button != PointerEventData.InputButton.Left) return;
+            if (e == null || e.pointerId != activePointerId) return;
+            activePointerId = int.MinValue;
             if (!dragging && !TryTeleport(e))
             {
                 if (player) player.CancelPointerLookForMapDrag();
                 FollowPlayer();
             }
+        }
+
+        private static bool IsMapPointer(PointerEventData e)
+        {
+            // Mouse clicks retain their normal left-button requirement. Touch
+            // events use non-negative IDs, and some native input modules do
+            // not populate `button` as Left for their release event.
+            return e != null && (e.pointerId >= 0 || e.button == PointerEventData.InputButton.Left);
         }
 
         private bool TryTeleport(PointerEventData e)

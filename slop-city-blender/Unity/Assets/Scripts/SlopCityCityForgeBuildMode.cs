@@ -41,7 +41,9 @@ namespace SlopCity
         private Text launcherStatus;
         private Button undoButton, redoButton;
         private Button launcherButton;
-        private Button groundActionButton, roadButton, removeRoadButton, roadDirectionButton, zoneButton, kitButton, facadeButton, roofButton, storefrontButton, entranceButton, floorsButton, interiorButton, serviceButton, landmarkButton, situationButton, situationStateButton, mountButton, hostButton, targetButton, deviceButton;
+        private Button groundActionButton, roadButton, removeRoadButton, roadDirectionButton, zoneButton, kitButton, facadeButton, roofButton, storefrontButton, entranceButton, floorsButton, interiorButton, demolishButton, reviewButton, returnButton, serviceButton, landmarkButton, situationButton, situationStateButton, mountButton, hostButton, targetButton, deviceButton;
+        private InputField buildingWidthInput, buildingLengthInput;
+        private Text autosaveLabel;
         private readonly Dictionary<View, Button> viewButtons = new Dictionary<View, Button>();
         private readonly Dictionary<View, List<GameObject>> viewControls = new Dictionary<View, List<GameObject>>();
         private CityForgeCoord selected;
@@ -68,6 +70,11 @@ namespace SlopCity
         private string screenHostId = string.Empty;
         private int buildingFloors = 2;
         private CityForgeDirection entrance = CityForgeDirection.North;
+        // Buildings keep their footprint in the existing parcel cell list so
+        // the public plan schema stays compact and old saves remain valid.
+        private int buildingFootprintWidth = 1;
+        private int buildingFootprintLength = 1;
+        private bool demolishBuildings;
         // Returning from the map after laying ground should put the player on
         // the accepted island, rather than back on the entry deck wondering
         // whether the autosave worked. Hosted worlds promote this only after
@@ -100,6 +107,7 @@ namespace SlopCity
         private bool firstPersonWasEnabled;
         private bool hudSuppressed;
         private Vector2 lastTouchPosition;
+        private Vector2 touchStartPosition;
         private float lastPinchDistance;
         private bool touchPanned;
         private bool pendingOpenWhenReady;
@@ -123,6 +131,10 @@ namespace SlopCity
         private int observedLauncherPointerActivationSequence;
         private int lastLauncherRequestFrame = -1;
         private RectTransform buildUiSurface;
+        private Vector2 lastBuildUiScreenSize;
+        private Rect lastBuildUiSafeArea;
+        private Vector2 lastBuildUiCanvasSize;
+        private float lastBuildUiCanvasScale;
         private readonly List<Button> buildUiButtons = new List<Button>();
         private Button buildUiMouseCapture;
         private bool buildUiMouseSurfaceCapture;
@@ -173,7 +185,7 @@ namespace SlopCity
         private int capturedMapCellZ;
         private bool hasHoveredCell;
         private CityForgeCoord hoveredCell;
-        // A strategic-grid click may name a chunk whose authoritative page or
+        // A map click may name a chunk whose authoritative page or
         // durable draft is still on its way. Keep the exact local-cell/tool
         // intent so the first click is not discarded after that bounded load
         // completes. The action remains scoped to one validated chunk; it is
@@ -184,6 +196,9 @@ namespace SlopCity
         private int pendingMapActionCellZ;
         private View pendingMapActionView;
         private bool pendingMapActionExtendsLotFootprint;
+        private int pendingMapActionBuildingWidth = 1;
+        private int pendingMapActionBuildingLength = 1;
+        private bool pendingMapActionDemolishBuildings;
         private static readonly string[] BuildingBlueprintOptions =
         {
             "walk-up", "courtyard-home", "tower-residence", "live-work-block", "workshop", "repair-bay", "clinic", "laundry", "depot", "small-office",
@@ -244,9 +259,11 @@ namespace SlopCity
                 pendingOpenWhenReady = false;
                 openedFromPendingRequest = Open();
             }
-            if (!openedFromPendingRequest && editingEnabled && !autosaveInFlight && Input.GetKeyDown(toggleKey)) { if (opened) Close(); else RequestLauncherOpen(); }
+            bool textInputFocused = IsTextInputFocused();
+            if (!openedFromPendingRequest && editingEnabled && !autosaveInFlight && !textInputFocused && Input.GetKeyDown(toggleKey)) { if (opened) Close(); else RequestLauncherOpen(); }
             if (!opened) UpdateLauncherPointerActivation();
             if (!opened) return;
+            LayoutTouchCityForgeUi(false);
             if (autosaveInFlight)
             {
                 // Keep the plan on screen while a hosted bridge verifies its
@@ -263,14 +280,17 @@ namespace SlopCity
             UpdateMapMousePointer(mouseStartedOverBuildUi);
             MoveCamera();
             UpdateHoveredCell();
-            if (Input.GetKeyDown(KeyCode.Alpha1) || Input.GetKeyDown(KeyCode.Keypad1)) SelectView(View.Streets);
-            if (Input.GetKeyDown(KeyCode.Alpha2) || Input.GetKeyDown(KeyCode.Keypad2)) SelectView(View.Ground);
-            if (Input.GetKeyDown(KeyCode.Alpha3) || Input.GetKeyDown(KeyCode.Keypad3)) SelectView(View.Lots);
-            if (Input.GetKeyDown(KeyCode.Alpha4) || Input.GetKeyDown(KeyCode.Keypad4)) SelectView(View.Buildings);
-            if (Input.GetKeyDown(KeyCode.Alpha5) || Input.GetKeyDown(KeyCode.Keypad5)) SelectView(View.Services);
-            if (Input.GetKeyDown(KeyCode.Alpha6) || Input.GetKeyDown(KeyCode.Keypad6)) SelectView(View.Life);
-            if (Input.GetKeyDown(KeyCode.Z) && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))) Undo();
-            if (Input.GetKeyDown(KeyCode.Y) && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))) Redo();
+            if (!textInputFocused)
+            {
+                if (Input.GetKeyDown(KeyCode.Alpha1) || Input.GetKeyDown(KeyCode.Keypad1)) SelectView(View.Streets);
+                if (Input.GetKeyDown(KeyCode.Alpha2) || Input.GetKeyDown(KeyCode.Keypad2)) SelectView(View.Ground);
+                if (Input.GetKeyDown(KeyCode.Alpha3) || Input.GetKeyDown(KeyCode.Keypad3)) SelectView(View.Lots);
+                if (Input.GetKeyDown(KeyCode.Alpha4) || Input.GetKeyDown(KeyCode.Keypad4)) SelectView(View.Buildings);
+                if (Input.GetKeyDown(KeyCode.Alpha5) || Input.GetKeyDown(KeyCode.Keypad5)) SelectView(View.Services);
+                if (Input.GetKeyDown(KeyCode.Alpha6) || Input.GetKeyDown(KeyCode.Keypad6)) SelectView(View.Life);
+                if (Input.GetKeyDown(KeyCode.Z) && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))) Undo();
+                if (Input.GetKeyDown(KeyCode.Y) && (Input.GetKey(KeyCode.LeftControl) || Input.GetKey(KeyCode.RightControl))) Redo();
+            }
             if (Input.touchCount == 1 && !suppressBuildUiTouchUntilNoTouches && buildUiTouchFingerId < 0)
             {
                 Touch touch = Input.GetTouch(0);
@@ -283,6 +303,18 @@ namespace SlopCity
                     touchPanned = false;
                 }
             }
+        }
+
+        /// <summary>
+        /// Numeric footprint entry owns the keyboard while it is active.  The
+        /// editor's historical number-row shortcuts must not turn a player's
+        /// typed width or length into a different tool mode.
+        /// </summary>
+        private static bool IsTextInputFocused()
+        {
+            EventSystem events = EventSystem.current;
+            GameObject selectedObject = events ? events.currentSelectedGameObject : null;
+            return selectedObject && selectedObject.GetComponentInParent<InputField>() != null;
         }
 
         private void OnGUI()
@@ -528,7 +560,7 @@ namespace SlopCity
         }
 
         /// <summary>
-        /// Selects a strategic-grid chunk. A false return with
+        /// Selects a City Forge block. A false return with
         /// <paramref name="waitingForData"/> set means the hosted bridge is
         /// loading its bounded page or durable draft and will call this again
         /// when that exact chunk is usable.
@@ -631,6 +663,7 @@ namespace SlopCity
             if (selectedCells.Count == 0 || selectedCells.Count > 81 || selectedCells.Any(item => item < 0 || item >= 81) || (draft.parcels ?? new List<CityForgeParcel>()).Any(parcel => parcel != null && parcel.cells != null && parcel.cells.Intersect(selectedCells).Any())) return false;
             HashSet<int> ground = new HashSet<int>(draft.groundCells ?? new List<int>());
             if (selectedCells.Any(cell => !ground.Contains(cell))) { SetMessage("Lay island ground under every lot before zoning it."); return false; }
+            if ((draft.parcels ?? new List<CityForgeParcel>()).Count >= SlopCityCityForge.MaximumParcelRecords) { SetMessage("This block already has the maximum number of lots."); return false; }
             CityForgeChunkPlan next = draft.Clone();
             CityForgeParcel parcel = new CityForgeParcel { id = string.IsNullOrEmpty(parcelId) ? NextId("parcel") : parcelId, zone = zone, cells = selectedCells, entranceEdge = CityForgeDirection.North };
             next.parcels.Add(parcel);
@@ -640,17 +673,35 @@ namespace SlopCity
         }
         public bool TryPlaceBuilding(string parcelId, string blueprintId, string facadeId, string roofId, int floors, CityForgeDirection entrance, string storefrontId = null, string interiorRole = null)
         {
-            if (draft == null || (draft.buildings ?? new List<CityForgeBuilding>()).Any(item => item != null && item.parcelId == parcelId)) return false;
+            if (draft == null) return false;
             CityForgeParcel parcel = (draft.parcels ?? new List<CityForgeParcel>()).FirstOrDefault(item => item != null && item.id == parcelId);
             if (parcel == null) { SetMessage("Add a lot first."); return false; }
-            CityForgeDirection resolvedEntrance = entrance;
+            return PlaceBuildingOnParcel(parcel, false, false, blueprintId, facadeId, roofId, floors, entrance, storefrontId, interiorRole);
+        }
+
+        private bool PlaceBuildingOnParcel(CityForgeParcel parcel, bool addParcel, bool replaceParcel, string blueprintId, string facadeId, string roofId, int floors, CityForgeDirection requestedEntrance, string storefrontId, string interiorRole, IEnumerable<CityForgeParcel> remainingParcels = null)
+        {
+            if (draft == null || parcel == null || string.IsNullOrEmpty(parcel.id)
+                || (draft.buildings ?? new List<CityForgeBuilding>()).Any(item => item != null && item.parcelId == parcel.id)) return false;
+            if (!SlopCityCityForgeCatalog.Default.IsBuildingAllowedInZone(blueprintId, parcel.zone))
+            {
+                SetMessage("That building kit does not fit this lot zone.");
+                return false;
+            }
+            CityForgeDirection resolvedEntrance = requestedEntrance;
             if (!HasStreetFrontage(parcel, resolvedEntrance) && !TryFindStreetFrontage(parcel, out resolvedEntrance))
             {
                 SetMessage("This lot needs a street touching it before a building can be placed.");
                 return false;
             }
             this.entrance = resolvedEntrance;
-            CityForgeChunkPlan next = draft.Clone(); next.buildings.Add(new CityForgeBuilding { id = NextId("building"), parcelId = parcelId, blueprintId = blueprintId, facadeId = facadeId, roofId = roofId, floors = floors, entranceEdge = resolvedEntrance, storefrontId = storefrontId ?? string.Empty, interiorRole = interiorRole ?? string.Empty }); return Apply(next, "Building placed facing the " + DirectionLabel(resolvedEntrance).ToLowerInvariant() + " street. Add services or keep designing.");
+            CityForgeChunkPlan next = draft.Clone();
+            if (replaceParcel) next.parcels.RemoveAll(item => item != null && item.id == parcel.id);
+            if (addParcel || replaceParcel) next.parcels.Add(parcel.Clone());
+            foreach (CityForgeParcel remaining in remainingParcels ?? Enumerable.Empty<CityForgeParcel>())
+                if (remaining != null) next.parcels.Add(remaining.Clone());
+            next.buildings.Add(new CityForgeBuilding { id = NextId("building"), parcelId = parcel.id, blueprintId = blueprintId, facadeId = facadeId, roofId = roofId, floors = floors, entranceEdge = resolvedEntrance, storefrontId = storefrontId ?? string.Empty, interiorRole = interiorRole ?? string.Empty });
+            return Apply(next, "Building placed facing the " + DirectionLabel(resolvedEntrance).ToLowerInvariant() + " street. Add services or keep designing.");
         }
         public bool TryPlaceService(string parcelId, string type)
         {
@@ -1282,10 +1333,14 @@ namespace SlopCity
         private void ClickMapCell(CityForgeCoord coordinate, int x, int z)
         {
             if (autosaveInFlight) { SetMessage("Saving City Forge…"); return; }
+            // A map tap can arrive before UGUI delivers the input field's
+            // end-edit event. Read the two dimensions here so the action and
+            // any deferred cross-chunk action use what the player just typed.
+            if (view == View.Buildings && !demolishBuildings) CommitBuildingFootprintInputs();
             if (!SlopCityCityForge.IsBuildable(coordinate))
             {
                 CancelPendingMapAction();
-                SetMessage("The Old City is protected. Choose a City Forge grid block.");
+                SetMessage("The Old City is protected. Choose a City Forge block.");
                 return;
             }
             if (!coordinate.Equals(selected))
@@ -1296,7 +1351,7 @@ namespace SlopCity
                 return;
             }
             CancelPendingMapAction();
-            ApplyMapAction(view, x, z, Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift));
+            ApplyMapAction(view, x, z, Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift), buildingFootprintWidth, buildingFootprintLength, demolishBuildings);
         }
 
         private void QueueMapAction(CityForgeCoord coordinate, int x, int z)
@@ -1310,6 +1365,9 @@ namespace SlopCity
             // silently reinterpreted after a hosted page/draft hydration.
             pendingMapActionView = view;
             pendingMapActionExtendsLotFootprint = Input.GetKey(KeyCode.LeftShift) || Input.GetKey(KeyCode.RightShift);
+            pendingMapActionBuildingWidth = buildingFootprintWidth;
+            pendingMapActionBuildingLength = buildingFootprintLength;
+            pendingMapActionDemolishBuildings = demolishBuildings;
         }
 
         private void ClearPendingMapAction()
@@ -1320,6 +1378,9 @@ namespace SlopCity
             pendingMapActionCellZ = 0;
             pendingMapActionView = View.Ground;
             pendingMapActionExtendsLotFootprint = false;
+            pendingMapActionBuildingWidth = 1;
+            pendingMapActionBuildingLength = 1;
+            pendingMapActionDemolishBuildings = false;
         }
 
         /// <summary>Cancels a local pending action and tells an owner bridge that its matching navigation is stale.</summary>
@@ -1347,16 +1408,19 @@ namespace SlopCity
             int x = pendingMapActionCellX;
             int z = pendingMapActionCellZ;
             bool extendsLotFootprint = pendingMapActionExtendsLotFootprint;
+            int buildingWidth = pendingMapActionBuildingWidth;
+            int buildingLength = pendingMapActionBuildingLength;
+            bool demolish = pendingMapActionDemolishBuildings;
             ClearPendingMapAction();
-            if (!autosaveInFlight) ApplyMapAction(actionView, x, z, extendsLotFootprint);
+            if (!autosaveInFlight) ApplyMapAction(actionView, x, z, extendsLotFootprint, buildingWidth, buildingLength, demolish);
         }
 
-        private void ApplyMapAction(View actionView, int x, int z, bool extendsLotFootprint)
+        private void ApplyMapAction(View actionView, int x, int z, bool extendsLotFootprint, int buildingWidth, int buildingLength, bool demolish)
         {
             if (actionView == View.Streets) ToggleStreet(x, z);
             else if (actionView == View.Ground) TrySetGround(x, z, removeGround);
             else if (actionView == View.Lots) AddLot(x, z, extendsLotFootprint);
-            else if (actionView == View.Buildings) AddBuilding(x, z);
+            else if (actionView == View.Buildings) AddBuilding(x, z, buildingWidth, buildingLength, demolish);
             else if (actionView == View.Services) AddService(x, z);
             else AddLife(x, z);
         }
@@ -1414,17 +1478,155 @@ namespace SlopCity
             if (TryPlaceLot(footprint, lotZone)) lotFootprint.Clear();
         }
 
-        private void AddBuilding(int x, int z)
+        private void AddBuilding(int x, int z, int width, int length, bool demolish)
+        {
+            if (demolish) { DemolishBuildingAt(x, z); return; }
+            TryPlaceBuildingFootprint(x, z, width, length);
+        }
+
+        /// <summary>
+        /// Turns the two player-entered dimensions into the existing parcel
+        /// representation.  A footprint can reuse an exact lot, safely expand
+        /// an otherwise empty partial lot, or create its own rectangular lot;
+        /// it never stores a second, competing building geometry schema.
+        /// </summary>
+        private bool TryPlaceBuildingFootprint(int x, int z, int requestedWidth, int requestedLength)
+        {
+            if (draft == null) return false;
+            int width = Mathf.Clamp(requestedWidth, 1, SlopCityCityForge.GridSize);
+            int length = Mathf.Clamp(requestedLength, 1, SlopCityCityForge.GridSize);
+            if (x < 0 || z < 0 || x + width > SlopCityCityForge.GridSize || z + length > SlopCityCityForge.GridSize)
+            {
+                SetMessage("That footprint must stay inside this City Forge block.");
+                return false;
+            }
+
+            List<int> cells = new List<int>(width * length);
+            for (int cellZ = z; cellZ < z + length; cellZ++)
+                for (int cellX = x; cellX < x + width; cellX++) cells.Add(cellX + cellZ * SlopCityCityForge.GridSize);
+            HashSet<int> footprint = new HashSet<int>(cells);
+            HashSet<int> ground = new HashSet<int>(draft.groundCells ?? new List<int>());
+            if (cells.Any(cell => !ground.Contains(cell)))
+            {
+                SetMessage("Lay island ground under every cell of the building footprint first.");
+                return false;
+            }
+
+            List<CityForgeParcel> overlaps = (draft.parcels ?? new List<CityForgeParcel>())
+                .Where(parcel => parcel != null && parcel.cells != null && parcel.cells.Any(footprint.Contains)).ToList();
+            CityForgeParcel parcel;
+            List<CityForgeParcel> remainingParcels = null;
+            bool addParcel = false;
+            bool replaceParcel = false;
+            if (overlaps.Count == 0)
+            {
+                if ((draft.parcels ?? new List<CityForgeParcel>()).Count >= SlopCityCityForge.MaximumParcelRecords)
+                {
+                    SetMessage("This block already has the maximum number of lots.");
+                    return false;
+                }
+                parcel = new CityForgeParcel { id = NextId("parcel"), zone = lotZone, cells = cells, entranceEdge = entrance };
+                addParcel = true;
+            }
+            else if (overlaps.Count == 1)
+            {
+                CityForgeParcel existing = overlaps[0];
+                HashSet<int> existingCells = new HashSet<int>(existing.cells);
+                if (existingCells.SetEquals(footprint)) parcel = existing;
+                else if (existingCells.IsSubsetOf(footprint) && !HasParcelDependencies(draft, new HashSet<string>(new[] { existing.id }, StringComparer.Ordinal)))
+                {
+                    parcel = existing.Clone();
+                    parcel.cells = cells;
+                    replaceParcel = true;
+                }
+                else if (footprint.IsSubsetOf(existingCells) && !HasParcelDependencies(draft, new HashSet<string>(new[] { existing.id }, StringComparer.Ordinal)))
+                {
+                    List<List<int>> fragments = SplitCellsIntoRectangles(existing.cells.Where(cell => !footprint.Contains(cell)));
+                    int parcelCount = (draft.parcels ?? new List<CityForgeParcel>()).Count;
+                    if (fragments.Count == 0 || parcelCount + fragments.Count > SlopCityCityForge.MaximumParcelRecords)
+                    {
+                        SetMessage("This block cannot split that lot into enough safe remaining lots.");
+                        return false;
+                    }
+                    // A direct W × L building request inside a larger empty
+                    // lot owns precisely that rectangle. Keep the unused cells
+                    // as rectangular lots so future services/sites cannot use
+                    // an L/ring-shaped parcel whose centre sits in the new
+                    // building. This still uses the one established parcel
+                    // footprint schema and keeps every remainder non-overlap.
+                    parcel = existing.Clone();
+                    parcel.cells = cells;
+                    CityForgeChunkPlan idSource = draft.Clone();
+                    remainingParcels = new List<CityForgeParcel>();
+                    foreach (List<int> fragment in fragments)
+                    {
+                        CityForgeParcel remaining = existing.Clone();
+                        remaining.id = NextId(idSource, "parcel");
+                        remaining.cells = fragment;
+                        idSource.parcels.Add(remaining.Clone());
+                        remainingParcels.Add(remaining);
+                    }
+                    replaceParcel = true;
+                }
+                else
+                {
+                    SetMessage("That footprint overlaps a used lot. Tap empty ground or an empty lot.");
+                    return false;
+                }
+            }
+            else
+            {
+                SetMessage("That footprint crosses multiple lots. Keep it inside one empty lot or tap open ground.");
+                return false;
+            }
+
+            if (!SlopCityCityForgeCatalog.Default.IsBuildingAllowedInZone(buildingBlueprint, parcel.zone))
+                buildingBlueprint = BuildingBlueprintsForZone(parcel.zone).FirstOrDefault() ?? buildingBlueprint;
+            RefreshUi();
+            return PlaceBuildingOnParcel(parcel, addParcel, replaceParcel, buildingBlueprint, facade, roof, buildingFloors,
+                entrance, storefront == "none" ? null : storefront, interior, remainingParcels);
+        }
+
+        /// <summary>
+        /// Partitions the unused cells of an empty lot into deterministic
+        /// axis-aligned rectangles.  Service/site placement uses a parcel's
+        /// centre, so keeping a ring or L-shaped remainder would let that
+        /// centre fall inside the new building footprint.
+        /// </summary>
+        private static List<List<int>> SplitCellsIntoRectangles(IEnumerable<int> cells)
+        {
+            HashSet<int> remaining = new HashSet<int>((cells ?? Enumerable.Empty<int>())
+                .Where(cell => cell >= 0 && cell < SlopCityCityForge.GridSize * SlopCityCityForge.GridSize));
+            List<List<int>> rectangles = new List<List<int>>();
+            while (remaining.Count > 0)
+            {
+                int first = remaining.Min();
+                int startX = first % SlopCityCityForge.GridSize;
+                int startZ = first / SlopCityCityForge.GridSize;
+                int width = 0;
+                while (startX + width < SlopCityCityForge.GridSize && remaining.Contains(startX + width + startZ * SlopCityCityForge.GridSize)) width++;
+                int length = 1;
+                while (startZ + length < SlopCityCityForge.GridSize
+                    && Enumerable.Range(startX, width).All(x => remaining.Contains(x + (startZ + length) * SlopCityCityForge.GridSize))) length++;
+                List<int> rectangle = new List<int>(width * length);
+                for (int z = startZ; z < startZ + length; z++)
+                    for (int x = startX; x < startX + width; x++)
+                    {
+                        int cell = x + z * SlopCityCityForge.GridSize;
+                        remaining.Remove(cell);
+                        rectangle.Add(cell);
+                    }
+                rectangles.Add(rectangle);
+            }
+            return rectangles;
+        }
+
+        private void DemolishBuildingAt(int x, int z)
         {
             CityForgeParcel parcel = ParcelAt(x, z);
-            if (parcel == null) { SetMessage("Add a lot first."); return; }
-            if ((draft.buildings ?? new List<CityForgeBuilding>()).Any(item => item != null && item.parcelId == parcel.id)) { SetMessage("That lot already has a building."); return; }
-            if (!SlopCityCityForgeCatalog.Default.IsBuildingAllowedInZone(buildingBlueprint, parcel.zone))
-            {
-                buildingBlueprint = BuildingBlueprintsForZone(parcel.zone).FirstOrDefault() ?? buildingBlueprint;
-                RefreshUi();
-            }
-            TryPlaceBuilding(parcel.id, buildingBlueprint, facade, roof, buildingFloors, entrance, storefront == "none" ? null : storefront, interior);
+            CityForgeBuilding building = parcel == null ? null : (draft.buildings ?? new List<CityForgeBuilding>()).FirstOrDefault(item => item != null && item.parcelId == parcel.id);
+            if (building == null) { SetMessage("Demolish mode: tap a building footprint."); return; }
+            TryDemolish(building.id);
         }
 
         private void AddService(int x, int z)
@@ -1625,7 +1827,11 @@ namespace SlopCity
                 .Concat((source?.services ?? new List<CityForgeService>()).Where(item => item != null).Select(item => item.id))
                 .Concat((source?.screens ?? new List<CityForgeScreen>()).Where(item => item != null).Select(item => item.screenId))
                 .Concat((source?.landmarks ?? new List<CityForgeLandmark>()).Where(item => item != null).Select(item => item.id))
-                .Concat((source?.situations ?? new List<CityForgeSituationState>()).Where(item => item != null).Select(item => item.id)), StringComparer.Ordinal);
+                .Concat((source?.situations ?? new List<CityForgeSituationState>()).Where(item => item != null).Select(item => item.id))
+                // Demolished IDs are durable tombstones: rebuilding must make
+                // a new structure identity rather than resurrecting an old
+                // building, screen host, or replicated reference.
+                .Concat(source?.demolishedIds ?? new List<string>()), StringComparer.Ordinal);
             int index = 1; string value; do { value = prefix + "-" + index; index++; } while (used.Contains(value)); return value;
         }
         private string Seed(string prefix) { return SlopCityCityForge.Sha256(prefix + "|" + selected + "|" + (draft == null ? 0 : draft.revision)).Substring(0, 16); }
@@ -1647,6 +1853,62 @@ namespace SlopCity
         }
         private void ToggleRoadRemoval() { CancelPendingMapAction(); removeRoad = !removeRoad; RefreshUi(); }
         private void ToggleGroundRemoval() { CancelPendingMapAction(); removeGround = !removeGround; RefreshUi(); }
+        private void ToggleBuildingDemolition()
+        {
+            CancelPendingMapAction();
+            demolishBuildings = !demolishBuildings;
+            RefreshUi();
+            RefreshBuildOverlay();
+        }
+
+        private void SetBuildingFootprintWidth(string value)
+        {
+            int nextWidth = ParseBuildingFootprintInput(value, buildingFootprintWidth);
+            if (nextWidth == buildingFootprintWidth)
+            {
+                if (buildingWidthInput && buildingWidthInput.text != nextWidth.ToString()) buildingWidthInput.text = nextWidth.ToString();
+                return;
+            }
+            CancelPendingMapAction();
+            buildingFootprintWidth = nextWidth;
+            if (buildingWidthInput) buildingWidthInput.text = buildingFootprintWidth.ToString();
+            RefreshUi();
+            RefreshBuildOverlay();
+        }
+
+        private void SetBuildingFootprintLength(string value)
+        {
+            int nextLength = ParseBuildingFootprintInput(value, buildingFootprintLength);
+            if (nextLength == buildingFootprintLength)
+            {
+                if (buildingLengthInput && buildingLengthInput.text != nextLength.ToString()) buildingLengthInput.text = nextLength.ToString();
+                return;
+            }
+            CancelPendingMapAction();
+            buildingFootprintLength = nextLength;
+            if (buildingLengthInput) buildingLengthInput.text = buildingFootprintLength.ToString();
+            RefreshUi();
+            RefreshBuildOverlay();
+        }
+
+        private void CommitBuildingFootprintInputs()
+        {
+            int width = buildingWidthInput ? ParseBuildingFootprintInput(buildingWidthInput.text, buildingFootprintWidth) : buildingFootprintWidth;
+            int length = buildingLengthInput ? ParseBuildingFootprintInput(buildingLengthInput.text, buildingFootprintLength) : buildingFootprintLength;
+            bool changed = width != buildingFootprintWidth || length != buildingFootprintLength;
+            buildingFootprintWidth = width;
+            buildingFootprintLength = length;
+            if (buildingWidthInput && buildingWidthInput.text != width.ToString()) buildingWidthInput.text = width.ToString();
+            if (buildingLengthInput && buildingLengthInput.text != length.ToString()) buildingLengthInput.text = length.ToString();
+            if (changed) RefreshBuildOverlay();
+        }
+
+        private static int ParseBuildingFootprintInput(string value, int fallback)
+        {
+            return int.TryParse(value, out int parsed)
+                ? Mathf.Clamp(parsed, 1, SlopCityCityForge.GridSize)
+                : Mathf.Clamp(fallback, 1, SlopCityCityForge.GridSize);
+        }
         private void CycleLotZone()
         {
             CancelPendingMapAction();
@@ -1858,12 +2120,6 @@ namespace SlopCity
             string direction = road.direction == CityForgeDirection.North ? "north" : road.direction == CityForgeDirection.East ? "east" : road.direction == CityForgeDirection.South ? "south" : "west";
             return "road-" + road.cellX + "-" + road.cellZ + "-" + direction;
         }
-        private void DemolishLast()
-        {
-            CityForgeBuilding building = (draft.buildings ?? new List<CityForgeBuilding>()).LastOrDefault(item => item != null);
-            if (building == null) { SetMessage("There is no building to demolish."); return; }
-            TryDemolish(building.id);
-        }
         private void RenovateLast()
         {
             CityForgeLandmark landmark = (draft.landmarks ?? new List<CityForgeLandmark>()).LastOrDefault(item => item != null);
@@ -1897,9 +2153,9 @@ namespace SlopCity
             }
             undoButton = Button(toolbar.transform, "Undo", new Vector2(532, -42), new Vector2(64, 30)); undoButton.onClick.AddListener(Undo);
             redoButton = Button(toolbar.transform, "Redo", new Vector2(602, -42), new Vector2(64, 30)); redoButton.onClick.AddListener(Redo);
-            Button preview = Button(toolbar.transform, "Review", new Vector2(672, -42), new Vector2(82, 30)); preview.onClick.AddListener(Preview);
-            Text autosave = Label(toolbar.transform, "Auto-saves", 13, new Vector2(760, -42), new Vector2(96, 30)); autosave.alignment = TextAnchor.MiddleCenter; autosave.color = new Color(.72f, .88f, .55f, 1f);
-            Button exit = Button(toolbar.transform, "Return", new Vector2(862, -42), new Vector2(82, 30)); exit.onClick.AddListener(Close);
+            reviewButton = Button(toolbar.transform, "Review", new Vector2(672, -42), new Vector2(82, 30)); reviewButton.onClick.AddListener(Preview);
+            autosaveLabel = Label(toolbar.transform, "Auto-saves", 13, new Vector2(760, -42), new Vector2(96, 30)); autosaveLabel.alignment = TextAnchor.MiddleCenter; autosaveLabel.color = new Color(.72f, .88f, .55f, 1f);
+            returnButton = Button(toolbar.transform, "Return", new Vector2(862, -42), new Vector2(82, 30)); returnButton.onClick.AddListener(Close);
 
             groundActionButton = Button(toolbar.transform, "Mode: Lay ground", new Vector2(12, -96), new Vector2(180, 32)); groundActionButton.onClick.AddListener(ToggleGroundRemoval); RegisterViewControl(View.Ground, groundActionButton);
             roadButton = Button(toolbar.transform, "Road", new Vector2(12, -96), new Vector2(160, 32)); roadButton.onClick.AddListener(CycleRoadClass); RegisterViewControl(View.Streets, roadButton);
@@ -1910,15 +2166,17 @@ namespace SlopCity
             Button merge = Button(toolbar.transform, "Merge lots", new Vector2(178, -96), new Vector2(112, 32)); merge.onClick.AddListener(MergeSelectedLots); RegisterViewControl(View.Lots, merge);
             Button split = Button(toolbar.transform, "Split lot", new Vector2(296, -96), new Vector2(108, 32)); split.onClick.AddListener(SplitSelectedLot); RegisterViewControl(View.Lots, split);
 
-            kitButton = Button(toolbar.transform, "Kit", new Vector2(12, -96), new Vector2(120, 32)); kitButton.onClick.AddListener(CycleBuildingKit); RegisterViewControl(View.Buildings, kitButton);
-            facadeButton = Button(toolbar.transform, "Facade", new Vector2(138, -96), new Vector2(130, 32)); facadeButton.onClick.AddListener(CycleFacade); RegisterViewControl(View.Buildings, facadeButton);
-            roofButton = Button(toolbar.transform, "Roof", new Vector2(274, -96), new Vector2(126, 32)); roofButton.onClick.AddListener(CycleRoof); RegisterViewControl(View.Buildings, roofButton);
-            storefrontButton = Button(toolbar.transform, "Store", new Vector2(406, -96), new Vector2(118, 32)); storefrontButton.onClick.AddListener(CycleStorefront); RegisterViewControl(View.Buildings, storefrontButton);
-            entranceButton = Button(toolbar.transform, "Entrance", new Vector2(530, -96), new Vector2(116, 32)); entranceButton.onClick.AddListener(CycleEntrance); RegisterViewControl(View.Buildings, entranceButton);
-            Button floorDown = Button(toolbar.transform, "Floor −", new Vector2(652, -96), new Vector2(84, 32)); floorDown.onClick.AddListener(() => ChangeFloors(-1)); RegisterViewControl(View.Buildings, floorDown);
-            floorsButton = Button(toolbar.transform, "Floor +", new Vector2(742, -96), new Vector2(100, 32)); floorsButton.onClick.AddListener(() => ChangeFloors(1)); RegisterViewControl(View.Buildings, floorsButton);
-            interiorButton = Button(toolbar.transform, "Interior", new Vector2(848, -96), new Vector2(180, 32)); interiorButton.onClick.AddListener(CycleInterior); RegisterViewControl(View.Buildings, interiorButton);
-            Button demolish = Button(toolbar.transform, "Demolish", new Vector2(1034, -96), new Vector2(120, 32)); demolish.onClick.AddListener(DemolishLast); RegisterViewControl(View.Buildings, demolish);
+            kitButton = Button(toolbar.transform, "Kit", new Vector2(12, -96), new Vector2(102, 32)); kitButton.onClick.AddListener(CycleBuildingKit); RegisterViewControl(View.Buildings, kitButton);
+            facadeButton = Button(toolbar.transform, "Facade", new Vector2(120, -96), new Vector2(126, 32)); facadeButton.onClick.AddListener(CycleFacade); RegisterViewControl(View.Buildings, facadeButton);
+            roofButton = Button(toolbar.transform, "Roof", new Vector2(252, -96), new Vector2(116, 32)); roofButton.onClick.AddListener(CycleRoof); RegisterViewControl(View.Buildings, roofButton);
+            buildingWidthInput = IntegerInput(toolbar.transform, "Width", new Vector2(374, -96), new Vector2(64, 32), buildingFootprintWidth, SetBuildingFootprintWidth); RegisterViewControl(View.Buildings, buildingWidthInput.gameObject);
+            buildingLengthInput = IntegerInput(toolbar.transform, "Length", new Vector2(444, -96), new Vector2(64, 32), buildingFootprintLength, SetBuildingFootprintLength); RegisterViewControl(View.Buildings, buildingLengthInput.gameObject);
+            storefrontButton = Button(toolbar.transform, "Store", new Vector2(514, -96), new Vector2(110, 32)); storefrontButton.onClick.AddListener(CycleStorefront); RegisterViewControl(View.Buildings, storefrontButton);
+            entranceButton = Button(toolbar.transform, "Entrance", new Vector2(630, -96), new Vector2(108, 32)); entranceButton.onClick.AddListener(CycleEntrance); RegisterViewControl(View.Buildings, entranceButton);
+            Button floorDown = Button(toolbar.transform, "Floor −", new Vector2(744, -96), new Vector2(78, 32)); floorDown.onClick.AddListener(() => ChangeFloors(-1)); RegisterViewControl(View.Buildings, floorDown);
+            floorsButton = Button(toolbar.transform, "Floor +", new Vector2(828, -96), new Vector2(94, 32)); floorsButton.onClick.AddListener(() => ChangeFloors(1)); RegisterViewControl(View.Buildings, floorsButton);
+            interiorButton = Button(toolbar.transform, "Interior", new Vector2(928, -96), new Vector2(166, 32)); interiorButton.onClick.AddListener(CycleInterior); RegisterViewControl(View.Buildings, interiorButton);
+            demolishButton = Button(toolbar.transform, "Demolish", new Vector2(1100, -96), new Vector2(120, 32)); demolishButton.onClick.AddListener(ToggleBuildingDemolition); RegisterViewControl(View.Buildings, demolishButton);
 
             serviceButton = Button(toolbar.transform, "Service", new Vector2(12, -96), new Vector2(180, 32)); serviceButton.onClick.AddListener(CycleService); RegisterViewControl(View.Services, serviceButton);
             mountButton = Button(toolbar.transform, "Mount", new Vector2(364, -96), new Vector2(170, 32)); mountButton.onClick.AddListener(CycleScreenMount); RegisterViewControl(View.Services, mountButton);
@@ -1936,13 +2194,18 @@ namespace SlopCity
 
         private void RegisterViewControl(View scope, Button button)
         {
-            if (!button) return;
+            RegisterViewControl(scope, button ? button.gameObject : null);
+        }
+
+        private void RegisterViewControl(View scope, GameObject control)
+        {
+            if (!control) return;
             if (!viewControls.TryGetValue(scope, out List<GameObject> controls))
             {
                 controls = new List<GameObject>();
                 viewControls.Add(scope, controls);
             }
-            controls.Add(button.gameObject);
+            controls.Add(control);
         }
 
         /// <summary>
@@ -1961,7 +2224,7 @@ namespace SlopCity
             if (!(draft.parcels ?? new List<CityForgeParcel>()).Any(parcel => HasStreetFrontage(parcel, null)))
                 return "Step 3 of 4 · Lots: click a ground cell touching a street.";
             if (!(draft.buildings ?? new List<CityForgeBuilding>()).Any(item => item != null))
-                return "Step 4 of 4 · Buildings: choose a kit, then click the street-fronted lot.";
+                return "Step 4 of 4 · Buildings: choose a kit and footprint, then tap street-fronted ground.";
             return "Block ready · add services, screens, Cityworks, or keep designing.";
         }
 
@@ -1990,7 +2253,10 @@ namespace SlopCity
                     ? "Erase ground mode · click a clear island cell to return it to open water · lots and streets stay protected · every change auto-saves"
                     : "Lay ground mode · click open water to reclaim an island cell · click Mode: Lay ground to switch to erase · every change auto-saves";
                 case View.Lots: return "Click a cell to make a lot · Shift-click builds a footprint · lay a street beside it before building · changes auto-save";
-                case View.Buildings: return "Click a zoned lot to add a designed building · it automatically faces any street touching the lot · changes auto-save";
+                case View.Buildings:
+                    return demolishBuildings
+                        ? "Demolish mode · tap a building footprint to remove it · its lot and ground remain · changes auto-save"
+                        : "Footprint " + buildingFootprintWidth + " wide × " + buildingFootprintLength + " long · tap its south-west ground cell · a touching street sets the entrance";
                 case View.Services: return "Lay a street beside the lot, then click it to add service · choose a screen target before placing a screen · changes auto-save";
                 default: return "Choose a Cityworks outcome, then click a lot to make its site · click it again to add or advance its situation · changes auto-save";
             }
@@ -2430,23 +2696,142 @@ namespace SlopCity
             RectTransform rect = item.GetComponent<RectTransform>(); rect.anchorMin = new Vector2(0f, 1f); rect.anchorMax = new Vector2(0f, 1f); rect.pivot = new Vector2(0f, 1f); rect.anchoredPosition = anchored; rect.sizeDelta = size;
             Text text = item.GetComponent<Text>(); text.text = value; text.font = Resources.GetBuiltinResource<Font>("Arial.ttf"); text.fontSize = fontSize; text.color = Color.white; text.alignment = TextAnchor.MiddleLeft; text.raycastTarget = false; return text;
         }
-        private static Button Button(Transform parent, string label, Vector2 anchored, Vector2 size, bool invokeOnMousePointerDown = false)
+        private Button Button(Transform parent, string label, Vector2 anchored, Vector2 size, bool invokeOnMousePointerDown = false)
         {
+            int buttonFontSize = 13;
+            if (UsesTouchCityForgeControls())
+            {
+                size.y = Mathf.Max(size.y, 44f);
+                buttonFontSize = 16;
+            }
 #if UNITY_WEBGL && !UNITY_EDITOR
             // Browser backing-canvas scaling can make a nominal 30px control
             // uncomfortably small despite a desktop-width viewport.  Preserve
             // the established Mac geometry and give every browser action a
             // consistent, touch-safe vertical target instead.
-            size.y = Mathf.Max(size.y, 40f);
-            const int buttonFontSize = 15;
-#else
-            const int buttonFontSize = 13;
+            else { size.y = Mathf.Max(size.y, 40f); buttonFontSize = 15; }
 #endif
             GameObject item = new GameObject("Button_" + label, typeof(RectTransform), typeof(Image)); item.transform.SetParent(parent, false);
             RectTransform rect = item.GetComponent<RectTransform>(); rect.anchorMin = new Vector2(0f, 1f); rect.anchorMax = new Vector2(0f, 1f); rect.pivot = new Vector2(0f, 1f); rect.anchoredPosition = anchored; rect.sizeDelta = size;
             Image image = item.GetComponent<Image>(); image.color = new Color(.23f, .34f, .25f, 1f);
             SlopCityCityForgeActionButton button = item.AddComponent<SlopCityCityForgeActionButton>(); button.InvokeOnMousePointerDown = invokeOnMousePointerDown;
             Text text = Label(item.transform, label, buttonFontSize, Vector2.zero, size); text.alignment = TextAnchor.MiddleCenter; RectTransform textRect = text.GetComponent<RectTransform>(); textRect.anchorMin = Vector2.zero; textRect.anchorMax = Vector2.one; textRect.pivot = new Vector2(.5f, .5f); textRect.anchoredPosition = Vector2.zero; return button;
+        }
+
+        private InputField IntegerInput(Transform parent, string label, Vector2 anchored, Vector2 size, int initialValue, Action<string> onEndEdit)
+        {
+            if (UsesTouchCityForgeControls()) size.y = Mathf.Max(size.y, 44f);
+            GameObject item = new GameObject("Input_" + label, typeof(RectTransform), typeof(Image), typeof(InputField)); item.transform.SetParent(parent, false);
+            RectTransform rect = item.GetComponent<RectTransform>(); rect.anchorMin = new Vector2(0f, 1f); rect.anchorMax = new Vector2(0f, 1f); rect.pivot = new Vector2(0f, 1f); rect.anchoredPosition = anchored; rect.sizeDelta = size;
+            Image image = item.GetComponent<Image>(); image.color = new Color(.10f, .18f, .15f, 1f);
+            InputField field = item.GetComponent<InputField>(); field.targetGraphic = image; field.contentType = InputField.ContentType.IntegerNumber; field.lineType = InputField.LineType.SingleLine; field.characterLimit = 1;
+            Text caption = Label(item.transform, label, UsesTouchCityForgeControls() ? 11 : 9, new Vector2(6f, -3f), new Vector2(size.x - 12f, 13f)); caption.color = new Color(.72f, .88f, .55f, 1f);
+            Text value = Label(item.transform, "", UsesTouchCityForgeControls() ? 18 : 14, new Vector2(0f, -12f), size); value.alignment = TextAnchor.LowerCenter;
+            RectTransform valueRect = value.GetComponent<RectTransform>(); valueRect.anchorMin = new Vector2(0f, 0f); valueRect.anchorMax = new Vector2(1f, 1f); valueRect.pivot = new Vector2(.5f, .5f); valueRect.offsetMin = new Vector2(4f, 1f); valueRect.offsetMax = new Vector2(-4f, -10f);
+            field.textComponent = value; field.text = Mathf.Clamp(initialValue, 1, SlopCityCityForge.GridSize).ToString();
+            if (onEndEdit != null) field.onEndEdit.AddListener(valueText => onEndEdit(valueText));
+            return field;
+        }
+
+        private bool UsesTouchCityForgeControls()
+        {
+            if (!firstPerson) firstPerson = FindFirstObjectByType<SlopCityFirstPerson>();
+            SlopCityPlayerInput input = firstPerson ? firstPerson.GetComponent<SlopCityPlayerInput>() : FindFirstObjectByType<SlopCityPlayerInput>();
+            return input ? input.UseTouchControls : Application.isMobilePlatform;
+        }
+
+        private void LayoutTouchCityForgeUi(bool force)
+        {
+            if (!UsesTouchCityForgeControls() || !buildUiSurface || !canvas) return;
+            ConfigureCityForgeCanvas(canvas, canvas.GetComponent<CanvasScaler>());
+            if (launcherCanvas) ConfigureCityForgeCanvas(launcherCanvas, launcherCanvas.GetComponent<CanvasScaler>());
+            Canvas.ForceUpdateCanvases();
+            RectTransform canvasRect = canvas.transform as RectTransform;
+            if (!canvasRect || Screen.width <= 0 || Screen.height <= 0) return;
+
+            float canvasWidth = canvasRect.rect.width;
+            float canvasHeight = canvasRect.rect.height;
+            if (canvasWidth <= 0f || canvasHeight <= 0f || canvas.scaleFactor <= 0f) return;
+            Vector2 screenSize = new Vector2(Screen.width, Screen.height);
+            Rect safe = Screen.safeArea;
+            Vector2 canvasSize = new Vector2(canvasWidth, canvasHeight);
+            float canvasScale = canvas.scaleFactor;
+            if (!force && screenSize == lastBuildUiScreenSize && safe == lastBuildUiSafeArea
+                && canvasSize == lastBuildUiCanvasSize && Mathf.Approximately(canvasScale, lastBuildUiCanvasScale)) return;
+            lastBuildUiScreenSize = screenSize;
+            lastBuildUiSafeArea = safe;
+            lastBuildUiCanvasSize = canvasSize;
+            lastBuildUiCanvasScale = canvasScale;
+            float scaleX = canvasWidth / Mathf.Max(1f, Screen.width);
+            float scaleY = canvasHeight / Mathf.Max(1f, Screen.height);
+            float insetLeft = safe.xMin * scaleX;
+            float insetRight = (Screen.width - safe.xMax) * scaleX;
+            float insetTop = (Screen.height - safe.yMax) * scaleY;
+            float left = insetLeft + 10f;
+            float width = Mathf.Max(240f, canvasWidth - insetLeft - insetRight - 20f);
+            const float gap = 8f;
+            // Keep a true 44px minimum even if a compact native surface
+            // reports a scale lower than one UI unit per display pixel.
+            float targetHeight = Mathf.Max(48f, 44f / canvasScale);
+            bool landscape = Screen.width > Screen.height;
+            int columns = landscape ? 6 : 3;
+            float columnWidth = (width - gap * (columns - 1)) / columns;
+            float y = 8f;
+
+            LayoutTouchRect(heading ? heading.rectTransform : null, left, y, width * .62f, 28f);
+            if (heading) { heading.fontSize = 18; heading.alignment = TextAnchor.MiddleLeft; }
+            LayoutTouchRect(autosaveLabel ? autosaveLabel.rectTransform : null, left + width * .64f, y, width * .36f, 28f);
+            if (autosaveLabel) { autosaveLabel.fontSize = 13; autosaveLabel.alignment = TextAnchor.MiddleRight; }
+            y += 30f;
+            LayoutTouchRect(contextHint ? contextHint.rectTransform : null, left, y, width, 26f);
+            if (contextHint) { contextHint.fontSize = 13; contextHint.alignment = TextAnchor.MiddleLeft; }
+            y += 32f;
+
+            View[] tabs = { View.Streets, View.Ground, View.Lots, View.Buildings, View.Services, View.Life };
+            for (int index = 0; index < tabs.Length; index++)
+            {
+                if (!viewButtons.TryGetValue(tabs[index], out Button tab) || !tab) continue;
+                int row = index / columns;
+                int column = index % columns;
+                LayoutTouchRect(tab.GetComponent<RectTransform>(), left + column * (columnWidth + gap), y + row * (targetHeight + gap), columnWidth, targetHeight);
+            }
+            y += Mathf.Ceil(tabs.Length / (float)columns) * (targetHeight + gap) + 2f;
+
+            Button[] common = { undoButton, redoButton, reviewButton, returnButton };
+            int commonColumns = 4;
+            float commonWidth = (width - gap * (commonColumns - 1)) / commonColumns;
+            for (int index = 0; index < common.Length; index++)
+                LayoutTouchRect(common[index] ? common[index].GetComponent<RectTransform>() : null, left + index * (commonWidth + gap), y, commonWidth, targetHeight);
+            y += targetHeight + gap;
+
+            if (viewControls.TryGetValue(view, out List<GameObject> controls))
+            {
+                int visibleIndex = 0;
+                foreach (GameObject control in controls)
+                {
+                    if (!control || !control.activeSelf) continue;
+                    int row = visibleIndex / columns;
+                    int column = visibleIndex % columns;
+                    LayoutTouchRect(control.GetComponent<RectTransform>(), left + column * (columnWidth + gap), y + row * (targetHeight + gap), columnWidth, targetHeight);
+                    visibleIndex++;
+                }
+                y += Mathf.Ceil(visibleIndex / (float)columns) * (targetHeight + gap);
+            }
+
+            LayoutTouchRect(message ? message.rectTransform : null, left, y + 2f, width, 34f);
+            if (message) { message.fontSize = 14; message.alignment = TextAnchor.MiddleLeft; }
+            y += 42f;
+            buildUiSurface.anchoredPosition = new Vector2(0f, -insetTop);
+            buildUiSurface.sizeDelta = new Vector2(0f, y + 8f);
+        }
+
+        private static void LayoutTouchRect(RectTransform rect, float x, float y, float width, float height)
+        {
+            if (!rect) return;
+            rect.anchorMin = rect.anchorMax = new Vector2(0f, 1f);
+            rect.pivot = new Vector2(0f, 1f);
+            rect.anchoredPosition = new Vector2(x, -y);
+            rect.sizeDelta = new Vector2(width, height);
         }
         private void SetUi(bool visible) { if (canvas) canvas.gameObject.SetActive(visible); }
         private void RefreshUi()
@@ -2465,12 +2850,23 @@ namespace SlopCity
             foreach (KeyValuePair<View, List<GameObject>> pair in viewControls)
                 foreach (GameObject control in pair.Value)
                     if (control) control.SetActive(pair.Key == view);
+            if (buildingWidthInput)
+            {
+                buildingWidthInput.interactable = !autosaveInFlight;
+                buildingWidthInput.text = Mathf.Clamp(buildingFootprintWidth, 1, SlopCityCityForge.GridSize).ToString();
+            }
+            if (buildingLengthInput)
+            {
+                buildingLengthInput.interactable = !autosaveInFlight;
+                buildingLengthInput.text = Mathf.Clamp(buildingFootprintLength, 1, SlopCityCityForge.GridSize).ToString();
+            }
             SetButtonLabel(groundActionButton, removeGround ? "Mode: Erase ground" : "Mode: Lay ground");
             SetButtonLabel(roadButton, "Road: " + RoadClassLabel(roadClass)); SetButtonLabel(removeRoadButton, removeRoad ? "Erase roads" : "Place roads"); SetButtonLabel(roadDirectionButton, "Road side: " + DirectionLabel(roadDirection)); SetButtonLabel(zoneButton, "Zone: " + lotZone);
-            SetButtonLabel(kitButton, "Kit: " + buildingBlueprint); SetButtonLabel(facadeButton, "Facade: " + facade); SetButtonLabel(roofButton, "Roof: " + roof); SetButtonLabel(storefrontButton, "Store: " + storefront); SetButtonLabel(entranceButton, "Entry: " + entrance); SetButtonLabel(floorsButton, "Floor + (" + buildingFloors + ")"); SetButtonLabel(interiorButton, "Interior: " + (string.IsNullOrEmpty(interior) ? "none" : interior));
+            SetButtonLabel(kitButton, "Kit: " + buildingBlueprint); SetButtonLabel(facadeButton, "Facade: " + facade); SetButtonLabel(roofButton, "Roof: " + roof); SetButtonLabel(storefrontButton, "Store: " + storefront); SetButtonLabel(entranceButton, "Entry: " + entrance); SetButtonLabel(floorsButton, "Floor + (" + buildingFloors + ")"); SetButtonLabel(interiorButton, "Interior: " + (string.IsNullOrEmpty(interior) ? "none" : interior)); SetButtonLabel(demolishButton, demolishBuildings ? "Demolish: ON" : "Demolish: OFF");
             string host = screenHostMode == 0 ? "building" : screenHostMode == 1 ? "site" : "road";
             string target = ScreenTargetLabel(screenHostId);
             SetButtonLabel(serviceButton, "Service: " + serviceType); SetButtonLabel(landmarkButton, "Cityworks: " + (string.IsNullOrEmpty(landmarkOutcome) ? "choose" : landmarkOutcome)); SetButtonLabel(mountButton, "Mount: " + screenMount); SetButtonLabel(hostButton, "Host: " + host); SetButtonLabel(targetButton, "Screen target: " + target); SetButtonLabel(deviceButton, "Device: " + screenDevice); SetButtonLabel(situationButton, "Situation: " + (string.IsNullOrEmpty(situationTemplate) ? "choose" : situationTemplate)); SetButtonLabel(situationStateButton, "State: " + situationState);
+            LayoutTouchCityForgeUi(true);
         }
 
         private static string ScreenTargetLabel(string host)
@@ -2507,18 +2903,8 @@ namespace SlopCity
                     position = buildCamera.transform.position,
                     rotation = buildCamera.transform.rotation,
                     orthographic = buildCamera.orthographic,
-                    orthographicSize = buildCamera.orthographicSize,
-                    clearFlags = buildCamera.clearFlags,
-                    backgroundColor = buildCamera.backgroundColor
+                    orthographicSize = buildCamera.orthographicSize
                 };
-#if UNITY_WEBGL && !UNITY_EDITOR
-                // The daytime sky and its sun are attractive at street level,
-                // but become a blown-out, shifting backdrop behind an overhead
-                // planning map.  The browser map supplies its own quiet ocean
-                // field, so clear to a stable solid color instead.
-                buildCamera.clearFlags = CameraClearFlags.SolidColor;
-                buildCamera.backgroundColor = new Color(.012f, .030f, .048f, 1f);
-#endif
                 FocusCamera();
             }
             savedCursorLockState = Cursor.lockState;
@@ -2532,7 +2918,7 @@ namespace SlopCity
             if (!cursorStateCaptured) return;
             if (buildCamera)
             {
-                buildCamera.transform.position = originalCamera.position; buildCamera.transform.rotation = originalCamera.rotation; buildCamera.orthographic = originalCamera.orthographic; buildCamera.orthographicSize = originalCamera.orthographicSize; buildCamera.clearFlags = originalCamera.clearFlags; buildCamera.backgroundColor = originalCamera.backgroundColor;
+                buildCamera.transform.position = originalCamera.position; buildCamera.transform.rotation = originalCamera.rotation; buildCamera.orthographic = originalCamera.orthographic; buildCamera.orthographicSize = originalCamera.orthographicSize;
             }
             Cursor.lockState = savedCursorLockState;
             Cursor.visible = savedCursorVisible;
@@ -2552,11 +2938,19 @@ namespace SlopCity
             if (Input.touchCount == 1 && !suppressBuildUiTouchUntilNoTouches && buildUiTouchFingerId < 0)
             {
                 Touch touch = Input.GetTouch(0);
-                if (touch.phase == TouchPhase.Began) { lastTouchPosition = touch.position; touchPanned = false; }
+                if (touch.phase == TouchPhase.Began)
+                {
+                    touchStartPosition = touch.position;
+                    lastTouchPosition = touch.position;
+                    touchPanned = false;
+                }
                 else if (touch.phase == TouchPhase.Moved || touch.phase == TouchPhase.Stationary)
                 {
                     Vector2 movement = touch.position - lastTouchPosition;
-                    if (movement.sqrMagnitude > 9f) touchPanned = true;
+                    // Use the total gesture distance, not just this frame's
+                    // delta.  A deliberate slow pan can otherwise drift the
+                    // camera and then be misread as a placement on touch-up.
+                    if ((touch.position - touchStartPosition).sqrMagnitude >= MapDragThresholdPixels * MapDragThresholdPixels) touchPanned = true;
                     float metresPerPixel = topDownHeight / Mathf.Max(240f, Screen.height);
                     buildCamera.transform.position -= new Vector3(movement.x * metresPerPixel, 0f, movement.y * metresPerPixel);
                     lastTouchPosition = touch.position;
@@ -2585,11 +2979,21 @@ namespace SlopCity
             if (paused) { ResetLauncherPointerActivation(); CancelBuildUiPointerActivation(); ResetNativeMapPointer(); }
         }
         private void OnDisable() { ResetLauncherPointerActivation(); ResetBuildUiPointerActivation(); ResetNativeMapPointer(); }
-        private static void ConfigureCityForgeCanvas(Canvas target, CanvasScaler scaler)
+        private void ConfigureCityForgeCanvas(Canvas target, CanvasScaler scaler)
         {
             if (!target || !scaler) return;
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
-            scaler.referenceResolution = new Vector2(1280, 720);
+            if (UsesTouchCityForgeControls())
+            {
+                bool portrait = Screen.height >= Screen.width;
+                scaler.referenceResolution = portrait ? new Vector2(360, 700) : new Vector2(720, 360);
+                scaler.matchWidthOrHeight = portrait ? 0f : 1f;
+            }
+            else
+            {
+                scaler.referenceResolution = new Vector2(1280, 720);
+                scaler.matchWidthOrHeight = .5f;
+            }
 #if UNITY_WEBGL && !UNITY_EDITOR
             // The world may be deliberately rendered at 540p/720p, but the
             // editor itself is a display overlay.  Request a denser dynamic
@@ -2612,7 +3016,7 @@ namespace SlopCity
 #endif
         }
 
-        private struct CameraState { public Vector3 position; public Quaternion rotation; public bool orthographic; public float orthographicSize; public CameraClearFlags clearFlags; public Color backgroundColor; }
+        private struct CameraState { public Vector3 position; public Quaternion rotation; public bool orthographic; public float orthographicSize; }
         private struct LandmarkChoice
         {
             public string classId;
