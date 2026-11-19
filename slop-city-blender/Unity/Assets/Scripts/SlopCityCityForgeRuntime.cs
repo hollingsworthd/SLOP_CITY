@@ -31,6 +31,19 @@ namespace SlopCity
     }
 
     /// <summary>
+    /// Exact accepted-plan strategic consumers receive resolver output so their
+    /// top-down tile includes filtered roads and catalog-integrated screens.
+    /// Count-only distant summaries intentionally remain outside this contract.
+    /// </summary>
+    public interface ISlopCityCityForgeResolvedStrategicMapSink : ISlopCityCityForgeStrategicSummarySink
+    {
+        void ShowCityForgeStrategicMap(CityForgeWorldHead head, CityForgeCoord center, int radius,
+            IReadOnlyDictionary<CityForgeCoord, CityForgeChunkPlan> acceptedPlans,
+            IReadOnlyDictionary<CityForgeCoord, CityForgeResolvedChunk> resolvedChunks,
+            IReadOnlyDictionary<CityForgeCoord, CityForgeStrategicChunkSummary> strategicSummaries);
+    }
+
+    /// <summary>
     /// A presentation-only planning layer. It receives bounded, catalog-backed
     /// plan data from Build Mode and never registers fixtures, colliders, media,
     /// or accepted world state.
@@ -45,6 +58,13 @@ namespace SlopCity
     }
 
     /// <summary>
+    /// The accepted world and a valid Build Mode review deliberately use the
+    /// same compiler. Preview only removes ownership: it never creates a
+    /// collider, interaction, media registration, or durable side effect.
+    /// </summary>
+    public enum CityForgePresentationMode { Active, Preview }
+
+    /// <summary>
     /// Concrete, catalog-only presentation sink for streamed City Forge chunks.
     /// The data model supplies IDs and grid coordinates only; this component
     /// derives every GameObject, collider, scale, orientation, and screen mount
@@ -52,7 +72,7 @@ namespace SlopCity
     /// asset reference from a player plan.
     /// </summary>
     [DisallowMultipleComponent]
-    public sealed class SlopCityCityForgeRuntime : MonoBehaviour, ISlopCityCityForgeChunkSink, ISlopCityCityForgeDraftPreviewSink, ISlopCityCityForgeStrategicSummarySink, ISlopCityCityForgeBuildOverlaySink
+    public sealed class SlopCityCityForgeRuntime : MonoBehaviour, ISlopCityCityForgeChunkSink, ISlopCityCityForgeDraftPreviewSink, ISlopCityCityForgeResolvedStrategicMapSink, ISlopCityCityForgeBuildOverlaySink
     {
         [SerializeField] private Transform listener;
         [SerializeField] private bool constrainedWebGl;
@@ -131,14 +151,7 @@ namespace SlopCity
             ChunkInstance instance = new ChunkInstance { root = root, coord = coord, resolvedHash = chunk.resolvedHash ?? string.Empty };
             try
             {
-                BuildScenicCityContinuation(instance, chunk);
-                BuildGround(instance, chunk);
-                BuildRoads(instance, chunk.roads);
-                BuildBuildings(instance, chunk);
-                BuildServices(instance, chunk);
-                BuildLandmarks(instance, chunk);
-                BuildLife(instance, chunk);
-                BuildScreens(instance, chunk);
+                BuildResolvedCityForgeChunk(instance, chunk, CityForgePresentationMode.Active);
                 // Chunks arriving while Build Mode is open still finish their
                 // normal bounded compilation, but stay out of the planner's
                 // single-map presentation until the player returns to first
@@ -174,6 +187,26 @@ namespace SlopCity
             chunks.Clear();
             fixtures.Clear();
             admittedIds.Clear();
+        }
+
+        /// <summary>
+        /// There is exactly one City Forge geometry compiler. A review can
+        /// differ from an accepted chunk only in runtime ownership, never in
+        /// its ground, roads, footprint, facade, roof, interior, fixture, or
+        /// screen-hardware decisions. This prevents the planner from making a
+        /// promise that the inhabited Sprawl cannot keep.
+        /// </summary>
+        private void BuildResolvedCityForgeChunk(ChunkInstance instance, CityForgeResolvedChunk chunk, CityForgePresentationMode mode)
+        {
+            if (instance == null || !instance.root || chunk == null) return;
+            BuildGround(instance, chunk, mode);
+            BuildRoads(instance, chunk.roads, mode);
+            BuildBuildings(instance, chunk, mode);
+            BuildServices(instance, chunk, mode);
+            BuildLandmarks(instance, chunk, mode);
+            BuildLife(instance, chunk, mode);
+            BuildScreens(instance, chunk, mode);
+            if (mode == CityForgePresentationMode.Preview) DisablePreviewColliders(instance.root.transform);
         }
 
         /// <summary>
@@ -213,12 +246,17 @@ namespace SlopCity
         {
             ClearCityForgeDraftPreview();
             if (chunk == null || chunk.baseChunk == null) return;
+            // A valid plan must be reviewed in the exact physical vocabulary
+            // that will appear after acceptance. Hide the active neighborhood
+            // while the transient, non-owning compiled result is on screen.
+            DestroyBuildOverlay(false);
+            SetChunkPresentationForBuildOverlay(true);
             GameObject root = new GameObject("CityForgeDraftPreview_" + chunk.baseChunk.coord);
             root.transform.SetParent(transform, false);
-            root.transform.localPosition = ChunkOrigin(chunk.baseChunk.coord) + Vector3.up * .18f;
+            root.transform.localPosition = ChunkOrigin(chunk.baseChunk.coord);
             root.SetActive(false);
             preview = new ChunkInstance { root = root, coord = chunk.baseChunk.coord, resolvedHash = chunk.resolvedHash };
-            try { BuildGround(preview, chunk); BuildRoads(preview, chunk.roads); BuildBuildings(preview, chunk); BuildServices(preview, chunk); BuildLandmarks(preview, chunk); BuildLife(preview, chunk); root.SetActive(true); }
+            try { BuildResolvedCityForgeChunk(preview, chunk, CityForgePresentationMode.Preview); root.SetActive(true); }
             catch { if (root) Destroy(root); preview = null; }
         }
 
@@ -232,11 +270,19 @@ namespace SlopCity
 
         public void ShowCityForgeStrategicMap(CityForgeWorldHead head, CityForgeCoord center, int radius, IReadOnlyDictionary<CityForgeCoord, CityForgeChunkPlan> acceptedPlans)
         {
-            ShowCityForgeStrategicMap(head, center, radius, acceptedPlans, null);
+            ShowCityForgeStrategicMap(head, center, radius, acceptedPlans, null, null);
         }
 
         public void ShowCityForgeStrategicMap(CityForgeWorldHead head, CityForgeCoord center, int radius,
             IReadOnlyDictionary<CityForgeCoord, CityForgeChunkPlan> acceptedPlans,
+            IReadOnlyDictionary<CityForgeCoord, CityForgeStrategicChunkSummary> strategicSummaries)
+        {
+            ShowCityForgeStrategicMap(head, center, radius, acceptedPlans, null, strategicSummaries);
+        }
+
+        public void ShowCityForgeStrategicMap(CityForgeWorldHead head, CityForgeCoord center, int radius,
+            IReadOnlyDictionary<CityForgeCoord, CityForgeChunkPlan> acceptedPlans,
+            IReadOnlyDictionary<CityForgeCoord, CityForgeResolvedChunk> resolvedChunks,
             IReadOnlyDictionary<CityForgeCoord, CityForgeStrategicChunkSummary> strategicSummaries)
         {
             ClearCityForgeStrategicMap();
@@ -256,7 +302,10 @@ namespace SlopCity
                         GameObject tile = new GameObject("AcceptedCityForgeMap_" + coordinate.x + "_" + coordinate.z);
                         tile.transform.SetParent(strategicMap.transform, false);
                         tile.transform.localPosition = ChunkOrigin(coordinate) + new Vector3(36f, 0f, 36f);
-                        BuildStrategicAcceptedImpostor(tile.transform, acceptedPlan);
+                        if (resolvedChunks != null && resolvedChunks.TryGetValue(coordinate, out CityForgeResolvedChunk resolved) && resolved != null)
+                            BuildStrategicAcceptedImpostor(tile.transform, resolved);
+                        else
+                            BuildStrategicAcceptedFallbackImpostor(tile.transform, acceptedPlan);
                     }
                     else if (strategicSummaries != null && strategicSummaries.TryGetValue(coordinate, out CityForgeStrategicChunkSummary summary) && summary != null)
                     {
@@ -293,10 +342,18 @@ namespace SlopCity
                 DestroyBuildOverlay(true);
                 return;
             }
+            // A resolver-validated plan is rendered by the physical compiler,
+            // never by this explanatory invalid-draft layer.
+            if (draftIsValid)
+            {
+                DestroyBuildOverlay(true);
+                return;
+            }
 
             // Replace only the lightweight draft presentation.  The physical
             // roots remain hidden throughout consecutive edits so a scheduled
             // Destroy cannot flash them through the next map frame.
+            ClearCityForgeDraftPreview();
             DestroyBuildOverlay(false);
             SetChunkPresentationForBuildOverlay(true);
 
@@ -492,77 +549,36 @@ namespace SlopCity
         /// deliberately uses only counts and approved IDs; physical geometry is
         /// still created solely by the nearby streaming compiler.
         /// </summary>
-        private static void BuildStrategicAcceptedImpostor(Transform tile, CityForgeChunkPlan plan)
+        private static void BuildStrategicAcceptedImpostor(Transform tile, CityForgeResolvedChunk chunk)
         {
-            // Ground is deliberately sparse in the Sky Sprawl. Render each
-            // accepted island cell directly on the strategic map so this view
-            // agrees with both the build grid and the walkable world.
-            foreach (int item in (plan.groundCells ?? new List<int>()).Where(cell => cell >= 0 && cell < SlopCityCityForge.GridSize * SlopCityCityForge.GridSize).Distinct().OrderBy(cell => cell))
-            {
-                int x = item % SlopCityCityForge.GridSize, z = item / SlopCityCityForge.GridSize;
-                GameObject ground = Primitive("AcceptedGroundMap_" + item, PrimitiveType.Cube, tile,
-                    new Vector3((x + .5f) * SlopCityCityForge.CellSizeMeters - 36f, .09f, (z + .5f) * SlopCityCityForge.CellSizeMeters - 36f),
-                    new Vector3(SlopCityCityForge.CellSizeMeters, .04f, SlopCityCityForge.CellSizeMeters));
-                Collider collider = ground.GetComponent<Collider>(); if (collider) collider.enabled = false;
-                SetRendererColor(ground.GetComponent<Renderer>(), new Color(.54f, .67f, .48f));
-            }
+            BuildStrategicMapFeatures(tile, SlopCityCityForgeMapPresentation.FromResolvedChunk(chunk));
+        }
+
+        private static void BuildStrategicAcceptedFallbackImpostor(Transform tile, CityForgeChunkPlan plan)
+        {
+            // A legacy direct caller can still show its authenticated plan page,
+            // but it does not claim catalog-integrated fixture detail without a
+            // resolver result.
+            BuildStrategicMapFeatures(tile, SlopCityCityForgeMapPresentation.FromPlan(plan));
+        }
+
+        private static void BuildStrategicMapFeatures(Transform tile, IReadOnlyList<CityForgeMapFeature> features)
+        {
+            if (tile == null || features == null) return;
             Vector3 centreOffset = new Vector3(SlopCityCityForge.ChunkSizeMeters * .5f, 0f, SlopCityCityForge.ChunkSizeMeters * .5f);
-            Dictionary<string, CityForgeParcel> parcels = (plan.parcels ?? new List<CityForgeParcel>())
-                .Where(item => item != null && !string.IsNullOrEmpty(item.id))
-                .ToDictionary(item => item.id, item => item, StringComparer.Ordinal);
-            Dictionary<string, Vector3> screenHosts = new Dictionary<string, Vector3>(StringComparer.Ordinal);
-
-            foreach (CityForgeRoad road in (plan.roads ?? new List<CityForgeRoad>()).Where(item => item != null && SlopCityCityForge.RoadHasIslandGround(plan, item)).OrderBy(item => item.LocalKey, StringComparer.Ordinal))
+            foreach (CityForgeMapFeature feature in features.Where(item => item != null))
             {
-                Vector3 edge = RoadEdgeCentre(road) - centreOffset;
-                bool northSouth = road.direction == CityForgeDirection.North || road.direction == CityForgeDirection.South;
-                GameObject street = Primitive("AcceptedRoadMap_" + road.LocalKey, PrimitiveType.Cube, tile, edge + Vector3.up * .13f,
-                    northSouth ? new Vector3(SlopCityCityForge.CellSizeMeters - .4f, .10f, 1.35f) : new Vector3(1.35f, .10f, SlopCityCityForge.CellSizeMeters - .4f));
-                Collider collider = street.GetComponent<Collider>(); if (collider) collider.enabled = false;
-                SetRendererColor(street.GetComponent<Renderer>(), RoadColor(road.roadClass));
-                screenHosts[RoadHost(road)] = edge + Vector3.up * .32f;
-            }
-
-            foreach (CityForgeBuilding building in (plan.buildings ?? new List<CityForgeBuilding>()).Where(item => item != null).OrderBy(item => item.id, StringComparer.Ordinal))
-            {
-                if (!parcels.TryGetValue(building.parcelId ?? string.Empty, out CityForgeParcel parcel) || parcel.cells == null || parcel.cells.Count == 0) continue;
-                ParcelBounds(parcel.cells, out Vector3 center, out float parcelWidth, out float parcelDepth);
-                Vector3 position = center - centreOffset;
-                float width = Mathf.Max(2.8f, parcelWidth * .55f);
-                float depth = Mathf.Max(2.8f, parcelDepth * .55f);
-                float height = Mathf.Clamp(building.floors * .30f, .55f, 7.2f);
-                GameObject mass = Primitive("AcceptedBuildingMap_" + building.id, PrimitiveType.Cube, tile, position + Vector3.up * (height * .5f + .16f), new Vector3(width, height, depth));
-                Collider collider = mass.GetComponent<Collider>(); if (collider) collider.enabled = false;
-                SetRendererColor(mass.GetComponent<Renderer>(), KitColor(BuildingVariant(building.blueprintId), .40f, .62f));
-                screenHosts[building.id] = position + Vector3.up * (height + .30f);
-            }
-
-            foreach (CityForgeParcel parcel in parcels.Values.Where(item => item.zone == CityForgeZone.Civic || item.zone == CityForgeZone.Culture || item.zone == CityForgeZone.GreenInfrastructure))
-                screenHosts["site-" + parcel.id] = ParcelCentre(parcel.cells) - centreOffset + Vector3.up * .34f;
-
-            foreach (CityForgeService service in (plan.services ?? new List<CityForgeService>()).Where(item => item != null).OrderBy(item => item.id, StringComparer.Ordinal))
-            {
-                if (!parcels.TryGetValue(service.parcelId ?? string.Empty, out CityForgeParcel parcel)) continue;
-                GameObject marker = Primitive("AcceptedServiceMap_" + service.id, PrimitiveType.Cylinder, tile, ParcelCentre(parcel.cells) - centreOffset + Vector3.up * .42f, new Vector3(.72f, .28f, .72f));
-                Collider collider = marker.GetComponent<Collider>(); if (collider) collider.enabled = false;
-                SetRendererColor(marker.GetComponent<Renderer>(), KitColor(ServiceVariant(service.type), .54f, .72f));
-            }
-
-            foreach (CityForgeLandmark landmark in (plan.landmarks ?? new List<CityForgeLandmark>()).Where(item => item != null).OrderBy(item => item.id, StringComparer.Ordinal))
-            {
-                if (!parcels.TryGetValue(landmark.parcelId ?? string.Empty, out CityForgeParcel parcel)) continue;
-                int variant = OutcomeVariant(landmark.outcomeId);
-                GameObject marker = Primitive("AcceptedCityworksMap_" + landmark.id, PrimitiveType.Cylinder, tile, ParcelCentre(parcel.cells) - centreOffset + Vector3.up * .52f, new Vector3(1.02f, .38f, 1.02f));
-                Collider collider = marker.GetComponent<Collider>(); if (collider) collider.enabled = false;
-                SetRendererColor(marker.GetComponent<Renderer>(), LandmarkStateColor(variant, landmark.state));
-            }
-
-            foreach (CityForgeScreen screen in (plan.screens ?? new List<CityForgeScreen>()).Where(item => item != null).OrderBy(item => item.screenId, StringComparer.Ordinal))
-            {
-                if (!screenHosts.TryGetValue(screen.hostId ?? string.Empty, out Vector3 position)) continue;
-                GameObject marker = Primitive("AcceptedScreenMap_" + screen.screenId, PrimitiveType.Cube, tile, position, new Vector3(.62f, .16f, .62f));
-                Collider collider = marker.GetComponent<Collider>(); if (collider) collider.enabled = false;
-                SetRendererColor(marker.GetComponent<Renderer>(), new Color(.83f, .37f, .93f));
+                PrimitiveType type = feature.kind == CityForgeMapFeatureKind.Service || feature.kind == CityForgeMapFeatureKind.Landmark
+                    ? PrimitiveType.Cylinder : PrimitiveType.Cube;
+                float height = feature.kind == CityForgeMapFeatureKind.BuildingFacade
+                    ? Mathf.Clamp(feature.worldHeight * .035f, .16f, .84f)
+                    : feature.kind == CityForgeMapFeatureKind.BuildingRoof ? .10f
+                    : feature.kind == CityForgeMapFeatureKind.Ground ? .04f : .12f;
+                GameObject visual = Primitive("AcceptedMap_" + feature.id, type, tile,
+                    feature.localPosition - centreOffset + Vector3.up * (feature.elevation + height * .5f),
+                    new Vector3(feature.worldSize.x, height, feature.worldSize.y));
+                Collider collider = visual.GetComponent<Collider>(); if (collider) collider.enabled = false;
+                SetRendererColor(visual.GetComponent<Renderer>(), feature.color);
             }
         }
 
@@ -608,316 +624,7 @@ namespace SlopCity
             if (buildOverlayMaterial) Destroy(buildOverlayMaterial);
         }
 
-        /// <summary>
-        /// Untouched City Forge coordinates remain player-owned: they have no
-        /// accepted ground, streets, fixtures, or save records. They still
-        /// need the deterministic Forge city fabric that makes the Sprawl read
-        /// as a continuation of the Old City at street level. Accepted plans
-        /// keep every laid cell and authored feature, while the unclaimed
-        /// surrounding space retains collider-free visual city fabric.
-        /// </summary>
-        private void BuildScenicCityContinuation(ChunkInstance instance, CityForgeResolvedChunk chunk)
-        {
-            if (instance == null || !instance.root || chunk == null || chunk.baseChunk == null
-                || !SlopCityCityForge.IsBuildable(instance.coord)) return;
-
-            if (chunk.acceptedPlan != null)
-            {
-                BuildScenicAcceptedInfill(instance, chunk);
-                return;
-            }
-
-            CityForgeBaseChunk baseChunk = chunk.baseChunk;
-            const float chunkSize = SlopCityCityForge.ChunkSizeMeters;
-            GameObject cityscape = new GameObject("ScenicCityContinuation");
-            cityscape.transform.SetParent(instance.root.transform, false);
-
-            ScenicPrimitive("ScenicTerrain", PrimitiveType.Cube, cityscape.transform,
-                new Vector3(chunkSize * .5f, -.46f, chunkSize * .5f), new Vector3(chunkSize, .16f, chunkSize),
-                ScenicTerrainColor(baseChunk.terrainId));
-            // This is presentation-owned bounded travel support, never a
-            // saved plan or a substitute for a player-authored street.
-            BuildScenicTravelSurface(cityscape.transform, chunkSize);
-
-            CityForgeRoadClass avenue = ScenicRoadClass(baseChunk);
-            BuildScenicAvenue(cityscape.transform, "ScenicAvenue_Centre_NS", new Vector3(chunkSize * .5f, -.29f, chunkSize * .5f), chunkSize, true, avenue);
-            BuildScenicAvenue(cityscape.transform, "ScenicAvenue_Centre_EW", new Vector3(chunkSize * .5f, -.29f, chunkSize * .5f), chunkSize, false, avenue);
-            // East/north ownership emits each shared boundary once.
-            BuildScenicAvenue(cityscape.transform, "ScenicAvenue_East", new Vector3(chunkSize, -.29f, chunkSize * .5f), chunkSize, true, avenue);
-            BuildScenicAvenue(cityscape.transform, "ScenicAvenue_North", new Vector3(chunkSize * .5f, -.29f, chunkSize), chunkSize, false, avenue);
-
-            uint seed = StableHash(baseChunk.baseHash + "|scenic-city");
-            Vector3[] blocks =
-            {
-                new Vector3(18f, 0f, 18f), new Vector3(54f, 0f, 18f),
-                new Vector3(18f, 0f, 54f), new Vector3(54f, 0f, 54f)
-            };
-            for (int index = 0; index < blocks.Length; index++)
-                BuildScenicBuilding(cityscape.transform, baseChunk, index, blocks[index]);
-
-            BuildScenicLamp(cityscape.transform, "ScenicLamp_SW", new Vector3(31.7f, -.19f, 31.7f), seed + 1u);
-            BuildScenicLamp(cityscape.transform, "ScenicLamp_SE", new Vector3(40.3f, -.19f, 31.7f), seed + 2u);
-            BuildScenicLamp(cityscape.transform, "ScenicLamp_NW", new Vector3(31.7f, -.19f, 40.3f), seed + 3u);
-            BuildScenicLamp(cityscape.transform, "ScenicLamp_NE", new Vector3(40.3f, -.19f, 40.3f), seed + 4u);
-        }
-
-        /// <summary>
-        /// A plan owns every laid ground cell as well as its roads, parcels,
-        /// and buildings. Only a ground-only plan may receive this scenic
-        /// continuation in its genuinely unclaimed surrounding space. Any
-        /// authored geometry, screen, road host, or life record owns the
-        /// complete chunk presentation instead, avoiding approximate footprint
-        /// math around interactive objects.
-        /// </summary>
-        private static void BuildScenicAcceptedInfill(ChunkInstance instance, CityForgeResolvedChunk chunk)
-        {
-            CityForgeChunkPlan plan = chunk == null ? null : chunk.acceptedPlan;
-            CityForgeBaseChunk baseChunk = chunk == null ? null : chunk.baseChunk;
-            if (instance == null || !instance.root || plan == null || baseChunk == null) return;
-            if (!IsScenicAcceptedInfillEligible(plan, chunk)) return;
-
-            HashSet<int> reserved = ScenicReservedCells(plan, chunk.roads);
-            const float chunkSize = SlopCityCityForge.ChunkSizeMeters;
-            GameObject cityscape = new GameObject("ScenicAcceptedInfill");
-            cityscape.transform.SetParent(instance.root.transform, false);
-
-            CityForgeRoadClass avenue = ScenicRoadClass(baseChunk);
-            // Keep the continuation at the same street datum without adding a
-            // whole-chunk travel collider beneath a player-shaped island.
-            if (ScenicCellsAreClear(reserved, 3, 5, 0, 8))
-                BuildScenicAvenue(cityscape.transform, "ScenicInfillAvenue_Centre_NS", new Vector3(chunkSize * .5f, .015f, chunkSize * .5f), chunkSize, true, avenue);
-            if (ScenicCellsAreClear(reserved, 0, 8, 3, 5))
-                BuildScenicAvenue(cityscape.transform, "ScenicInfillAvenue_Centre_EW", new Vector3(chunkSize * .5f, .015f, chunkSize * .5f), chunkSize, false, avenue);
-
-            int scenicBuildings = 0;
-            if (BuildScenicInfillBuildingIfClear(cityscape.transform, baseChunk, reserved, 0, new Vector3(18f, 0f, 18f), 0, 3, 0, 3)) scenicBuildings++;
-            if (BuildScenicInfillBuildingIfClear(cityscape.transform, baseChunk, reserved, 1, new Vector3(54f, 0f, 18f), 5, 8, 0, 3)) scenicBuildings++;
-            if (BuildScenicInfillBuildingIfClear(cityscape.transform, baseChunk, reserved, 2, new Vector3(18f, 0f, 54f), 0, 3, 5, 8)) scenicBuildings++;
-            if (BuildScenicInfillBuildingIfClear(cityscape.transform, baseChunk, reserved, 3, new Vector3(54f, 0f, 54f), 5, 8, 5, 8)) scenicBuildings++;
-
-            uint seed = StableHash(baseChunk.baseHash + "|scenic-city");
-            if (ScenicCellsAreClear(reserved, 3, 4, 3, 4))
-                BuildScenicLamp(cityscape.transform, "ScenicInfillLamp_SW", new Vector3(31.7f, 0f, 31.7f), seed + 1u);
-            if (ScenicCellsAreClear(reserved, 4, 5, 3, 4))
-                BuildScenicLamp(cityscape.transform, "ScenicInfillLamp_SE", new Vector3(40.3f, 0f, 31.7f), seed + 2u);
-            if (ScenicCellsAreClear(reserved, 3, 4, 4, 5))
-                BuildScenicLamp(cityscape.transform, "ScenicInfillLamp_NW", new Vector3(31.7f, 0f, 40.3f), seed + 3u);
-            if (ScenicCellsAreClear(reserved, 4, 5, 4, 5))
-                BuildScenicLamp(cityscape.transform, "ScenicInfillLamp_NE", new Vector3(40.3f, 0f, 40.3f), seed + 4u);
-
-            // Sparse ground-only islands can split all four large blocks while
-            // leaving a genuinely unclaimed void cell. Give that surrounding
-            // space a compact Forge facade rather than treating a player-laid
-            // cell as an unrecorded building.
-            if (scenicBuildings == 0)
-            {
-                int cell = FindScenicInfillCell(reserved);
-                if (cell >= 0)
-                {
-                    BuildScenicInfillFacade(cityscape.transform, baseChunk, cell, seed);
-                    int x = cell % SlopCityCityForge.GridSize, z = cell / SlopCityCityForge.GridSize;
-                    float cellSize = SlopCityCityForge.CellSizeMeters;
-                    BuildScenicLamp(cityscape.transform, "ScenicInfillLamp_" + cell,
-                        new Vector3((x + .90f) * cellSize, 0f, (z + .10f) * cellSize), seed + (uint)(cell + 5));
-                }
-            }
-        }
-
-        private static bool BuildScenicInfillBuildingIfClear(Transform parent, CityForgeBaseChunk baseChunk, HashSet<int> reserved,
-            int index, Vector3 position, int minimumX, int maximumX, int minimumZ, int maximumZ)
-        {
-            if (!ScenicCellsAreClear(reserved, minimumX, maximumX, minimumZ, maximumZ)) return false;
-            BuildScenicBuilding(parent, baseChunk, index, position);
-            return true;
-        }
-
-        private static HashSet<int> ScenicReservedCells(CityForgeChunkPlan plan, IEnumerable<CityForgeRoad> roads)
-        {
-            HashSet<int> reserved = new HashSet<int>();
-            if (plan == null) return reserved;
-            // BuildLife always contributes its small CityPulse fixture near
-            // local (4, 4), even in an otherwise ground-only plan. Reserve the
-            // containing cell so the compact fallback cannot enclose it.
-            reserved.Add(0);
-            foreach (int cell in (plan.groundCells ?? new List<int>()).Where(IsScenicCell)) reserved.Add(cell);
-            foreach (CityForgeParcel parcel in (plan.parcels ?? new List<CityForgeParcel>()).Where(item => item != null && item.cells != null))
-                foreach (int cell in parcel.cells.Where(IsScenicCell)) reserved.Add(cell);
-            foreach (CityForgeRoad road in (roads ?? Enumerable.Empty<CityForgeRoad>()).Where(item => item != null))
-                for (int cell = 0; cell < SlopCityCityForge.GridSize * SlopCityCityForge.GridSize; cell++)
-                    if (SlopCityCityForge.RoadTouchesCell(road, cell)) reserved.Add(cell);
-            return reserved;
-        }
-
-        private static bool IsScenicAcceptedInfillEligible(CityForgeChunkPlan plan, CityForgeResolvedChunk chunk)
-        {
-            if (plan == null || chunk == null) return false;
-            // Do not approximate physical footprint coverage. Once a plan has
-            // any authored or interactive content, its own compiled geometry
-            // is the sole street-level presentation.
-            if ((plan.roads ?? new List<CityForgeRoad>()).Any()
-                || (plan.removedRoadEdges ?? new List<string>()).Any()
-                || (plan.parcels ?? new List<CityForgeParcel>()).Any()
-                || (plan.buildings ?? new List<CityForgeBuilding>()).Any()
-                || (plan.services ?? new List<CityForgeService>()).Any()
-                || (plan.landmarks ?? new List<CityForgeLandmark>()).Any()
-                || (plan.screens ?? new List<CityForgeScreen>()).Any()
-                || (plan.situations ?? new List<CityForgeSituationState>()).Any()) return false;
-            if ((chunk.roads ?? new List<CityForgeRoad>()).Any()
-                || (chunk.screens ?? new List<CityForgeResolvedScreen>()).Any()) return false;
-            CityForgeCityPulse pulse = chunk.pulse;
-            return pulse == null
-                || (!((pulse.residentRoles ?? new List<string>()).Any(item => !string.IsNullOrEmpty(item)))
-                    && !(pulse.persistedSituations ?? new List<CityForgeSituationState>()).Any(item => item != null)
-                    && !(pulse.availableSituations ?? new List<string>()).Any(item => !string.IsNullOrEmpty(item))
-                    && !(pulse.availableSituationOpportunities ?? new List<CityForgeSituationOpportunity>()).Any(item => item != null));
-        }
-
-        private static bool ScenicCellsAreClear(HashSet<int> reserved, int minimumX, int maximumX, int minimumZ, int maximumZ)
-        {
-            for (int z = minimumZ; z <= maximumZ; z++)
-                for (int x = minimumX; x <= maximumX; x++)
-                    if (reserved != null && reserved.Contains(x + z * SlopCityCityForge.GridSize)) return false;
-            return true;
-        }
-
-        private static int FindScenicInfillCell(HashSet<int> reserved)
-        {
-            int candidate = -1, bestDistance = int.MinValue;
-            for (int cell = 0; cell < SlopCityCityForge.GridSize * SlopCityCityForge.GridSize; cell++)
-            {
-                if (reserved != null && reserved.Contains(cell)) continue;
-                int x = cell % SlopCityCityForge.GridSize, z = cell / SlopCityCityForge.GridSize;
-                int distance = Mathf.Abs(x - 4) + Mathf.Abs(z - 4);
-                if (candidate < 0 || distance > bestDistance || (distance == bestDistance && cell < candidate))
-                {
-                    candidate = cell;
-                    bestDistance = distance;
-                }
-            }
-            return candidate;
-        }
-
-        private static bool IsScenicCell(int cell)
-        {
-            return cell >= 0 && cell < SlopCityCityForge.GridSize * SlopCityCityForge.GridSize;
-        }
-
-        private static void BuildScenicInfillFacade(Transform parent, CityForgeBaseChunk baseChunk, int cell, uint seed)
-        {
-            int x = cell % SlopCityCityForge.GridSize, z = cell / SlopCityCityForge.GridSize;
-            float cellSize = SlopCityCityForge.CellSizeMeters;
-            float span = cellSize * .68f;
-            float height = Mathf.Clamp(ScenicBuildingHeight(baseChunk.skylineId, seed + (uint)cell, cell % 4) * .58f, 7.5f, 16f);
-            GameObject facade = new GameObject("ScenicInfillFacade_" + cell);
-            facade.transform.SetParent(parent, false);
-            facade.transform.localPosition = new Vector3((x + .5f) * cellSize, 0f, (z + .5f) * cellSize);
-            facade.transform.localRotation = Quaternion.Euler(0f, (float)((seed >> 3) % 4u) * 90f, 0f);
-            string kit = BuildingKits[(int)(seed % (uint)BuildingKits.Length)];
-            string facadeKit = ScenicFacadeKits[(int)((seed >> 7) % (uint)ScenicFacadeKits.Length)];
-            string roof = ScenicRoofKits[(int)((seed >> 13) % (uint)ScenicRoofKits.Length)];
-            BuildBuildingShell(facade.transform, span, height, kit);
-            ApplyBuildingFinish(facade.transform, facadeKit, roof);
-            BuildScenicWindowBands(facade.transform, span, height, seed + (uint)cell);
-            DisableScenicColliders(facade.transform);
-        }
-
-        private static void BuildScenicAvenue(Transform parent, string name, Vector3 centre, float length, bool northSouth, CityForgeRoadClass roadClass)
-        {
-            Vector3 pavement = northSouth ? new Vector3(8.2f, .08f, length) : new Vector3(length, .08f, 8.2f);
-            Vector3 asphalt = northSouth ? new Vector3(4.8f, .10f, length) : new Vector3(length, .10f, 4.8f);
-            ScenicPrimitive(name + "_Footway", PrimitiveType.Cube, parent, centre, pavement, new Color(.29f, .31f, .30f));
-            ScenicPrimitive(name + "_Asphalt", PrimitiveType.Cube, parent, centre + Vector3.up * .08f, asphalt, RoadColor(roadClass));
-            Vector3 marking = northSouth ? new Vector3(.15f, .025f, length) : new Vector3(length, .025f, .15f);
-            ScenicPrimitive(name + "_Marking", PrimitiveType.Cube, parent, centre + Vector3.up * .15f, marking, new Color(.76f, .68f, .43f), true);
-        }
-
-        private static void BuildScenicBuilding(Transform parent, CityForgeBaseChunk baseChunk, int index, Vector3 position)
-        {
-            uint seed = StableHash(baseChunk.baseHash + "|building|" + index.ToString(System.Globalization.CultureInfo.InvariantCulture));
-            float span = 24f - (float)(seed % 4u) * .7f;
-            float height = ScenicBuildingHeight(baseChunk.skylineId, seed, index);
-            GameObject shell = new GameObject("ScenicBuilding_" + index);
-            shell.transform.SetParent(parent, false);
-            shell.transform.localPosition = position;
-            shell.transform.localRotation = Quaternion.Euler(0f, (float)((seed >> 3) % 4u) * 90f, 0f);
-            string kit = BuildingKits[(int)(seed % (uint)BuildingKits.Length)];
-            string facade = ScenicFacadeKits[(int)((seed >> 7) % (uint)ScenicFacadeKits.Length)];
-            string roof = ScenicRoofKits[(int)((seed >> 13) % (uint)ScenicRoofKits.Length)];
-            BuildBuildingShell(shell.transform, span, height, kit);
-            ApplyBuildingFinish(shell.transform, facade, roof);
-            BuildScenicWindowBands(shell.transform, span, height, seed);
-            DisableScenicColliders(shell.transform);
-        }
-
-        private static float ScenicBuildingHeight(string skylineId, uint seed, int index)
-        {
-            if (skylineId == "tower-punctuated") return index == (int)(seed % 4u) ? 38f : 18f + (float)(seed % 4u) * 2.4f;
-            if (skylineId == "mixed-rise") return 18f + (float)(seed % 6u) * 2.4f;
-            if (skylineId == "civic-open") return 10f + (float)(seed % 4u) * 1.8f;
-            return 12f + (float)(seed % 5u) * 1.9f;
-        }
-
-        private static void BuildScenicWindowBands(Transform parent, float span, float height, uint seed)
-        {
-            Color glass = Color.Lerp(new Color(.08f, .17f, .24f), new Color(.19f, .43f, .46f), (float)(seed & 3u) / 3f);
-            float low = Mathf.Clamp(height * .34f, 3.1f, height - 2.4f);
-            float high = Mathf.Clamp(height * .70f, low + 1.1f, height - 1.2f);
-            foreach (float elevation in new[] { low, high })
-            {
-                ScenicPrimitive("ScenicWindowFront", PrimitiveType.Cube, parent, new Vector3(0f, elevation, -span * .5f - .14f), new Vector3(span * .66f, .34f, .08f), glass, true);
-                ScenicPrimitive("ScenicWindowRear", PrimitiveType.Cube, parent, new Vector3(0f, elevation, span * .5f + .14f), new Vector3(span * .66f, .34f, .08f), glass, true);
-                ScenicPrimitive("ScenicWindowWest", PrimitiveType.Cube, parent, new Vector3(-span * .5f - .14f, elevation, 0f), new Vector3(.08f, .34f, span * .66f), glass, true);
-                ScenicPrimitive("ScenicWindowEast", PrimitiveType.Cube, parent, new Vector3(span * .5f + .14f, elevation, 0f), new Vector3(.08f, .34f, span * .66f), glass, true);
-            }
-        }
-
-        private static void BuildScenicLamp(Transform parent, string name, Vector3 position, uint seed)
-        {
-            ScenicPrimitive(name + "_Pole", PrimitiveType.Cylinder, parent, position + Vector3.up * 2.0f,
-                new Vector3(.13f, 2.0f, .13f), new Color(.16f, .20f, .22f));
-            ScenicPrimitive(name + "_Head", PrimitiveType.Sphere, parent, position + Vector3.up * 4.05f, Vector3.one * .34f,
-                Color.Lerp(new Color(.74f, .62f, .28f), new Color(.48f, .75f, .82f), (float)(seed & 1u)));
-        }
-
-        private static GameObject ScenicPrimitive(string name, PrimitiveType type, Transform parent, Vector3 position, Vector3 scale, Color color, bool disableShadow = false)
-        {
-            GameObject value = Primitive(name, type, parent, position, scale);
-            Collider collider = value.GetComponent<Collider>(); if (collider) collider.enabled = false;
-            Renderer renderer = value.GetComponent<Renderer>(); if (renderer) SetRendererColor(renderer, color);
-            if (disableShadow) DisableShadow(value);
-            return value;
-        }
-
-        private static void BuildScenicTravelSurface(Transform parent, float chunkSize)
-        {
-            GameObject surface = new GameObject("ScenicTravelSurface", typeof(BoxCollider));
-            surface.transform.SetParent(parent, false);
-            surface.transform.localPosition = new Vector3(chunkSize * .5f, -.16f, chunkSize * .5f);
-            surface.GetComponent<BoxCollider>().size = new Vector3(chunkSize, .32f, chunkSize);
-        }
-
-        private static void DisableScenicColliders(Transform root)
-        {
-            foreach (Collider collider in root.GetComponentsInChildren<Collider>(true)) if (collider) collider.enabled = false;
-        }
-
-        private static Color ScenicTerrainColor(string terrain)
-        {
-            if (terrain == "garden-grade") return new Color(.23f, .34f, .24f);
-            if (terrain == "old-masonry") return new Color(.31f, .28f, .25f);
-            if (terrain == "service-concrete") return new Color(.26f, .28f, .28f);
-            return new Color(.22f, .27f, .29f);
-        }
-
-        private static CityForgeRoadClass ScenicRoadClass(CityForgeBaseChunk chunk)
-        {
-            if (chunk != null && chunk.skylineId == "tower-punctuated") return CityForgeRoadClass.Boulevard;
-            if (chunk != null && chunk.lifeThemeId == "culture") return CityForgeRoadClass.PedestrianRoute;
-            if (chunk != null && chunk.lifeThemeId == "repair") return CityForgeRoadClass.ServiceAlley;
-            return CityForgeRoadClass.LocalStreet;
-        }
-
-        private void BuildGround(ChunkInstance instance, CityForgeResolvedChunk chunk)
+        private void BuildGround(ChunkInstance instance, CityForgeResolvedChunk chunk, CityForgePresentationMode mode)
         {
             List<int> cells = chunk?.acceptedPlan?.groundCells;
             if (cells == null || cells.Count == 0) return;
@@ -955,7 +662,7 @@ namespace SlopCity
             }
         }
 
-        private void BuildRoads(ChunkInstance instance, IEnumerable<CityForgeRoad> roads)
+        private void BuildRoads(ChunkInstance instance, IEnumerable<CityForgeRoad> roads, CityForgePresentationMode mode)
         {
             int vehicles = 0;
             foreach (CityForgeRoad road in (roads ?? Enumerable.Empty<CityForgeRoad>()).Where(item => item != null).OrderBy(item => item.LocalKey, StringComparer.Ordinal))
@@ -988,13 +695,13 @@ namespace SlopCity
                     GameObject car = Primitive("ForgeStreetCar_" + vehicles, PrimitiveType.Cube, instance.root.transform, edge + tangent * 1.7f + Vector3.up * .62f, new Vector3(1.65f, 1.05f, 3.45f));
                     car.transform.localRotation = Quaternion.LookRotation(tangent, Vector3.up);
                     SetRendererColor(car.GetComponent<Renderer>(), KitColor((int)(StableHash(road.LocalKey) % 30u), .38f, .56f));
-                    AddFixture(car, "vehicle", "street-car", "City Forge street car", instance.coord);
+                    AddFixture(car, "vehicle", "street-car", "City Forge street car", instance.coord, mode);
                     vehicles++;
                 }
             }
         }
 
-        private void BuildBuildings(ChunkInstance instance, CityForgeResolvedChunk chunk)
+        private void BuildBuildings(ChunkInstance instance, CityForgeResolvedChunk chunk, CityForgePresentationMode mode)
         {
             if (chunk.acceptedPlan == null) return;
             foreach (CityForgeBuilding building in (chunk.acceptedPlan.buildings ?? new List<CityForgeBuilding>()).Where(item => item != null).OrderBy(item => item.id, StringComparer.Ordinal))
@@ -1028,8 +735,8 @@ namespace SlopCity
                 GameObject entry = Primitive("Entry_" + building.id, PrimitiveType.Cube, instance.root.transform,
                     instance.root.transform.InverseTransformPoint(shell.transform.TransformPoint(new Vector3(0f, 1.05f, -shellDepth * .5f - .14f))), new Vector3(1.45f, 2.1f, .18f));
                 entry.transform.localRotation = shell.transform.localRotation;
-                SlopCityCityForgeFixture entryFixture = AddFixture(entry, "interior", string.IsNullOrEmpty(building.interiorRole) ? building.blueprintId : building.interiorRole, "Enter " + building.blueprintId, instance.coord);
-                Transform room = BuildInterior(instance, building, centre, shellWidth, shellDepth, entryFixture, entry.transform.position, shell.transform.localRotation);
+                SlopCityCityForgeFixture entryFixture = AddFixture(entry, "interior", string.IsNullOrEmpty(building.interiorRole) ? building.blueprintId : building.interiorRole, "Enter " + building.blueprintId, instance.coord, mode);
+                Transform room = BuildInterior(instance, building, centre, shellWidth, shellDepth, entryFixture, entry.transform.position, shell.transform.localRotation, mode);
                 instance.hosts[building.id] = new ScreenHostLayout { exterior = shell.transform, interior = room, width = shellWidth, depth = shellDepth, height = height, building = true, blueprintId = building.blueprintId };
                 if (!string.IsNullOrEmpty(building.storefrontId) && building.storefrontId != "none")
                 {
@@ -1123,7 +830,7 @@ namespace SlopCity
             }
         }
 
-        private void BuildServices(ChunkInstance instance, CityForgeResolvedChunk chunk)
+        private void BuildServices(ChunkInstance instance, CityForgeResolvedChunk chunk, CityForgePresentationMode mode)
         {
             if (chunk.acceptedPlan == null) return;
             int count = 0;
@@ -1135,13 +842,13 @@ namespace SlopCity
                 int variant = ServiceVariant(service.type);
                 PrimitiveType shape = variant % 4 == 0 ? PrimitiveType.Cylinder : variant % 4 == 1 ? PrimitiveType.Cube : variant % 4 == 2 ? PrimitiveType.Sphere : PrimitiveType.Capsule;
                 GameObject station = Primitive("Service_" + service.id, shape, instance.root.transform, ParcelCentre(parcel.cells) + new Vector3(0f, .85f, 0f), new Vector3(1.0f + (variant % 3) * .16f, .85f + (variant % 2) * .2f, 1.0f + (variant % 3) * .16f));
-                Renderer renderer = station.GetComponent<Renderer>(); if (renderer) SetRendererColor(renderer, KitColor(variant, .48f, .72f));
+                Renderer renderer = station.GetComponent<Renderer>(); if (renderer) SetRendererColor(renderer, SlopCityCityForgePresentation.ServiceColor(service.type));
                 Primitive("ServiceAccent", variant % 2 == 0 ? PrimitiveType.Cube : PrimitiveType.Cylinder, station.transform, new Vector3(0f, 1.05f, 0f), new Vector3(.35f + (variant % 3) * .08f, .35f, .35f));
-                AddFixture(station, ServiceFixtureKind(service.type), service.type, "Service " + service.type, instance.coord);
+                AddFixture(station, ServiceFixtureKind(service.type), service.type, "Service " + service.type, instance.coord, mode);
             }
         }
 
-        private void BuildLandmarks(ChunkInstance instance, CityForgeResolvedChunk chunk)
+        private void BuildLandmarks(ChunkInstance instance, CityForgeResolvedChunk chunk, CityForgePresentationMode mode)
         {
             if (chunk.acceptedPlan == null) return;
             foreach (CityForgeLandmark landmark in (chunk.acceptedPlan.landmarks ?? new List<CityForgeLandmark>()).Where(item => item != null).OrderBy(item => item.id, StringComparer.Ordinal))
@@ -1152,13 +859,13 @@ namespace SlopCity
                 float height = 2.0f + (variant % 5) * .65f;
                 PrimitiveType shape = variant % 5 == 0 ? PrimitiveType.Cylinder : variant % 5 == 1 ? PrimitiveType.Cube : variant % 5 == 2 ? PrimitiveType.Sphere : variant % 5 == 3 ? PrimitiveType.Capsule : PrimitiveType.Cylinder;
                 GameObject monument = Primitive("Cityworks_" + landmark.id, shape, instance.root.transform, ParcelCentre(parcel.cells) + new Vector3(0f, height * .5f, 0f), new Vector3(1.1f + (variant % 4) * .24f, height * .5f, 1.1f + (variant % 4) * .24f));
-                Renderer monumentRenderer = monument.GetComponent<Renderer>(); if (monumentRenderer) SetRendererColor(monumentRenderer, LandmarkStateColor(variant, landmark.state));
+                Renderer monumentRenderer = monument.GetComponent<Renderer>(); if (monumentRenderer) SetRendererColor(monumentRenderer, SlopCityCityForgePresentation.LandmarkColor(landmark.outcomeId, landmark.state));
                 BuildLandmarkAccent(monument.transform, variant, landmark.state);
-                AddFixture(monument, "cityworks", landmark.outcomeId, "Cityworks " + landmark.state + " / " + landmark.outcomeId, instance.coord);
+                AddFixture(monument, "cityworks", landmark.outcomeId, "Cityworks " + landmark.state + " / " + landmark.outcomeId, instance.coord, mode);
             }
         }
 
-        private void BuildLife(ChunkInstance instance, CityForgeResolvedChunk chunk)
+        private void BuildLife(ChunkInstance instance, CityForgeResolvedChunk chunk, CityForgePresentationMode mode)
         {
             CityForgeCityPulse pulse = chunk.pulse ?? new CityForgeCityPulse();
             int resident = 0;
@@ -1169,7 +876,7 @@ namespace SlopCity
                 GameObject marker = Primitive("Resident_" + resident++, PrimitiveType.Capsule, instance.root.transform, new Vector3(6f + hash % 60, 1f, 6f + (hash / 97u) % 60), new Vector3(.45f, 1f, .45f));
                 Renderer residentRenderer = marker.GetComponent<Renderer>(); if (residentRenderer) SetRendererColor(residentRenderer, KitColor(variant + 7, .32f, .68f));
                 Primitive("ResidentRoleMarker", variant % 2 == 0 ? PrimitiveType.Cube : PrimitiveType.Cylinder, marker.transform, new Vector3(0f, 1.15f, 0f), new Vector3(.24f, .16f, .24f));
-                AddFixture(marker, "resident", role, role.Replace('-', ' '), instance.coord);
+                AddFixture(marker, "resident", role, role.Replace('-', ' '), instance.coord, mode);
             }
             int persisted = 0;
             foreach (CityForgeSituationState record in (pulse.persistedSituations ?? new List<CityForgeSituationState>()).Where(item => item != null && item.state != "archived" && item.state != "unavailable").OrderBy(item => item.id, StringComparer.Ordinal).Take(12))
@@ -1177,7 +884,7 @@ namespace SlopCity
                 uint hash = StableHash(record.situationId + "|" + record.stableSeed + "|" + instance.coord);
                 Vector3 position = new Vector3(5f + hash % 62, 1.05f, 5f + (hash / 131u) % 62);
                 GameObject marker = SituationFixture("Situation_" + persisted++, instance.root.transform, position, record.situationId, record.state);
-                SlopCityCityForgeFixture fixture = AddFixture(marker, "situation", record.situationId, "Situation " + record.state + " / " + record.situationId, instance.coord);
+                SlopCityCityForgeFixture fixture = AddFixture(marker, "situation", record.situationId, "Situation " + record.state + " / " + record.situationId, instance.coord, mode);
                 if (fixture != null) persistedSituationFixtures[fixture] = record.Clone();
             }
             int situation = 0;
@@ -1185,16 +892,16 @@ namespace SlopCity
             {
                 uint hash = StableHash(opportunity.situationId + "|" + opportunity.stableSeed + "|" + instance.coord);
                 GameObject marker = SituationFixture("SituationOpportunity_" + situation++, instance.root.transform, new Vector3(5f + hash % 62, 1.05f, 5f + (hash / 131u) % 62), opportunity.situationId, "available");
-                SlopCityCityForgeFixture fixture = AddFixture(marker, "situation", opportunity.situationId, "Situation available / " + opportunity.situationId, instance.coord);
+                SlopCityCityForgeFixture fixture = AddFixture(marker, "situation", opportunity.situationId, "Situation available / " + opportunity.situationId, instance.coord, mode);
                 if (fixture != null) opportunitySituationFixtures[fixture] = opportunity.Clone();
             }
             GameObject pulseMarker = Primitive("CityPulse", PrimitiveType.Cube, instance.root.transform, new Vector3(4f, .35f, 4f), new Vector3(1.2f, .7f, 1.2f));
-            AddFixture(pulseMarker, "pulse", "city-pulse", "Pulse A" + pulse.access + " C" + pulse.care + " U" + pulse.culture, instance.coord);
+            AddFixture(pulseMarker, "pulse", "city-pulse", "Pulse A" + pulse.access + " C" + pulse.care + " U" + pulse.culture, instance.coord, mode);
         }
 
-        private Transform BuildInterior(ChunkInstance instance, CityForgeBuilding building, Vector3 parcelCentre, float shellWidth, float shellDepth, SlopCityCityForgeFixture entry, Vector3 exteriorArrival, Quaternion orientation)
+        private Transform BuildInterior(ChunkInstance instance, CityForgeBuilding building, Vector3 parcelCentre, float shellWidth, float shellDepth, SlopCityCityForgeFixture entry, Vector3 exteriorArrival, Quaternion orientation, CityForgePresentationMode mode)
         {
-            if (entry == null) return null;
+            if (entry == null && mode != CityForgePresentationMode.Preview) return null;
             // A streamed interior is derived from the approved kit and parcel,
             // suspended directly above its shell so it has no dependence on an
             // authored scene path or a player-supplied transform.
@@ -1210,7 +917,8 @@ namespace SlopCity
             Primitive("WestWall", PrimitiveType.Cube, room.transform, new Vector3(-width * .5f, 2f, 0f), new Vector3(.2f, 4f, depth));
             BuildInteriorKit(room.transform, building.interiorRole, width, depth);
             GameObject returnControl = Primitive("ReturnToStreet", PrimitiveType.Cylinder, room.transform, new Vector3(0f, .7f, depth * .24f), new Vector3(.6f, .7f, .6f));
-            SlopCityCityForgeFixture returnFixture = AddFixture(returnControl, "interior-return", "return-to-street", "Return to street", instance.coord);
+            SlopCityCityForgeFixture returnFixture = AddFixture(returnControl, "interior-return", "return-to-street", "Return to street", instance.coord, mode);
+            if (mode == CityForgePresentationMode.Preview) return room.transform;
             // Route both door controls through the game's standard interaction
             // and touch pipeline. The marker contains no player data: it is a
             // derived point inside this streamed public kit.
@@ -1257,9 +965,13 @@ namespace SlopCity
             return 0f;
         }
 
-        private SlopCityCityForgeFixture AddFixture(GameObject target, string kind, string catalogId, string label, CityForgeCoord coord)
+        private SlopCityCityForgeFixture AddFixture(GameObject target, string kind, string catalogId, string label, CityForgeCoord coord, CityForgePresentationMode mode)
         {
             if (!target) return null;
+            // A review is a visual promise, not a second live city. It shares
+            // the exact geometry compiler but must never create a USE target,
+            // route portal, Cityworks transition, or persistent interaction.
+            if (mode == CityForgePresentationMode.Preview) return null;
             SlopCityInteractable interactable = target.AddComponent<SlopCityInteractable>();
             interactable.Configure(InteractionKind(kind), label, false);
             interactable.ConfigureInteractionPoint(target.transform.position);
@@ -1326,7 +1038,7 @@ namespace SlopCity
             TextMesh text = item.GetComponent<TextMesh>(); text.text = label; text.characterSize = .12f; text.fontSize = 28; text.anchor = TextAnchor.MiddleCenter; text.alignment = TextAlignment.Center;
         }
 
-        private void BuildScreens(ChunkInstance instance, CityForgeResolvedChunk chunk)
+        private void BuildScreens(ChunkInstance instance, CityForgeResolvedChunk chunk, CityForgePresentationMode mode)
         {
             foreach (CityForgeResolvedScreen resolved in (chunk.screens ?? new List<CityForgeResolvedScreen>()).Where(item => item != null).OrderBy(item => item.screenId, StringComparer.Ordinal))
             {
@@ -1345,6 +1057,14 @@ namespace SlopCity
                 surface.transform.localPosition = Vector3.back * .06f;
                 surface.transform.localRotation = Quaternion.identity;
                 surface.transform.localScale = placement.scale;
+                if (mode == CityForgePresentationMode.Preview)
+                {
+                    // Review the same approved screen hardware, but never
+                    // allocate a decoder, register a source, or expose a
+                    // player-media surface before the plan is accepted.
+                    SetRendererColor(surface.GetComponent<Renderer>(), new Color(.018f, .026f, .032f));
+                    continue;
+                }
                 // The parent root is inactive while components are added. Set this
                 // before first OnEnable so future screen types can never default
                 // into the media registry during a streamed construction frame.
@@ -1499,10 +1219,16 @@ namespace SlopCity
         private void Revoke(ChunkInstance instance)
         {
             if (instance == null) return;
-            foreach (SlopCityCityForgeFixture fixture in interiorEntries.Keys.Where(item => item == null || interiorEntries[item].chunk.Equals(instance.coord)).ToArray()) interiorEntries.Remove(fixture);
-            foreach (SlopCityCityForgeFixture fixture in interiorReturns.Keys.Where(item => item == null || interiorReturns[item].chunk.Equals(instance.coord)).ToArray()) interiorReturns.Remove(fixture);
-            foreach (SlopCityCityForgeFixture fixture in persistedSituationFixtures.Keys.Where(item => item == null || item.Chunk.Equals(instance.coord)).ToArray()) persistedSituationFixtures.Remove(fixture);
-            foreach (SlopCityCityForgeFixture fixture in opportunitySituationFixtures.Keys.Where(item => item == null || item.Chunk.Equals(instance.coord)).ToArray()) opportunitySituationFixtures.Remove(fixture);
+            // A transient review can share the selected coordinate with the
+            // retained accepted chunk. Ownership is therefore the fixture
+            // object, never its coordinate; otherwise clearing a review could
+            // silently unregister the actual playable city's doors/situations.
+            HashSet<SlopCityCityForgeFixture> owned = new HashSet<SlopCityCityForgeFixture>(
+                instance.root ? instance.root.GetComponentsInChildren<SlopCityCityForgeFixture>(true) : Array.Empty<SlopCityCityForgeFixture>());
+            foreach (SlopCityCityForgeFixture fixture in interiorEntries.Keys.Where(item => item == null || owned.Contains(item)).ToArray()) interiorEntries.Remove(fixture);
+            foreach (SlopCityCityForgeFixture fixture in interiorReturns.Keys.Where(item => item == null || owned.Contains(item)).ToArray()) interiorReturns.Remove(fixture);
+            foreach (SlopCityCityForgeFixture fixture in persistedSituationFixtures.Keys.Where(item => item == null || owned.Contains(item)).ToArray()) persistedSituationFixtures.Remove(fixture);
+            foreach (SlopCityCityForgeFixture fixture in opportunitySituationFixtures.Keys.Where(item => item == null || owned.Contains(item)).ToArray()) opportunitySituationFixtures.Remove(fixture);
             foreach (ScreenFixture fixture in instance.fixtures)
             {
                 if (fixture == null || !fixture.screen) continue;
@@ -1536,6 +1262,15 @@ namespace SlopCity
             renderer.shadowCastingMode = UnityEngine.Rendering.ShadowCastingMode.Off;
             renderer.receiveShadows = false;
         }
+
+        /// <summary>Preview geometry is visible but cannot become a walkable, raycastable, or physics-owning second city.</summary>
+        private static void DisablePreviewColliders(Transform root)
+        {
+            if (!root) return;
+            foreach (Collider collider in root.GetComponentsInChildren<Collider>(true))
+                if (collider) collider.enabled = false;
+        }
+
         /// <summary>Colors Unity primitive renderers without cloning their shared material per streamed fixture.</summary>
         private static void SetRendererColor(Renderer renderer, Color color)
         {
@@ -1565,9 +1300,7 @@ namespace SlopCity
         private static Vector3 ChunkOrigin(CityForgeCoord coord) { return new Vector3(coord.x * SlopCityCityForge.ChunkSizeMeters, 0f, coord.z * SlopCityCityForge.ChunkSizeMeters); }
         private static Vector3 ParcelCentre(IEnumerable<int> cells)
         {
-            List<int> values = (cells ?? Enumerable.Empty<int>()).Where(value => value >= 0 && value < 81).ToList();
-            if (values.Count == 0) return new Vector3(36f, 0f, 36f);
-            return new Vector3(values.Average(value => (value % 9 + .5f) * SlopCityCityForge.CellSizeMeters), 0f, values.Average(value => (value / 9 + .5f) * SlopCityCityForge.CellSizeMeters));
+            return SlopCityCityForgePresentation.ParcelCentre(cells);
         }
 
         /// <summary>
@@ -1577,59 +1310,27 @@ namespace SlopCity
         /// </summary>
         private static void ParcelBounds(IEnumerable<int> cells, out Vector3 centre, out float width, out float depth)
         {
-            List<int> values = (cells ?? Enumerable.Empty<int>())
-                .Where(value => value >= 0 && value < SlopCityCityForge.GridSize * SlopCityCityForge.GridSize)
-                .ToList();
-            float cell = SlopCityCityForge.CellSizeMeters;
-            if (values.Count == 0)
-            {
-                centre = new Vector3(SlopCityCityForge.ChunkSizeMeters * .5f, 0f, SlopCityCityForge.ChunkSizeMeters * .5f);
-                width = depth = cell;
-                return;
-            }
-            int minX = values.Min(value => value % SlopCityCityForge.GridSize);
-            int maxX = values.Max(value => value % SlopCityCityForge.GridSize);
-            int minZ = values.Min(value => value / SlopCityCityForge.GridSize);
-            int maxZ = values.Max(value => value / SlopCityCityForge.GridSize);
-            width = (maxX - minX + 1) * cell;
-            depth = (maxZ - minZ + 1) * cell;
-            centre = new Vector3((minX + maxX + 1) * cell * .5f, 0f, (minZ + maxZ + 1) * cell * .5f);
+            SlopCityCityForgePresentation.ParcelBounds(cells, out centre, out width, out depth);
         }
         private static Vector3 RoadEdgeCentre(CityForgeRoad road)
         {
-            float cell = SlopCityCityForge.CellSizeMeters;
-            float x = (road.cellX + .5f) * cell;
-            float z = (road.cellZ + .5f) * cell;
-            if (road.direction == CityForgeDirection.North) z = (road.cellZ + 1) * cell;
-            else if (road.direction == CityForgeDirection.South) z = road.cellZ * cell;
-            else if (road.direction == CityForgeDirection.East) x = (road.cellX + 1) * cell;
-            else if (road.direction == CityForgeDirection.West) x = road.cellX * cell;
-            return new Vector3(x, 0f, z);
+            return SlopCityCityForgePresentation.RoadEdgeCentre(road);
         }
         private static Vector3 RoadNormal(CityForgeDirection direction)
         {
-            if (direction == CityForgeDirection.North) return Vector3.forward;
-            if (direction == CityForgeDirection.South) return Vector3.back;
-            if (direction == CityForgeDirection.East) return Vector3.right;
-            return Vector3.left;
+            return SlopCityCityForgePresentation.RoadNormal(direction);
         }
         private static Color RoadColor(CityForgeRoadClass roadClass)
         {
-            if (roadClass == CityForgeRoadClass.Boulevard) return new Color(.12f, .14f, .16f);
-            if (roadClass == CityForgeRoadClass.TransitServiceCorridor) return new Color(.15f, .17f, .19f);
-            if (roadClass == CityForgeRoadClass.PedestrianRoute) return new Color(.34f, .30f, .24f);
-            if (roadClass == CityForgeRoadClass.ServiceAlley) return new Color(.25f, .26f, .25f);
-            return new Color(.19f, .20f, .20f);
+            return SlopCityCityForgePresentation.RoadColor(roadClass);
         }
         private static int StableChannel(string id) { return (int)(StableHash(id) % 3u); }
         // These maps deliberately enumerate only the reviewed catalog IDs. They
         // are a presentation lookup, not a place where plan input can name an
         // arbitrary prefab, material, transform, or behavior.
         private static readonly string[] BuildingKits = { "walk-up", "courtyard-home", "tower-residence", "live-work-block", "workshop", "repair-bay", "clinic", "laundry", "depot", "small-office", "corner-shop", "market-hall", "cafe", "exchange", "kiosk", "care-station", "library-room", "utility-office", "community-hall", "screening-room", "studio", "venue", "archive", "performance-space", "garden", "plaza", "water-node", "power-relay", "shelter", "service-yard" };
-        // Scenic continuation chooses only the same fixed catalog vocabulary as
-        // accepted buildings; no player input reaches these presentation IDs.
-        private static readonly string[] ScenicFacadeKits = { "wet-masonry", "poured-concrete", "glazed-ceramic", "oxidized-metal", "painted-render", "brick-utility", "night-glass", "garden-lattice" };
-        private static readonly string[] ScenicRoofKits = { "service-roof", "rain-garden", "solar-rack", "water-tank", "relay-array", "lantern-roof", "terrace", "greenhouse", "vent-stack", "civic-canopy", "screen-crown", "utility-bridge" };
+        // Review and accepted chunks share only this fixed catalog vocabulary;
+        // no player input reaches presentation IDs.
         private static readonly string[] InteriorKits = { "home-room", "workshop-floor", "repair-counter", "care-room", "laundry-room", "depot-bay", "office-floor", "shop-floor", "market-floor", "cafe-room", "exchange-room", "library-room", "community-room", "screening-room", "studio-room", "venue-room", "archive-room", "performance-room", "utility-room", "shelter-room" };
         private static readonly string[] ServiceKits = { "care-station", "repair-counter", "laundry-service", "delivery-bay", "neighborhood-office", "market-stall", "food-counter", "exchange-desk", "library-desk", "utility-desk", "community-room", "screening-service", "studio-service", "venue-door", "archive-desk", "garden-steward", "water-service", "power-service", "shelter-desk", "service-yard-bay" };
         private static readonly string[] OutcomeKits = { "repair-loft", "listening-room", "green-refuge", "repair-cooperative", "mutual-aid-washhouse", "after-hours-room", "light-sanctuary", "street-garden", "notice-arcade", "rider-support-post", "small-exhibition-platform", "connector-lounge", "water-garden", "relay-workshop", "observation-room", "used-goods-exchange", "neighborhood-kitchen", "community-studio", "machine-bay", "supply-cache", "mural-passage", "local-archive", "screening-club", "quiet-learning-room", "welcome-desk", "care-station-outcome", "night-office", "signal-workshop", "rest-terrace", "weather-shelter" };
@@ -1645,35 +1346,11 @@ namespace SlopCity
         private static Color KitColor(int variant, float saturation = .42f, float value = .72f) { return Color.HSVToRGB((variant % 30) / 30f, saturation, value); }
         private static Color FacadeColor(string id)
         {
-            switch (id)
-            {
-                case "poured-concrete": return new Color(.42f, .44f, .43f);
-                case "glazed-ceramic": return new Color(.24f, .48f, .51f);
-                case "oxidized-metal": return new Color(.27f, .48f, .42f);
-                case "painted-render": return new Color(.62f, .43f, .36f);
-                case "brick-utility": return new Color(.47f, .23f, .19f);
-                case "night-glass": return new Color(.10f, .19f, .30f);
-                case "garden-lattice": return new Color(.31f, .52f, .31f);
-                default: return new Color(.40f, .35f, .30f);
-            }
+            return SlopCityCityForgePresentation.FacadeColor(id);
         }
         private static Color RoofColor(string id)
         {
-            switch (id)
-            {
-                case "rain-garden": return new Color(.20f, .39f, .22f);
-                case "solar-rack": return new Color(.12f, .20f, .31f);
-                case "water-tank": return new Color(.18f, .35f, .48f);
-                case "relay-array": return new Color(.36f, .31f, .49f);
-                case "lantern-roof": return new Color(.63f, .46f, .20f);
-                case "terrace": return new Color(.42f, .34f, .27f);
-                case "greenhouse": return new Color(.27f, .51f, .44f);
-                case "vent-stack": return new Color(.34f, .37f, .36f);
-                case "civic-canopy": return new Color(.33f, .42f, .54f);
-                case "screen-crown": return new Color(.42f, .20f, .45f);
-                case "utility-bridge": return new Color(.23f, .29f, .31f);
-                default: return new Color(.30f, .31f, .30f);
-            }
+            return SlopCityCityForgePresentation.RoofColor(id);
         }
         private static Color InteriorColor(string id) { return KitColor(InteriorVariant(id), .30f, .64f); }
         private static string ServiceFixtureKind(string type)
@@ -1706,10 +1383,7 @@ namespace SlopCity
         }
         private static Color DeviceColor(string id)
         {
-            if (id == "public-led-01") return new Color(.14f, .24f, .3f);
-            if (id == "public-projector-01") return new Color(.27f, .25f, .18f);
-            if (id == "public-window-01") return new Color(.12f, .28f, .24f);
-            return new Color(.11f, .11f, .13f);
+            return SlopCityCityForgePresentation.DeviceColor(id);
         }
         private static uint StableHash(string value)
         {

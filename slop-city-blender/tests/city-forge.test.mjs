@@ -30,6 +30,18 @@ const plan = (x = 2, z = 0) => ({
   demolishedIds: [],
 });
 
+const method = (source, signature) => {
+  const start = source.indexOf(signature);
+  assert.notEqual(start, -1, `missing ${signature}`);
+  const opening = source.indexOf('{', start);
+  let depth = 0;
+  for (let index = opening; index < source.length; index++) {
+    if (source[index] === '{') depth++;
+    else if (source[index] === '}' && --depth === 0) return source.slice(start, index + 1);
+  }
+  throw new Error(`unclosed ${signature}`);
+};
+
 test('City Forge catalog delivers its bounded one-shot content inventory', () => {
   assert.equal(CITY_FORGE_CHUNK_CELLS, 9);
   assert.equal(CITY_FORGE_BUILDINGS.length, 30);
@@ -218,25 +230,58 @@ test('City Forge omits visual strategic grids and retains one safe cross-chunk a
   assert.match(toolChanges, /CancelPendingMapAction\(\); roadClass =/, 'tool changes must cancel, not reinterpret, a queued action');
 });
 
-test('City Forge uses one planning layer and restores streamed chunks after editing', () => {
+test('City Forge gives valid drafts the same complete physical compiler as the player Sprawl', () => {
   const buildMode = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeBuildMode.cs', import.meta.url), 'utf8');
   const runtime = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeRuntime.cs', import.meta.url), 'utf8');
-  const activate = runtime.slice(runtime.indexOf('public void ActivateCityForgeChunk'), runtime.indexOf('public void ReleaseCityForgeChunk'));
-  const overlay = runtime.slice(runtime.indexOf('public void ShowCityForgeBuildOverlay('), runtime.indexOf('public void ClearCityForgeBuildOverlay()'));
-  const clear = runtime.slice(runtime.indexOf('public void ClearCityForgeBuildOverlay()'), runtime.indexOf('private void BuildEditorLots('));
+  const activate = method(runtime, '        public void ActivateCityForgeChunk(');
+  const preview = method(runtime, '        public void ShowCityForgeDraftPreview(');
+  const compiled = method(runtime, '        private void BuildResolvedCityForgeChunk(');
+  const overlay = method(runtime, '        public void ShowCityForgeBuildOverlay(');
+  const refresh = method(buildMode, '        private void RefreshBuildOverlay()');
+  const review = method(buildMode, '        public void Preview()');
+  const fixtures = method(runtime, '        private SlopCityCityForgeFixture AddFixture(');
+  const screens = method(runtime, '        private void BuildScreens(');
   const camera = buildMode.slice(buildMode.indexOf('private void CaptureCamera()'), buildMode.indexOf('private void FocusCamera()'));
   const ui = buildMode.slice(buildMode.indexOf('private void CreateUi()'), buildMode.indexOf('private void RegisterViewControl(View scope, Button button)'));
   const toolbarColor = buildMode.slice(buildMode.indexOf('private static Color CityForgeToolbarColor()'), buildMode.indexOf('private static Color RoadColor('));
 
-  assert.match(runtime, /private bool buildOverlayPresentationActive;/);
-  assert.match(activate, /root\.SetActive\(!buildOverlayPresentationActive\);/,
-    'a chunk streamed during editing must remain compiled but hidden from the planning map');
-  assert.match(overlay, /DestroyBuildOverlay\(false\);[\s\S]*?SetChunkPresentationForBuildOverlay\(true\);/,
-    'the draft layer must hide physical street-level roots before it draws the map representation');
-  assert.match(clear, /DestroyBuildOverlay\(true\);/,
-    'leaving the editor must restore the retained physical chunks for first-person play');
-  assert.match(runtime, /private void SetChunkPresentationForBuildOverlay\(bool active\)[\s\S]*?instance\.root\.SetActive\(!active\);/,
-    'the presentation switch must keep every streamed chunk resident while toggling only visibility');
+  assert.match(runtime, /\benum CityForgePresentationMode\s*\{\s*Active,\s*Preview\s*\}/,
+    'one explicit presentation mode must govern live and review rendering');
+  assert.match(activate, /BuildResolvedCityForgeChunk\(instance, chunk, CityForgePresentationMode\.Active\);/,
+    'accepted player terrain must use the shared physical compiler');
+  assert.match(preview, /BuildResolvedCityForgeChunk\(preview, chunk, CityForgePresentationMode\.Preview\);/,
+    'Review must compile the same resolved plan rather than draw an unrelated map approximation');
+  for (const call of [
+    'BuildGround\\(instance, chunk, mode\\);',
+    'BuildRoads\\(instance, chunk\\.roads, mode\\);',
+    'BuildBuildings\\(instance, chunk, mode\\);',
+    'BuildServices\\(instance, chunk, mode\\);',
+    'BuildLandmarks\\(instance, chunk, mode\\);',
+    'BuildLife\\(instance, chunk, mode\\);',
+    'BuildScreens\\(instance, chunk, mode\\);',
+  ]) assert.match(compiled, new RegExp(call), `${call} must be shared by active and preview presentation`);
+  assert.match(compiled, /if \(mode == CityForgePresentationMode\.Preview\)[\s\S]*?DisablePreviewColliders\(instance\.root\.transform\);/,
+    'a complete preview must remain visual-only');
+  assert.match(runtime, /private static void DisablePreviewColliders\(Transform root\)[\s\S]*?collider\.enabled = false/,
+    'the review root must never leave player-blocking collision behind');
+  assert.match(fixtures, /if \(mode == CityForgePresentationMode\.Preview\) return null;/,
+    'review geometry must not attach gameplay interactions or persistent fixture ownership');
+  assert.match(screens, /BuildScreenBezel\([\s\S]*?GameObject\.CreatePrimitive\(PrimitiveType\.Quad\)[\s\S]*?if \(mode == CityForgePresentationMode\.Preview\)\s*\{[\s\S]*?SetRendererColor\([\s\S]*?continue;\s*\}[\s\S]*?SlopCityCityScreen screen = surface\.AddComponent<SlopCityCityScreen>\(\);/,
+    'preview keeps each planned screen as static approved hardware, while the accepted path alone allocates a city decoder');
+  const previewScreenBranch = screens.match(/if \(mode == CityForgePresentationMode\.Preview\)\s*\{([\s\S]*?)\n\s*\}/);
+  assert.ok(previewScreenBranch, 'screens must have an explicit visual-only preview branch');
+  assert.doesNotMatch(previewScreenBranch[1], /SlopCityCityScreen|SetMediaAdmission|RegisterScreen|AddFixture/,
+    'preview screens are static physical surfaces, never decoder or media registrations');
+  assert.match(review, /previewSink\?\.ShowCityForgeDraftPreview\(preview\);/,
+    'the explicit Review action must send the resolved draft to the preview sink');
+  assert.match(refresh, /controller\.TryResolveDraftPreview\(atomicDrafts\.Values, selected, out CityForgeResolvedChunk \w+, out CityForgeValidation \w+\)/,
+    'Build Mode must resolve valid plans before deciding how to draw them');
+  assert.match(refresh, /previewSink(?:\?)?\.ShowCityForgeDraftPreview\(/,
+    'valid in-editor plans use the physical resolved preview path');
+  assert.match(refresh, /ClearCityForgeDraftPreview\(\);[\s\S]*?buildOverlaySink\.ShowCityForgeBuildOverlay\([\s\S]*?, false\);/,
+    'only a refused draft falls back to the flat editor explanation');
+  assert.match(overlay, /if \(draftIsValid\)[\s\S]*?DestroyBuildOverlay\(true\);[\s\S]*?return;/,
+    'the flat overlay must reject valid plans rather than becoming a second visual city');
   assert.doesNotMatch(camera, /clearFlags|backgroundColor/,
     'Build Mode must preserve the active camera presentation instead of producing a dark map with a rewritten clear state');
   assert.match(ui, /new GameObject\("CityForgeToolbar", typeof\(RectTransform\), typeof\(Image\)\)/,
@@ -360,28 +405,39 @@ test('City Forge center-carve remainders stay usable outside the new building', 
 
 test('City Forge renders rectangular building bounds in draft, strategic, physical, and screen presentations', () => {
   const runtime = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeRuntime.cs', import.meta.url), 'utf8');
+  const presentation = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgePresentation.cs', import.meta.url), 'utf8');
+  const mapPresentation = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeMapPresentation.cs', import.meta.url), 'utf8');
   const editor = runtime.slice(runtime.indexOf('private void BuildEditorBuildings('), runtime.indexOf('private void BuildEditorServicesAndLife('));
-  const strategic = runtime.slice(runtime.indexOf('private static void BuildStrategicAcceptedImpostor('), runtime.indexOf('private static void BuildStrategicSummaryImpostor('));
+  const strategic = method(runtime, '        private static void BuildStrategicAcceptedImpostor(');
+  const strategicFeatures = method(runtime, '        private static void BuildStrategicMapFeatures(');
   const physical = runtime.slice(runtime.indexOf('private void BuildBuildings('), runtime.indexOf('private static void BuildBuildingShell(Transform parent, float span'));
   const shell = runtime.slice(runtime.indexOf('private static void BuildBuildingShell(Transform parent, float width, float depth'), runtime.indexOf('/// <summary>', runtime.indexOf('private static void BuildBuildingShell(Transform parent, float width, float depth')));
   const interior = runtime.slice(runtime.indexOf('private Transform BuildInterior('), runtime.indexOf('private static void ApplyBuildingFinish('));
   const screens = runtime.slice(runtime.indexOf('private static bool TryScreenPlacement('), runtime.indexOf('private static void SlotGrid('));
-  const bounds = runtime.slice(runtime.indexOf('private static void ParcelBounds('), runtime.indexOf('private static Vector3 RoadEdgeCentre('));
+  const bounds = method(runtime, '        private static void ParcelBounds(');
+  const sharedBounds = method(presentation, '        public static void ParcelBounds(');
 
   assert.match(runtime, /New footprints are rectangles, while legacy irregular parcels retain[\s\S]*?bounded enclosing shape/,
     'legacy arbitrary parcel cell lists must continue to render as stable bounded geometry');
-  assert.match(bounds, /int minX = values\.Min\(value => value % SlopCityCityForge\.GridSize\);/);
-  assert.match(bounds, /int maxX = values\.Max\(value => value % SlopCityCityForge\.GridSize\);/);
-  assert.match(bounds, /int minZ = values\.Min\(value => value \/ SlopCityCityForge\.GridSize\);/);
-  assert.match(bounds, /int maxZ = values\.Max\(value => value \/ SlopCityCityForge\.GridSize\);/);
-  assert.match(bounds, /width = \(maxX - minX \+ 1\) \* cell;/);
-  assert.match(bounds, /depth = \(maxZ - minZ \+ 1\) \* cell;/);
+  assert.match(bounds, /SlopCityCityForgePresentation\.ParcelBounds\(cells, out centre, out width, out depth\);/,
+    'street geometry must delegate parcel math to the shared presentation contract');
+  assert.match(sharedBounds, /int minimumX = values\.Min\(value => value % SlopCityCityForge\.GridSize\);/);
+  assert.match(sharedBounds, /int maximumX = values\.Max\(value => value % SlopCityCityForge\.GridSize\);/);
+  assert.match(sharedBounds, /int minimumZ = values\.Min\(value => value \/ SlopCityCityForge\.GridSize\);/);
+  assert.match(sharedBounds, /int maximumZ = values\.Max\(value => value \/ SlopCityCityForge\.GridSize\);/);
+  assert.match(sharedBounds, /width = \(maximumX - minimumX \+ 1\) \* cell;/);
+  assert.match(sharedBounds, /depth = \(maximumZ - minimumZ \+ 1\) \* cell;/);
   assert.match(editor, /ParcelBounds\(parcel\.cells, out Vector3 center, out float parcelWidth, out float parcelDepth\);/);
   assert.match(editor, /new Vector3\(width, \.11f, depth\)/,
     'the editor overlay must show independent X and Z spans instead of a one-cell marker');
-  assert.match(strategic, /ParcelBounds\(parcel\.cells, out Vector3 center, out float parcelWidth, out float parcelDepth\);/);
-  assert.match(strategic, /new Vector3\(width, height, depth\)/,
-    'accepted strategic impostors must preserve the rectangle after the editor closes');
+  assert.match(strategic, /CityForgeResolvedChunk/);
+  assert.match(strategic, /SlopCityCityForgeMapPresentation\.FromResolvedChunk\(/,
+    'accepted strategic impostors must consume the same resolved map facts as the HUD');
+  assert.match(mapPresentation, /SlopCityCityForgePresentation\.ParcelBounds\(parcel\.cells, out Vector3 center, out float parcelWidth, out float parcelDepth\);/);
+  assert.match(mapPresentation, /Vector2 footprint = new Vector2\(worldWidth, worldDepth\);/,
+    'the shared descriptor must preserve independent X and Z spans instead of a one-cell marker');
+  assert.match(strategicFeatures, /new Vector3\(feature\.worldSize\.x, height, feature\.worldSize\.y\)/,
+    'accepted strategic impostors must preserve the descriptor rectangle after the editor closes');
   assert.match(physical, /float worldWidth = Mathf\.Max\(4f, parcelWidth \* \.75f\);/);
   assert.match(physical, /float worldDepth = Mathf\.Max\(4f, parcelDepth \* \.75f\);/,
     'the physical compiler must not cap a multi-cell parcel back down to a one-cell-looking shell');
@@ -426,62 +482,30 @@ test('City Forge physical ground has no artificial seams and its island exterior
     'the map must not use the street-level glossy ocean material');
 });
 
-test('City Forge streams the deterministic street-level continuation around player-owned plans', () => {
+test('City Forge renders only accepted island plans through the shared Forge compiler', () => {
   const runtime = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeRuntime.cs', import.meta.url), 'utf8');
   const controller = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeController.cs', import.meta.url), 'utf8');
   const bootstrap = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeOfflineBootstrap.cs', import.meta.url), 'utf8');
   const follower = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeOfflineStreamFollower.cs', import.meta.url), 'utf8');
-  const activate = runtime.slice(runtime.indexOf('public void ActivateCityForgeChunk'), runtime.indexOf('public void ReleaseCityForgeChunk'));
-  const scenic = runtime.slice(runtime.indexOf('private void BuildScenicCityContinuation'), runtime.indexOf('private void BuildGround('));
-  const acceptedInfill = runtime.slice(runtime.indexOf('private static void BuildScenicAcceptedInfill'), runtime.indexOf('private static void BuildScenicAvenue'));
-  const stream = controller.slice(controller.indexOf('public void StreamAt('), controller.indexOf('public void SetBuildMode('));
+  const activate = method(runtime, '        public void ActivateCityForgeChunk(');
+  const preview = method(runtime, '        public void ShowCityForgeDraftPreview(');
+  const stream = method(controller, '        public void StreamAt(CityForgeCoord center)');
 
-  assert.ok(activate.indexOf('BuildScenicCityContinuation(instance, chunk);') < activate.indexOf('BuildGround(instance, chunk)'),
-    'the visual continuation must resolve before accepted player geometry is rendered');
-  assert.match(scenic, /if \(chunk\.acceptedPlan != null\)[\s\S]*?BuildScenicAcceptedInfill\(instance, chunk\);/,
-    'ground-only accepted islands must receive safe Forge visual infill');
-  assert.match(scenic, /ScenicAvenue_Centre_NS|ScenicAvenue_Centre_EW/);
-  assert.match(scenic, /ScenicBuilding_|ScenicWindowFront|ScenicLamp_/,
-    'the restored ground view must include deterministic buildings, windows, and street lamps');
-  assert.match(scenic, /BuildScenicTravelSurface/);
-  assert.match(acceptedInfill, /ScenicReservedCells\(plan, chunk\.roads\)/,
-    'accepted-plan geometry must reserve its physical area before scenic infill is chosen');
-  assert.match(acceptedInfill, /if \(!IsScenicAcceptedInfillEligible\(plan, chunk\)\) return;/,
-    'scenic infill must stop before any authored or interactive plan content is built');
-  assert.match(acceptedInfill, /plan\.roads[\s\S]*?plan\.parcels[\s\S]*?plan\.buildings[\s\S]*?plan\.services[\s\S]*?plan\.landmarks[\s\S]*?plan\.screens[\s\S]*?plan\.situations/,
-    'roads, lots, buildings, services, landmarks, screens, and situations must all suppress approximate scenery');
-  assert.match(acceptedInfill, /chunk\.roads[\s\S]*?chunk\.screens/,
-    'resolved road hosts and screens must suppress infill even when their plan source is indirect');
-  assert.match(acceptedInfill, /residentRoles[\s\S]*?persistedSituations[\s\S]*?availableSituations[\s\S]*?availableSituationOpportunities/,
-    'resident and situation fixture records must suppress infill rather than rely on hashed placement estimates');
-  assert.match(acceptedInfill, /reserved\.Add\(0\)/,
-    'the fixed CityPulse fixture cell must remain reserved in an otherwise ground-only plan');
-  assert.match(acceptedInfill, /plan\.groundCells \?\? new List<int>\(\)\)\.Where\(IsScenicCell\)\) reserved\.Add\(cell\)/,
-    'every accepted ground cell must remain owned by the plan, never dressed as an unrecorded street or facade');
-  const infillSelection = acceptedInfill.slice(acceptedInfill.indexOf('private static int FindScenicInfillCell'), acceptedInfill.indexOf('private static bool IsScenicCell'));
-  assert.doesNotMatch(infillSelection, /plan\.groundCells/,
-    'the compact fallback may use only an unclaimed non-ground cell');
-  assert.match(acceptedInfill, /BuildScenicAvenue[\s\S]*?BuildScenicInfillBuildingIfClear[\s\S]*?BuildScenicLamp/,
-    'safe accepted-plan infill must retain the Forge street, facade, and lamp language');
-  assert.match(acceptedInfill, /BuildScenicInfillFacade[\s\S]*?DisableScenicColliders/,
-    'the sparse partial-plan fallback must remain visual-only');
-  assert.doesNotMatch(acceptedInfill, /BuildScenicTravelSurface/,
-    'accepted-plan infill must never create a whole-chunk travel collider beneath a player-shaped island');
-  assert.doesNotMatch(acceptedInfill, /AddFixture\(/,
-    'accepted-plan infill must not create a persisted interaction or media host');
-  assert.doesNotMatch(acceptedInfill, /plan\.(?:groundCells|roads|parcels|buildings)\.(?:Add|Remove|Clear)/,
-    'presentation must not mutate an accepted plan or its save data');
-  assert.match(runtime, /ScenicFacadeKits/);
-  assert.match(runtime, /ScenicRoofKits/);
-  assert.doesNotMatch(stream, /!HasAcceptedIslandGround\(coordinate\)/,
-    'the bounded compiler window must include the unaccepted visual continuation');
+  assert.doesNotMatch(runtime, /BuildScenicCityContinuation|ScenicTravelSurface|ScenicAvenue|ScenicBuilding|ScenicLamp|ScenicFacadeKits|ScenicRoofKits/,
+    'unaccepted coordinates are water, not a separately generated city with a different visual language');
+  assert.match(activate, /BuildResolvedCityForgeChunk\(instance, chunk, CityForgePresentationMode\.Active\);/);
+  assert.match(preview, /BuildResolvedCityForgeChunk\(preview, chunk, CityForgePresentationMode\.Preview\);/,
+    'the exact accepted compiler also owns the street-level review representation');
+  assert.match(stream, /!HasAcceptedIslandGround\(coordinate\)\) continue;/,
+    'the bounded compiler window must not allocate shoreline roots for water or blank sparse records');
   assert.match(bootstrap, /controller\.StreamAt\(entry\);[\s\S]*?follower\.SetKnownCenter\(entry\);/);
-  assert.doesNotMatch(follower, /HasAcceptedIslandGround/,
-    'the offline follower must keep the presentation window alive before the first accepted ground cell');
+  assert.match(follower, /if \(!controller\.HasAcceptedIslandGround\(playerCoordinate\)\) return;/,
+    'walking may advance only through reclaimed player-owned ground');
 });
 
 test('City Forge map ground meets the fixed Old City core without duplicate layers', () => {
   const runtime = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeRuntime.cs', import.meta.url), 'utf8');
+  const mapPresentation = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeMapPresentation.cs', import.meta.url), 'utf8');
   const layout = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityDenseLayout.cs', import.meta.url), 'utf8');
   const humanScale = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityHumanScale.cs', import.meta.url), 'utf8');
   const travel = readFileSync(new URL('../Unity/Assets/Scripts/SlopCityCityForgeTravel.cs', import.meta.url), 'utf8');
@@ -489,14 +513,20 @@ test('City Forge map ground meets the fixed Old City core without duplicate laye
     runtime.indexOf('public void ShowCityForgeStrategicMap(CityForgeWorldHead head, CityForgeCoord center, int radius,'),
     runtime.indexOf('public void ClearCityForgeStrategicMap()'),
   );
-  const acceptedGround = runtime.slice(runtime.indexOf('private static void BuildStrategicAcceptedImpostor'), runtime.indexOf('private static void BuildStrategicSummaryImpostor'));
+  const acceptedGround = method(runtime, '        private static void BuildStrategicAcceptedImpostor(');
+  const strategicFeatures = method(runtime, '        private static void BuildStrategicMapFeatures(');
   const editorGround = runtime.slice(runtime.indexOf('private void BuildEditorGround('), runtime.indexOf('private void BuildRoads('));
 
   assert.match(layout, /CityForgeCoreGroundRect = Rect\.MinMaxRect\([\s\S]*CoreMinimum\.x \* SlopCityCityForge\.ChunkSizeMeters[\s\S]*CoreMaximum\.z \+ 1\) \* SlopCityCityForge\.ChunkSizeMeters/, 'the fixed pavement must use the protected core’s exact world limits');
   assert.match(layout, /OuterGroundRect = CityForgeCoreGroundRect;/, 'the Old City support apron must not use asymmetric hand-tuned bounds');
   assert.match(humanScale, /CityForgeCoreGroundRect\.xMin \+ 5\.85f/, 'the west transit spine must remain within the protected core instead of crossing into a starter cell');
   assert.match(strategic, /if \(!SlopCityCityForge\.IsBuildable\(coordinate\) \|\| coordinate\.Equals\(center\)\) continue;[\s\S]*?BuildStrategicAcceptedImpostor[\s\S]*?BuildStrategicSummaryImpostor/, 'the selected chunk must not draw either accepted-map or distant-summary geometry over its draft ground');
-  assert.match(acceptedGround, /new Vector3\(SlopCityCityForge\.CellSizeMeters, \.04f, SlopCityCityForge\.CellSizeMeters\)/, 'accepted map ground must fill its complete cell');
+  assert.match(acceptedGround, /SlopCityCityForgeMapPresentation\.FromResolvedChunk\(/,
+    'accepted map ground must originate from the same resolved projection as the HUD');
+  assert.match(mapPresentation, /Vector2\.one \* SlopCityCityForge\.CellSizeMeters, \.02f/,
+    'accepted map ground facts must fill their complete cell');
+  assert.match(strategicFeatures, /feature\.kind == CityForgeMapFeatureKind\.Ground \? \.04f/,
+    'the strategic renderer must retain the shared ground layer without inventing a second footprint');
   assert.match(editorGround, /new Vector3\(SlopCityCityForge\.CellSizeMeters, \.04f, SlopCityCityForge\.CellSizeMeters\)/, 'draft map ground must fill the same complete cell');
   assert.doesNotMatch(travel, /OpenSkyGangway|CityForge_StarterSprawlBridge|EnsureBridge\(/, 'the fixed core apron replaces the overlapping generated entry bridge');
 });

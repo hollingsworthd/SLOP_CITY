@@ -45,6 +45,13 @@ namespace SlopCity
         public event Action<bool> BuildModeChanged;
         public event Action<CityForgeResolvedChunk> ChunkCompiled;
         public event Action<IReadOnlyList<CityForgeCoord>> FreshContextReloadRequested;
+        /// <summary>
+        /// Private compositions may authenticate and fetch an accepted page
+        /// which is outside this controller's bounded local cache.  The public
+        /// runtime only names the neutral request; it never knows an endpoint
+        /// or treats a request as authority.
+        /// </summary>
+        public event Func<CityForgeCoord, bool> AcceptedChunkLoadRequested;
         /// <summary>Accepted non-topology updates which only need a bounded presentation refresh.</summary>
         public event Action<IReadOnlyList<CityForgeCoord>> AcceptedPresentationChanged;
         /// <summary>A bounded strategic-summary window changed without any physical stream mutation.</summary>
@@ -543,6 +550,35 @@ namespace SlopCity
         }
 
         /// <summary>
+        /// Asks a composition to hydrate one accepted block which is absent
+        /// from the nearby cache.  A successful return means a loader accepted
+        /// the request (possibly asynchronously), never that unverified data
+        /// may be streamed.  Callers must continue to require
+        /// <see cref="HasAcceptedIslandGround"/> before physical travel.
+        /// </summary>
+        public bool RequestAcceptedChunkLoad(CityForgeCoord coordinate)
+        {
+            if (!initialized || !SlopCityCityForge.IsBuildable(coordinate)) return false;
+            if (HasAcceptedIslandGround(coordinate)) return true;
+            Func<CityForgeCoord, bool> requests = AcceptedChunkLoadRequested;
+            if (requests == null) return false;
+            foreach (Delegate listener in requests.GetInvocationList())
+            {
+                Func<CityForgeCoord, bool> request = listener as Func<CityForgeCoord, bool>;
+                if (request == null) continue;
+                try
+                {
+                    if (request(coordinate)) return true;
+                }
+                catch (Exception error)
+                {
+                    Debug.LogWarning("City Forge accepted-chunk loader failed: " + error.GetType().Name, this);
+                }
+            }
+            return HasAcceptedIslandGround(coordinate);
+        }
+
+        /// <summary>
         /// Keeps aerial/planning cameras to the actual island and a caller-owned
         /// small survey margin.  Sparse records without ground remain editable
         /// for compatibility, but never enlarge this visible land frontier.
@@ -867,11 +903,10 @@ namespace SlopCity
                 for (int z = -activeChunkRadius; z <= activeChunkRadius; z++)
                 {
                     CityForgeCoord coordinate = new CityForgeCoord(center.x + x, center.z + z);
-                    // Unaccepted coordinates stream their deterministic Forge
-                    // continuation.  They remain outside accepted state: the
-                    // runtime replaces that presentation only after a player
-                    // commits real ground, roads, lots, or buildings.
-                    if (!SlopCityCityForge.IsBuildable(coordinate)) continue;
+                    // The ocean/shoreline remains presentation-empty until a
+                    // player accepts real ground. Sparse legacy records do not
+                    // allocate a street-level root or create a false bridge.
+                    if (!HasAcceptedIslandGround(coordinate)) continue;
                     requested.Add(Resolve(coordinate));
                 }
             compiler.Reconcile(center, requested, constrainedWebGl);

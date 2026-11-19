@@ -1,3 +1,4 @@
+using System.Linq;
 using UnityEngine;
 using UnityEngine.UI;
 using UnityEngine.EventSystems;
@@ -625,8 +626,6 @@ namespace SlopCity
         {
             CityForgeCoord centre = cityMapNavigator ? cityMapNavigator.WindowCenter : new CityForgeCoord(0, 0);
             TryBindCityForgeMap();
-            CityForgeWorldHead head = cityForge ? cityForge.WorldHead : null;
-            string worldSeed = head == null ? string.Empty : head.worldSeed;
             int radius = SlopCityCityMapNavigator.AerialWindowRadius;
             for (int x = centre.x - radius; x <= centre.x + radius; x++)
                 for (int z = centre.z - radius; z <= centre.z + radius; z++)
@@ -634,121 +633,72 @@ namespace SlopCity
                     CityForgeCoord coordinate = new CityForgeCoord(x, z);
                     if (!SlopCityCityForge.IsBuildable(coordinate)) continue;
                     CityForgeChunkPlan accepted = null;
-                    if (cityForge)
-                    {
-                        cityForge.AcceptedChunks.TryGetValue(coordinate, out accepted);
-                    }
-                    bool hasGround = accepted != null && accepted.groundCells != null && accepted.groundCells.Count > 0;
-                    // Strategic summaries deliberately omit the exact reclaimed
-                    // cell footprint. Do not guess a full island parcel from a
-                    // count-only row: water stays water until the plan page is
-                    // available and can be drawn cell-for-cell.
-                    if (!hasGround) continue;
-                    AddAerialSprawlBlock(coordinate, accepted, worldSeed);
+                    if (cityForge) cityForge.AcceptedChunks.TryGetValue(coordinate, out accepted);
+                    // A strategic summary deliberately lacks the exact accepted
+                    // descriptor, so water stays water until this plan page is
+                    // present and can be projected without guessing.
+                    if (accepted == null || accepted.groundCells == null || accepted.groundCells.Count == 0) continue;
+                    AddAerialSprawlBlock(coordinate, accepted);
                 }
         }
 
-        private void AddAerialSprawlBlock(CityForgeCoord coordinate, CityForgeChunkPlan accepted, string worldSeed)
+        private void AddAerialSprawlBlock(CityForgeCoord coordinate, CityForgeChunkPlan accepted)
         {
-            bool starter = SlopCityCityForge.IsStarterRing(coordinate);
-            int variant = AerialSprawlVariant(coordinate, worldSeed);
             if (accepted == null || accepted.groundCells == null || accepted.groundCells.Count == 0) return;
-            DrawAcceptedAerialGround(coordinate, accepted, starter, variant);
-            DrawAcceptedAerialDetails(coordinate, accepted, variant);
+            System.Collections.Generic.IReadOnlyList<CityForgeMapFeature> features = null;
+            if (cityForge && cityForge.IsInitialized)
+            {
+                try { features = SlopCityCityForgeMapPresentation.FromResolvedChunk(cityForge.Resolve(coordinate)); }
+                catch { features = null; }
+            }
+            // The fallback remains plan-derived for a partially initialized HUD;
+            // it never invents a seeded skyline or a square parcel surrogate.
+            if (features == null || features.Count == 0)
+                features = SlopCityCityForgeMapPresentation.FromPlan(accepted);
+            DrawAcceptedAerialGround(coordinate, features);
+            DrawAcceptedAerialDetails(coordinate, features);
         }
 
-        private void DrawAcceptedAerialGround(CityForgeCoord coordinate, CityForgeChunkPlan plan, bool starter, int variant)
+        private void DrawAcceptedAerialGround(CityForgeCoord coordinate, System.Collections.Generic.IReadOnlyList<CityForgeMapFeature> features)
         {
-            float worldChunk = SlopCityCityForge.ChunkSizeMeters;
-            float cell = SlopCityCityForge.CellSizeMeters;
-            float localCell = cell * SlopCityCityMapNavigator.MapScale;
-            Color ground = starter
-                ? new Color(.095f, .175f, .169f, .98f)
-                : new Color(.061f + (variant % 3) * .004f, .104f + (variant % 4) * .003f, .107f + (variant % 2) * .004f, .98f);
-            Color grid = starter ? new Color(.25f, .42f, .39f, .50f) : new Color(.16f, .30f, .29f, .44f);
+            if (features == null) return;
             const float gridLine = .38f;
-            foreach (int cellIndex in plan.groundCells)
+            foreach (CityForgeMapFeature feature in features.Where(item => item != null && item.kind == CityForgeMapFeatureKind.Ground))
             {
-                if (cellIndex < 0 || cellIndex >= SlopCityCityForge.GridSize * SlopCityCityForge.GridSize) continue;
-                int x = cellIndex % SlopCityCityForge.GridSize;
-                int z = cellIndex / SlopCityCityForge.GridSize;
-                Vector2 cellCentre = AerialMapPoint(coordinate.x * worldChunk + (x + .5f) * cell,
-                    coordinate.z * worldChunk + (z + .5f) * cell);
-                AddAerialFeature("AerialIslandGround_" + coordinate.x + "_" + coordinate.z + "_" + cellIndex,
-                    cellCentre, Vector2.one * (localCell - .12f), ground);
-                // The grid belongs to reclaimed island cells only. There is no
-                // background grid over water or unbuilt shoreline.
-                AddAerialFeature("AerialIslandGridE_" + coordinate.x + "_" + coordinate.z + "_" + cellIndex,
-                    cellCentre + new Vector2((localCell - gridLine) * .5f, 0f), new Vector2(gridLine, localCell), grid);
-                AddAerialFeature("AerialIslandGridN_" + coordinate.x + "_" + coordinate.z + "_" + cellIndex,
-                    cellCentre + new Vector2(0f, (localCell - gridLine) * .5f), new Vector2(localCell, gridLine), grid);
+                Vector2 centre = AerialMapPoint(
+                    coordinate.x * SlopCityCityForge.ChunkSizeMeters + feature.localPosition.x,
+                    coordinate.z * SlopCityCityForge.ChunkSizeMeters + feature.localPosition.z);
+                Vector2 size = feature.worldSize * SlopCityCityMapNavigator.MapScale;
+                AddAerialFeature("AerialIslandGround_" + coordinate.x + "_" + coordinate.z + "_" + feature.id,
+                    centre, size - Vector2.one * .12f, feature.color);
+                // The grid belongs only to concrete accepted ground facts; it
+                // never extrapolates an empty shoreline or a summary count.
+                Color grid = Color.Lerp(feature.color, Color.white, .28f);
+                AddAerialFeature("AerialIslandGridE_" + coordinate.x + "_" + coordinate.z + "_" + feature.id,
+                    centre + new Vector2((size.x - gridLine) * .5f, 0f), new Vector2(gridLine, size.y), grid);
+                AddAerialFeature("AerialIslandGridN_" + coordinate.x + "_" + coordinate.z + "_" + feature.id,
+                    centre + new Vector2(0f, (size.y - gridLine) * .5f), new Vector2(size.x, gridLine), grid);
             }
         }
 
-        private void DrawAcceptedAerialDetails(CityForgeCoord coordinate, CityForgeChunkPlan plan, int variant)
+        private void DrawAcceptedAerialDetails(CityForgeCoord coordinate, System.Collections.Generic.IReadOnlyList<CityForgeMapFeature> features)
         {
-            if (plan == null) return;
-            float worldChunk = SlopCityCityForge.ChunkSizeMeters;
-            float cell = SlopCityCityForge.CellSizeMeters;
-            int roads = 0;
-            foreach (CityForgeRoad road in plan.roads ?? new System.Collections.Generic.List<CityForgeRoad>())
+            if (features == null) return;
+            foreach (CityForgeMapFeature feature in features.Where(item => item != null && item.kind != CityForgeMapFeatureKind.Ground))
             {
-                if (road == null || roads++ >= 18 || !SlopCityCityForge.RoadHasIslandGround(plan, road)) continue;
-                float x = coordinate.x * worldChunk + (road.cellX + .5f) * cell;
-                float z = coordinate.z * worldChunk + (road.cellZ + .5f) * cell;
-                bool horizontal = road.direction == CityForgeDirection.North || road.direction == CityForgeDirection.South;
-                if (road.direction == CityForgeDirection.North) z += cell * .5f;
-                else if (road.direction == CityForgeDirection.South) z -= cell * .5f;
-                else if (road.direction == CityForgeDirection.East) x += cell * .5f;
-                else x -= cell * .5f;
-                AddAerialFeature("AerialAcceptedStreet_" + coordinate.x + "_" + coordinate.z + "_" + roads,
-                    AerialMapPoint(x, z), horizontal ? new Vector2(cell * .5f, 1.7f) : new Vector2(1.7f, cell * .5f),
-                    new Color(.42f, .58f, .55f, .95f));
-            }
-            int buildings = 0;
-            foreach (CityForgeBuilding building in plan.buildings ?? new System.Collections.Generic.List<CityForgeBuilding>())
-            {
-                if (building == null || buildings >= 12) continue;
-                CityForgeParcel parcel = null;
-                foreach (CityForgeParcel candidate in plan.parcels ?? new System.Collections.Generic.List<CityForgeParcel>())
-                    if (candidate != null && candidate.id == building.parcelId) { parcel = candidate; break; }
-                if (parcel == null || parcel.cells == null || parcel.cells.Count == 0) continue;
-                float sumX = 0f, sumZ = 0f;
-                foreach (int item in parcel.cells)
-                {
-                    if (item < 0 || item >= SlopCityCityForge.GridSize * SlopCityCityForge.GridSize) continue;
-                    sumX += item % SlopCityCityForge.GridSize + .5f;
-                    sumZ += item / SlopCityCityForge.GridSize + .5f;
-                }
-                float count = parcel.cells.Count;
-                if (count < 1f) continue;
-                float span = Mathf.Clamp(Mathf.Sqrt(count) * cell * .75f * SlopCityCityMapNavigator.MapScale, 2.6f, 10.5f);
-                AddAerialFeature("AerialAcceptedBuilding_" + coordinate.x + "_" + coordinate.z + "_" + buildings++,
-                    AerialMapPoint(coordinate.x * worldChunk + sumX / count * cell,
-                        coordinate.z * worldChunk + sumZ / count * cell), new Vector2(span, span),
-                    AerialSprawlRoofColor(variant + buildings, SlopCityCityForge.IsStarterRing(coordinate), true));
+                Vector2 point = AerialMapPoint(
+                    coordinate.x * SlopCityCityForge.ChunkSizeMeters + feature.localPosition.x,
+                    coordinate.z * SlopCityCityForge.ChunkSizeMeters + feature.localPosition.z);
+                Vector2 size = feature.worldSize * SlopCityCityMapNavigator.MapScale;
+                // A facade is deliberately laid down before its exact roof
+                // footprint, preserving the same façade/roof distinction as the
+                // physical compiler without a seeded color or sqrt(cell count).
+                AddAerialFeature("AerialAccepted_" + feature.kind + "_" + coordinate.x + "_" + coordinate.z + "_" + feature.id,
+                    point, size, feature.color);
             }
         }
 
-        private static int AerialSprawlVariant(CityForgeCoord coordinate, string seed)
-        {
-            unchecked
-            {
-                int hash = coordinate.x * 73856093 ^ coordinate.z * 19349663;
-                if (!string.IsNullOrEmpty(seed))
-                    for (int index = 0; index < seed.Length; index++) hash = hash * 31 + seed[index];
-                return hash & int.MaxValue;
-            }
-        }
 
-        private static Color AerialSprawlRoofColor(int variant, bool starter, bool accepted)
-        {
-            Color roof = new Color(.14f + (variant % 4) * .018f, .20f + (variant % 3) * .014f,
-                .21f + (variant % 5) * .01f, .98f);
-            if (starter) roof = Color.Lerp(roof, new Color(.29f, .53f, .50f, 1f), .36f);
-            if (accepted) roof = Color.Lerp(roof, new Color(.46f, .77f, .70f, 1f), .62f);
-            return roof;
-        }
 
         private Vector2 AerialDistrictPoint(int index, int column, int row)
         {
@@ -977,7 +927,14 @@ namespace SlopCity
 
         private void CreateTouchControls(SlopCityPlayerInput source)
         {
-            touchControls = SlopCityMobileControls.Create(transform, source, font);
+            // Keep the travel map above the two full-screen thumb surfaces.
+            // Both surfaces intentionally own broad transparent raycast areas;
+            // mounting them beside the gameplay layer would otherwise swallow
+            // every map tap before the navigator can see it.  The gameplay
+            // layer remains below menus/source cards, so modal ownership stays
+            // unchanged.
+            touchControls = SlopCityMobileControls.Create(gameplayLayer.transform, source, font);
+            if (cityMap) cityMap.SetAsLastSibling();
         }
 
         private void ApplyResponsiveLayout(bool force = false)
@@ -1422,14 +1379,30 @@ namespace SlopCity
         internal const float ChunkLocalSize = SlopCityCityForge.ChunkSizeMeters * MapScale;
         private const float DragThresholdPixels = 14f;
         private const int RebaseAtChunkDistance = 3;
+        private const float PendingTeleportSeconds = 8f;
+        private static readonly Vector2[] LandingOffsets =
+        {
+            Vector2.zero,
+            new Vector2(2f, 0f), new Vector2(-2f, 0f), new Vector2(0f, 2f), new Vector2(0f, -2f),
+            new Vector2(2f, 2f), new Vector2(2f, -2f), new Vector2(-2f, 2f), new Vector2(-2f, -2f),
+            new Vector2(4f, 0f), new Vector2(-4f, 0f), new Vector2(0f, 4f), new Vector2(0f, -4f),
+            new Vector2(4f, 4f), new Vector2(4f, -4f), new Vector2(-4f, 4f), new Vector2(-4f, -4f),
+            new Vector2(6f, 0f), new Vector2(-6f, 0f), new Vector2(0f, 6f), new Vector2(0f, -6f)
+        };
 
         private SlopCityFirstPerson player;
         private RectTransform viewport, content, pointer;
-        private Vector2 pan, pressScreen;
+        private Vector2 pan, pressScreen, pressEventScreen;
+        private Camera pressEventCamera;
         private bool dragging, userPanning;
+        private bool pendingTeleport;
+        private Vector3 pendingMapped;
+        private float pendingTeleportDeadline;
         private int activePointerId = int.MinValue;
         private float presentationScale = 1f;
         private CityForgeCoord windowCenter = new CityForgeCoord(0, 0);
+
+        private enum TeleportAttempt { Rejected, WaitingForChunk, Teleported }
 
         internal event System.Action<CityForgeCoord> WindowChanged;
         internal CityForgeCoord WindowCenter { get { return windowCenter; } }
@@ -1484,8 +1457,15 @@ namespace SlopCity
         public void OnPointerDown(PointerEventData e)
         {
             if (!IsMapPointer(e)) return;
+            ClearPendingTeleport(false);
             activePointerId = e.pointerId;
-            pressScreen = e.position;
+            // WebGL's legacy EventSystem can report CSS/page pixels while the
+            // overlay uses the backing-canvas basis. Capture the shell-correct
+            // point before pointer lock clears it, and never derive the map
+            // target from a later locked-pointer release.
+            pressScreen = PointerScreenPosition(e);
+            pressEventScreen = e.position;
+            pressEventCamera = e.pressEventCamera;
             dragging = false;
             userPanning = true;
             // WebGL defers pointer lock to the end of this trusted pointer
@@ -1497,12 +1477,22 @@ namespace SlopCity
         public void OnDrag(PointerEventData e)
         {
             if (e == null || e.pointerId != activePointerId) return;
-            if ((e.position - pressScreen).sqrMagnitude > DragThresholdPixels * DragThresholdPixels && !dragging)
+            // Drag thresholding stays in the EventSystem's own coordinate
+            // basis. The canvas-backing correction above is only for resolving
+            // the final map point on high-density WebGL shells.
+            Vector2 panDelta = e.delta;
+            if (!dragging)
             {
+                Vector2 gestureDelta = e.position - pressEventScreen;
+                if (gestureDelta.sqrMagnitude <= DragThresholdPixels * DragThresholdPixels) return;
                 dragging = true;
                 if (player) player.CancelPointerLookForMapDrag();
+                // Earlier sub-threshold movement deliberately left the map in
+                // place so a tap always resolves the point initially pressed.
+                // Apply that full gesture once it is undeniably a drag.
+                panDelta = gestureDelta;
             }
-            pan += e.delta;
+            pan += panDelta;
             pan = ClampPan(pan);
             content.anchoredPosition = pan;
             RebaseForPan();
@@ -1511,8 +1501,13 @@ namespace SlopCity
         public void OnPointerUp(PointerEventData e)
         {
             if (e == null || e.pointerId != activePointerId) return;
+            // Pointer lock can make the release coordinate relative or clear
+            // it outright. The down position/camera remain the one trusted
+            // map hit for this non-drag gesture.
+            TeleportAttempt attempt = dragging ? TeleportAttempt.Rejected : TryTeleport(pressScreen, pressEventCamera);
             activePointerId = int.MinValue;
-            if (!dragging && !TryTeleport(e))
+            pressEventCamera = null;
+            if (attempt == TeleportAttempt.Rejected)
             {
                 if (player) player.CancelPointerLookForMapDrag();
                 FollowPlayer();
@@ -1527,25 +1522,78 @@ namespace SlopCity
             return e != null && (e.pointerId >= 0 || e.button == PointerEventData.InputButton.Left);
         }
 
-        private bool TryTeleport(PointerEventData e)
+        private static Vector2 PointerScreenPosition(PointerEventData e)
+        {
+            if (SlopCityWebPresentation.TryGetCanvasPointer(out Vector2 browserPosition)) return browserPosition;
+            return e == null ? Vector2.zero : e.position;
+        }
+
+        private TeleportAttempt TryTeleport(Vector2 screenPoint, Camera eventCamera)
         {
             if (!player || !viewport
-                || !RectTransformUtility.RectangleContainsScreenPoint(viewport, e.position, e.pressEventCamera)) return false;
+                || !RectTransformUtility.RectangleContainsScreenPoint(viewport, screenPoint, eventCamera)) return TeleportAttempt.Rejected;
             SlopCitySandbox sandbox = player.Sandbox;
-            if (sandbox && (sandbox.IsDriving || sandbox.IsResting || sandbox.IsTravelling)) return false;
-            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(content, e.position, e.pressEventCamera, out Vector2 local)) return false;
-            Vector3 mapped = LocalToWorld(local);
-            if (!PrepareSprawlTravel(mapped)) return false;
-            Vector3 probe = new Vector3(mapped.x, 260f, mapped.z);
-            if (!Physics.Raycast(probe, Vector3.down, out RaycastHit hit, 320f, ~0, QueryTriggerInteraction.Ignore)
-                || hit.normal.y <= .5f) return false;
+            if (sandbox && (sandbox.IsDriving || sandbox.IsResting || sandbox.IsTravelling)) return TeleportAttempt.Rejected;
+            if (!RectTransformUtility.ScreenPointToLocalPointInRectangle(content, screenPoint, eventCamera, out Vector2 local)) return TeleportAttempt.Rejected;
+            return TryTeleportMapped(LocalToWorld(local));
+        }
+
+        private TeleportAttempt TryTeleportMapped(Vector3 mapped)
+        {
+            if (!player) return TeleportAttempt.Rejected;
+            if (!PrepareSprawlTravel(mapped, out bool waiting))
+            {
+                if (!waiting) return TeleportAttempt.Rejected;
+                if (!pendingTeleport)
+                {
+                    pendingTeleport = true;
+                    pendingMapped = mapped;
+                    pendingTeleportDeadline = Time.unscaledTime + PendingTeleportSeconds;
+                }
+                return TeleportAttempt.WaitingForChunk;
+            }
+            CityForgeCoord coordinate = WorldToChunk(mapped);
+            if (!TryFindWalkableLanding(mapped, coordinate, out Vector3 landing)) return TeleportAttempt.Rejected;
             bool resumeAfterTravel = player.IsPaused;
-            player.TeleportWithEffect(hit.point, player.transform.eulerAngles.y);
+            player.TeleportWithEffect(landing, player.transform.eulerAngles.y);
             // The centered pause map is the touch-safe travel control. A valid
             // destination is an explicit travel action, so return to the game
             // immediately instead of leaving a touch player behind the modal.
             if (resumeAfterTravel) player.PlayOrResume();
-            return true;
+            return TeleportAttempt.Teleported;
+        }
+
+        private void Update()
+        {
+            if (!pendingTeleport) return;
+            if (!player || !player.IsPaused)
+            {
+                ClearPendingTeleport(false);
+                return;
+            }
+            if (Time.unscaledTime >= pendingTeleportDeadline)
+            {
+                ClearPendingTeleport(true);
+                player.ShowFeedback("That map destination could not be loaded. Try a built island block.");
+                return;
+            }
+            TeleportAttempt attempt = TryTeleportMapped(pendingMapped);
+            if (attempt == TeleportAttempt.WaitingForChunk) return;
+            pendingTeleport = false;
+            if (attempt == TeleportAttempt.Rejected)
+            {
+                if (player) player.CancelPointerLookForMapDrag();
+                FollowPlayer();
+                player.ShowFeedback("That map point is not a clear built landing.");
+            }
+        }
+
+        private void ClearPendingTeleport(bool followPlayer)
+        {
+            if (!pendingTeleport) return;
+            pendingTeleport = false;
+            if (player) player.CancelPointerLookForMapDrag();
+            if (followPlayer) FollowPlayer();
         }
 
         /// <summary>
@@ -1553,13 +1601,25 @@ namespace SlopCity
         /// streamed neighborhood. Water and unbuilt shoreline are never travel
         /// surfaces, even when they are within the survey window.
         /// </summary>
-        private static bool PrepareSprawlTravel(Vector3 mapped)
+        private static bool PrepareSprawlTravel(Vector3 mapped, out bool waiting)
         {
+            waiting = false;
             CityForgeCoord coordinate = WorldToChunk(mapped);
             if (!SlopCityCityForge.IsBuildable(coordinate)) return true;
             SlopCityCityForgeController controller = UnityEngine.Object.FindFirstObjectByType<SlopCityCityForgeController>();
             if (!controller || !controller.IsInitialized) return false;
-            if (!controller.HasAcceptedIslandGround(coordinate)) return false;
+            if (!controller.HasAcceptedIslandGround(coordinate))
+            {
+                // A hosted bridge can accept this neutral request and hydrate
+                // its signed page asynchronously. It remains fail-closed until
+                // that verified page actually reaches the public controller.
+                if (!controller.RequestAcceptedChunkLoad(coordinate)) return false;
+                if (!controller.HasAcceptedIslandGround(coordinate))
+                {
+                    waiting = true;
+                    return false;
+                }
+            }
             try
             {
                 controller.StreamAt(coordinate);
@@ -1570,6 +1630,90 @@ namespace SlopCity
             {
                 return false;
             }
+        }
+
+        private bool TryFindWalkableLanding(Vector3 mapped, CityForgeCoord selectedCoordinate, out Vector3 landing)
+        {
+            landing = default;
+            bool selectedSprawl = SlopCityCityForge.IsBuildable(selectedCoordinate);
+            foreach (Vector2 offset in LandingOffsets)
+            {
+                Vector3 candidate = new Vector3(mapped.x + offset.x, 0f, mapped.z + offset.y);
+                if (selectedSprawl && !WorldToChunk(candidate).Equals(selectedCoordinate)) continue;
+                if (!TryFindGroundLanding(candidate, out Vector3 grounded) || !HasClearLanding(grounded)) continue;
+                landing = grounded;
+                return true;
+            }
+            // A player can tap the middle of a broad catalog building where its
+            // shell safely rejects the capsule. The accepted plan is already
+            // verified and the selected physical page is streamed, so walk its
+            // bounded ground cells nearest-first rather than giving up or
+            // inventing a landing beyond this island block.
+            if (!selectedSprawl) return false;
+            SlopCityCityForgeController controller = UnityEngine.Object.FindFirstObjectByType<SlopCityCityForgeController>();
+            if (!controller || !controller.TryGetAccepted(selectedCoordinate, out CityForgeChunkPlan plan)) return false;
+            foreach (int cell in (plan.groundCells ?? new System.Collections.Generic.List<int>())
+                .Where(value => value >= 0 && value < SlopCityCityForge.GridSize * SlopCityCityForge.GridSize)
+                .Distinct()
+                .OrderBy(value => GroundCellDistanceSquared(value, selectedCoordinate, mapped)))
+            {
+                int x = cell % SlopCityCityForge.GridSize;
+                int z = cell / SlopCityCityForge.GridSize;
+                Vector3 candidate = new Vector3(
+                    (float)selectedCoordinate.x * SlopCityCityForge.ChunkSizeMeters + (x + .5f) * SlopCityCityForge.CellSizeMeters,
+                    0f,
+                    (float)selectedCoordinate.z * SlopCityCityForge.ChunkSizeMeters + (z + .5f) * SlopCityCityForge.CellSizeMeters);
+                if (!TryFindGroundLanding(candidate, out Vector3 grounded) || !HasClearLanding(grounded)) continue;
+                landing = grounded;
+                return true;
+            }
+            return false;
+        }
+
+        private static float GroundCellDistanceSquared(int cell, CityForgeCoord coordinate, Vector3 mapped)
+        {
+            int x = cell % SlopCityCityForge.GridSize;
+            int z = cell / SlopCityCityForge.GridSize;
+            float worldX = (float)coordinate.x * SlopCityCityForge.ChunkSizeMeters + (x + .5f) * SlopCityCityForge.CellSizeMeters;
+            float worldZ = (float)coordinate.z * SlopCityCityForge.ChunkSizeMeters + (z + .5f) * SlopCityCityForge.CellSizeMeters;
+            float dx = worldX - mapped.x, dz = worldZ - mapped.z;
+            return dx * dx + dz * dz;
+        }
+
+        private static bool TryFindGroundLanding(Vector3 candidate, out Vector3 landing)
+        {
+            landing = default;
+            float groundHeight = float.NegativeInfinity;
+            Vector3 probe = new Vector3(candidate.x, 260f, candidate.z);
+            foreach (RaycastHit hit in Physics.RaycastAll(probe, Vector3.down, 320f, ~0, QueryTriggerInteraction.Ignore))
+            {
+                // Building roofs, screens, and tall fixtures are valid map
+                // visuals but not walking destinations. Prefer the actual
+                // ground/road surface just as the public Sprawl entry does.
+                if (hit.normal.y <= .5f || hit.point.y < -.5f || hit.point.y > 1.25f || hit.point.y <= groundHeight) continue;
+                groundHeight = hit.point.y;
+                landing = hit.point;
+            }
+            return !float.IsNegativeInfinity(groundHeight);
+        }
+
+        private bool HasClearLanding(Vector3 landing)
+        {
+            if (!player) return false;
+            CharacterController character = player.GetComponent<CharacterController>();
+            if (!character) return false;
+            float radius = character.radius * .9f;
+            Vector3 bottom = landing + Vector3.up * (character.radius + .02f);
+            Vector3 top = landing + Vector3.up * (character.height - character.radius);
+            Collider[] overlaps = Physics.OverlapCapsule(bottom, top, radius, ~0, QueryTriggerInteraction.Ignore);
+            foreach (Collider overlap in overlaps)
+            {
+                if (!overlap || overlap.isTrigger) continue;
+                Transform root = player.transform;
+                if (overlap.transform == root || overlap.transform.IsChildOf(root) || root.IsChildOf(overlap.transform)) continue;
+                return false;
+            }
+            return true;
         }
 
         internal Vector2 WorldToLocal(Vector3 world)

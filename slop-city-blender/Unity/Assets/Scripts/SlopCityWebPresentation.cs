@@ -12,6 +12,9 @@ namespace SlopCity
         [DllImport("__Internal")] private static extern int SlopCity_GetSceneRenderHeight();
         [DllImport("__Internal")] private static extern float SlopCity_GetDisplayPixelRatio();
         [DllImport("__Internal")] private static extern int SlopCity_IsViewportTransition();
+        [DllImport("__Internal")] private static extern int SlopCity_HasCanvasPointer();
+        [DllImport("__Internal")] private static extern float SlopCity_GetCanvasPointerX();
+        [DllImport("__Internal")] private static extern float SlopCity_GetCanvasPointerY();
         [DllImport("__Internal")] private static extern void SlopCity_ReportPresentation(int displayWidth, int displayHeight, int worldWidth, int worldHeight, float pixelRatio);
         [DllImport("__Internal")] private static extern void SlopCity_ReportRuntimeFault(int kind);
         private static bool runtimeFaultReporterInstalled;
@@ -83,6 +86,35 @@ namespace SlopCity
                 return false;
 #endif
             }
+        }
+
+        /// <summary>
+        /// Returns the shell's canvas-backing pointer when WebGL's legacy
+        /// input bridge is using CSS/page coordinates.  Screen-space overlays
+        /// must use this same basis as the rendered canvas; native builds and
+        /// custom hosts retain their ordinary EventSystem fallback.
+        /// </summary>
+        internal static bool TryGetCanvasPointer(out Vector2 position)
+        {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            try
+            {
+                if (SlopCity_HasCanvasPointer() != 0)
+                {
+                    float x = SlopCity_GetCanvasPointerX();
+                    float y = SlopCity_GetCanvasPointerY();
+                    if (!float.IsNaN(x) && !float.IsInfinity(x) && !float.IsNaN(y) && !float.IsInfinity(y))
+                    {
+                        position = new Vector2(x, y);
+                        return true;
+                    }
+                }
+            }
+            catch (EntryPointNotFoundException) { }
+            catch (DllNotFoundException) { }
+#endif
+            position = default;
+            return false;
         }
 
 #if UNITY_WEBGL && !UNITY_EDITOR

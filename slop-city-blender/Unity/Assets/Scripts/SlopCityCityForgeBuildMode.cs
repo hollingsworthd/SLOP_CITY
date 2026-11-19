@@ -98,6 +98,7 @@ namespace SlopCity
         private ISlopCityCityForgeBuildOverlaySink buildOverlaySink;
         private ISlopCityCityForgeStrategicMapSink strategicMap;
         private ISlopCityCityForgeStrategicSummarySink strategicSummaryMap;
+        private ISlopCityCityForgeResolvedStrategicMapSink resolvedStrategicMap;
         private CityForgeCoord pendingNavigation;
         private bool hasPendingNavigation;
         private SlopCityFirstPerson firstPerson;
@@ -241,6 +242,7 @@ namespace SlopCity
             buildOverlaySink = previewSinkComponent as ISlopCityCityForgeBuildOverlaySink ?? FindBuildOverlaySink();
             strategicMap = FindStrategicMap();
             strategicSummaryMap = strategicMap as ISlopCityCityForgeStrategicSummarySink;
+            resolvedStrategicMap = strategicMap as ISlopCityCityForgeResolvedStrategicMapSink;
             if (controller) controller.StrategicMapChanged += HandleStrategicMapChanged;
             CreateUi(); CreateLauncher(); SetUi(false); RefreshLauncher();
         }
@@ -759,14 +761,12 @@ namespace SlopCity
             if (draft == null) return;
             List<CityForgeChunkPlan> plans = PlansForCommit();
             if (!controller.TryResolveDraftPreview(plans, selected, out CityForgeResolvedChunk preview, out CityForgeValidation validation)) { SetMessage(validation.Messages.FirstOrDefault() ?? "Check this plan first."); return; }
-            // The planning surface already renders the exact draft in its
-            // intended block. Rendering a second opaque physical chunk above
-            // the accepted one made Review look like a failed duplicate world,
-            // rather than an honest preflight. Keep the compiled result for
-            // integrators, but make Review a clear validation checkpoint.
-            previewSink?.ClearCityForgeDraftPreview();
+            // Review is the same compiled, non-owning physical Sprawl that
+            // acceptance will install. The editor can still draw a small
+            // invalid-draft aid, but never substitutes that flat aid for the
+            // player's actual future streets, buildings, or screen hardware.
+            previewSink?.ShowCityForgeDraftPreview(preview);
             PreviewRequested?.Invoke(draft.Clone()); DraftPreviewCompiled?.Invoke(preview);
-            RefreshBuildOverlay();
             SetMessage("Draft checks pass. Changes save automatically.");
         }
 
@@ -1151,10 +1151,20 @@ namespace SlopCity
 
         private void RefreshBuildOverlay()
         {
-            if (!opened || buildOverlaySink == null || controller == null || draft == null) return;
+            if (!opened || controller == null || draft == null) return;
             bool valid = controller.ValidateDraftOnly(atomicDrafts.Values, out CityForgeValidation ignored);
             CityForgeCoord? hover = hasHoveredCell ? hoveredCell : (CityForgeCoord?)null;
-            buildOverlaySink.ShowCityForgeBuildOverlay(controller.WorldHead, selected, draft, hover, roadDirection, view, valid);
+            if (valid && previewSink != null
+                && controller.TryResolveDraftPreview(atomicDrafts.Values, selected, out CityForgeResolvedChunk resolved, out CityForgeValidation previewValidation))
+            {
+                previewSink.ShowCityForgeDraftPreview(resolved);
+                return;
+            }
+            // Invalid work remains editable and clearly indicated, but only
+            // a resolver-validated plan may claim the compiled visual result.
+            previewSink?.ClearCityForgeDraftPreview();
+            if (buildOverlaySink != null)
+                buildOverlaySink.ShowCityForgeBuildOverlay(controller.WorldHead, selected, draft, hover, roadDirection, view, false);
         }
 
         private ISlopCityCityForgeStrategicMapSink FindStrategicMap()
@@ -1170,6 +1180,18 @@ namespace SlopCity
         private void ShowStrategicMap()
         {
             if (controller == null || strategicMap == null) return;
+            if (resolvedStrategicMap != null)
+            {
+                Dictionary<CityForgeCoord, CityForgeResolvedChunk> resolved = new Dictionary<CityForgeCoord, CityForgeResolvedChunk>();
+                foreach (KeyValuePair<CityForgeCoord, CityForgeChunkPlan> pair in controller.AcceptedChunks)
+                {
+                    if (pair.Value == null || Mathf.Abs(pair.Key.x - selected.x) > 6 || Mathf.Abs(pair.Key.z - selected.z) > 6) continue;
+                    try { resolved[pair.Key] = controller.Resolve(pair.Key); }
+                    catch { /* A bounded stale page stays absent rather than becoming a guessed tile. */ }
+                }
+                resolvedStrategicMap.ShowCityForgeStrategicMap(controller.WorldHead, selected, 6, controller.AcceptedChunks, resolved, controller.StrategicChunks);
+                return;
+            }
             if (strategicSummaryMap != null)
                 strategicSummaryMap.ShowCityForgeStrategicMap(controller.WorldHead, selected, 6, controller.AcceptedChunks, controller.StrategicChunks);
             else strategicMap.ShowCityForgeStrategicMap(controller.WorldHead, selected, 6, controller.AcceptedChunks);
